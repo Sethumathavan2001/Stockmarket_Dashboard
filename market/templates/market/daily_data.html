@@ -1,0 +1,37 @@
+{% extends 'market/base.html' %}
+{% block content %}
+<h1>Daily Data</h1>
+<form method="get">
+  <label>Select company:</label>
+  <select name="company">
+    <option value="">-- select --</option>
+    {% for c in companies %}
+      <option value="{{ c.code }}" {% if company and c.code == company.code %}selected{% endif %}>{{ c.code }} - {{ c.name }}</option>
+    {% endfor %}
+  </select>
+  <button type="submit">Show</button>
+</form>
+
+{% if company %}
+  <h2>Daily data for {{ company }}</h2>
+  {% if data %}
+    <table>
+      <thead><tr><th>Date</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Volume</th></tr></thead>
+      <tbody>
+        {% for row in data %}
+          <tr>
+            <td>{{ row.date }}</td>
+            <td>{{ row.open }}</td>
+            <td>{{ row.high }}</td>
+            <td>{{ row.low }}</td>
+            <td>{{ row.close }}</td>
+            <td>{{ row.volume }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p>No daily data available for this company yet.</p>
+  {% endif %}
+{% endif %}
+{% endblock %}

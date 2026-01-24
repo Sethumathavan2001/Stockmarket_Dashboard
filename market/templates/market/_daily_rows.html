@@ -1,0 +1,17 @@
+{% for row in data %}
+<tr class="
+  {% if row.status == '1' %}
+    status-green
+  {% elif row.status == '0' %}
+    status-red
+  {% endif %}
+">
+  <td>{{ row.date }}</td>
+  <td class="text-right">{{ row.open }}</td>
+  <td class="text-right">{{ row.high }}</td>
+  <td class="text-right">{{ row.low }}</td>
+  <td class="text-right">{{ row.close }}</td>
+  <td class="text-right">{{ row.volume }}</td>
+  <td class="text-center">{{ row.weekday }}</td>
+</tr>
+{% endfor %}

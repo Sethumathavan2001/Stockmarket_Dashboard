@@ -1,0 +1,182 @@
+{% extends 'market/base.html' %}
+{% block content %}
+
+<head>
+    <title>Stock Data Manager</title>
+
+    <style>
+        .box {
+            border: 1px solid #ccc;
+            padding: 20px;
+            margin-bottom: 30px;
+            border-radius: 8px;
+            background: #f9f9f9;
+        }
+
+        .box h3 {
+            margin-top: 0;
+        }
+
+        #progress-container {
+            width: 100%;
+            background: #ddd;
+            margin-top: 20px;
+            display: none;
+            border-radius: 5px;
+        }
+
+        #progress-bar {
+            width: 0%;
+            height: 25px;
+            background: #28a745;
+            text-align: center;
+            color: white;
+            font-weight: bold;
+            border-radius: 5px;
+        }
+
+        .danger {
+            background: #dc3545;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+
+        button {
+            padding: 6px 12px;
+            cursor: pointer;
+        }
+    </style>
+
+    <script>
+        /* =======================
+           START PROCESSING
+        ======================== */
+
+        function startProcessing() {
+            const interval = document.getElementById("interval").value;
+            let url = "";
+
+            if (interval === "daily") {
+                url = "{% url 'market:fetch_daily_data' %}";
+            } else if (interval === "5min") {
+                url = "{% url 'market:fetch_five_minute_data' %}";
+            }
+
+            document.getElementById("progress-container").style.display = "block";
+            updateBar(0);
+
+            fetch(url, {
+                method: "POST",
+                headers: {
+                    "X-CSRFToken": "{{ csrf_token }}"
+                }
+            })
+            .then(res => res.json())
+            .then(data => pollProgress(data.task_id))
+            .catch(() => alert("Error starting process"));
+        }
+
+        function pollProgress(taskId) {
+            const timer = setInterval(() => {
+                fetch(`/progress/${taskId}/`)
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.status === "completed") {
+                            updateBar(100);
+                            clearInterval(timer);
+                            alert("Completed! Rows inserted: " + data.rows);
+                        } else if (data.total > 0) {
+                            const percent = Math.round((data.done / data.total) * 100);
+                            updateBar(percent);
+                        }
+                    });
+            }, 1000);
+        }
+
+        function updateBar(percent) {
+            const bar = document.getElementById("progress-bar");
+            bar.style.width = percent + "%";
+            bar.innerText = percent + "%";
+        }
+
+        /* =======================
+           DELETE DATA
+        ======================== */
+
+        function deleteData() {
+            const date = document.getElementById("delete-date").value;
+            const interval = document.getElementById("delete-interval").value;
+
+            if (!date) {
+                alert("Please select a date");
+                return;
+            }
+
+            if (!confirm(`Delete ${interval} data for ${date}?`)) {
+                return;
+            }
+
+            fetch("{% url 'market:delete_data' %}", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "X-CSRFToken": "{{ csrf_token }}"
+                },
+                body: new URLSearchParams({
+                    date: date,
+                    interval: interval
+                })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === "success") {
+                    alert(`Deleted ${data.deleted_rows} rows`);
+                } else {
+                    alert(data.error || "Delete failed");
+                }
+            })
+            .catch(() => alert("Server error"));
+        }
+    </script>
+</head>
+
+<body>
+
+<!-- ================= START PROCESSING BOX ================= -->
+<div class="box">
+    <h3>📈 Start Processing</h3>
+
+    <label>Select Time Frame:</label>
+    <select id="interval">
+        <option value="daily">Daily</option>
+        <option value="5min">5 Minute</option>
+    </select>
+
+    <button onclick="startProcessing()">Start Processing</button>
+
+    <div id="progress-container">
+        <div id="progress-bar">0%</div>
+    </div>
+</div>
+
+<!-- ================= DELETE DATA BOX ================= -->
+<div class="box">
+    <h3>🗑️ Delete Data</h3>
+
+    <label>Select Time Frame:</label>
+    <select id="delete-interval">
+        <option value="daily">Daily</option>
+        <option value="5min">5 Minute</option>
+    </select>
+
+    <label>Select Date:</label>
+    <input type="date" id="delete-date">
+
+    <button class="danger" onclick="deleteData()">Delete Data</button>
+</div>
+
+</body>
+{% endblock %}

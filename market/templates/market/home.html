@@ -1,0 +1,143 @@
+{% extends 'market/base.html' %}
+{% block content %}
+
+<h1>All Companies</h1>
+
+<div class="layout">
+
+  <!-- LEFT PANEL -->
+  <div class="left-panel">
+    <h3>Sectors</h3>
+    <ul class="sector-list">
+      {% for s in sectors %}
+        <li onclick="loadIndustries('{{ s.sector|default:'Unknown' }}', this)">
+          <span>{{ s.sector|default:'Unknown' }}</span>
+          <span class="count">{{ s.total }}</span>
+        </li>
+      {% endfor %}
+    </ul>
+  </div>
+
+  <!-- RIGHT PANEL -->
+  <div class="right-panel">
+    <h3 id="industryTitle">Industries (Top 20)</h3>
+    <canvas id="industryChart" style="width: fit-content;"></canvas>
+  </div>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<script>
+  let industryChart;
+
+  function initChart(labels, data) {
+    industryChart = new Chart(
+      document.getElementById('industryChart'),
+      {
+        type: 'bar',
+        data: {
+          labels: labels,
+          datasets: [{
+            data: data,
+            backgroundColor: '#4e79a7'
+          }]
+        },
+        options: {
+          indexAxis: 'y',
+          responsive: true,
+          scales: {
+            x: { beginAtZero: true }
+          },
+          plugins: {
+            legend: { display: false }
+          }
+        }
+      }
+    );
+  }
+
+  // Initial load (all industries)
+  initChart(
+    [{% for i in industries %}"{{ i.industry|default:'Unknown' }}",{% endfor %}],
+    [{% for i in industries %}{{ i.total }},{% endfor %}]
+  );
+
+  function loadIndustries(sector, el) {
+    document.querySelectorAll('.sector-list li')
+      .forEach(li => li.classList.remove('active'));
+    el.classList.add('active');
+
+    fetch(`/industries-by-sector/?sector=${encodeURIComponent(sector)}`)
+      .then(res => res.json())
+      .then(data => {
+        industryChart.data.labels = data.map(d => d.industry || 'Unknown');
+        industryChart.data.datasets[0].data = data.map(d => d.total);
+        industryChart.update();
+
+        document.getElementById('industryTitle').innerText =
+          `Industries in ${sector} (Top 20)`;
+      });
+  }
+</script>
+
+<style>
+  .layout {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    gap: 30px;
+    margin-top: 20px;
+  }
+
+  .left-panel {
+    background: #fff;
+    border-radius: 10px;
+    padding: 15px;
+    box-shadow: 0 2px 10px rgba(0,0,0,.08);
+    max-height: 600px;
+    overflow-y: auto;
+  }
+
+  .sector-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  .sector-list li {
+    display: flex;
+    justify-content: space-between;
+    padding: 10px 12px;
+    margin-bottom: 6px;
+    cursor: pointer;
+    border-radius: 6px;
+    transition: background .2s;
+  }
+
+  .sector-list li:hover {
+    background: #f1f5f9;
+  }
+
+  .sector-list li.active {
+    background: #4e79a7;
+    color: #fff;
+    font-weight: 600;
+  }
+
+  .sector-list .count {
+    opacity: .7;
+  }
+
+  .right-panel {
+    background: #fff;
+    border-radius: 10px;
+    padding: 20px;
+    box-shadow: 0 2px 10px rgba(0,0,0,.08);
+  }
+  #industryChart {
+    max-width: 100%;
+    height: auto;
+  }
+</style>
+
+{% endblock %}
