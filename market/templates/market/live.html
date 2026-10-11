@@ -127,6 +127,8 @@
   .lt-table tbody tr:hover { background: var(--blue-tint); }
 
   .lt-sym { font-weight: 600; color: var(--text); }
+  .lt-sym-link { color: var(--blue, #2563eb); text-decoration: none; border-bottom: 1px dashed currentColor; }
+  .lt-sym-link:hover { border-bottom-style: solid; }
   .lt-pos { color: var(--green); font-weight: 600; }
   .lt-neg { color: var(--red); font-weight: 600; }
   .lt-empty { padding: 1.4rem; text-align: center; color: var(--text-faint); }
@@ -236,9 +238,20 @@
   <div id="lt-modal-root"></div>
 </div>
 
+{# Company codes stored in the database, so a Symbol only links to Paper Trading when that page exists #}
+<script id="lt-paper-codes" type="application/json">[{% for c in companies %}"{{ c.code|escapejs }}"{% if not forloop.last %},{% endif %}{% endfor %}]</script>
+
 <script>
 (function () {
   "use strict";
+
+  // Symbol cell -> Paper Trading live page of that stock (NSE "RELIANCE" -> company "RELIANCE.NS")
+  var PAPER_LIVE_URL = "{% url 'paper_trading:page_live' 'CODE_PLACEHOLDER' %}";
+  var PAPER_CODES = new Set(JSON.parse(document.getElementById("lt-paper-codes").textContent));
+  function paperLiveUrl(sym) {
+    var code = sym + ".NS";
+    return PAPER_CODES.has(code) ? PAPER_LIVE_URL.replace("CODE_PLACEHOLDER", encodeURIComponent(code)) : null;
+  }
 
   // ----------------------------------------------------------------
   // CONFIG — one entry per table. `symbolKey` = field JS reads to
@@ -393,6 +406,21 @@
         var raw = row[col.key];
         td.textContent = fmt(raw, col.type);
         if (i === 0) td.classList.add("lt-sym");
+        var href = i === 0 && sym ? paperLiveUrl(sym) : null;
+        if (href) {
+          var link = document.createElement("a");
+          link.href = href;
+          link.className = "lt-sym-link";
+          link.title = "Open " + sym + " in Paper Trading (Live)";
+          link.textContent = td.textContent;
+          td.textContent = "";
+          td.appendChild(link);
+          // The whole Symbol cell navigates (and never opens the popup); other cells keep the popup.
+          td.addEventListener("click", function (e) {
+            e.stopPropagation();
+            if (!e.target.closest("a")) window.location.href = href;
+          });
+        }
         if (col.type === "pct" || col.signed) {
           var cls = signClass(raw);
           if (cls) td.classList.add(cls);
