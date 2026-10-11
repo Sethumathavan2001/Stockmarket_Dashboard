@@ -1,5 +1,13 @@
+import re
+import threading
+import traceback
 import uuid
+from pathlib import Path
+from zoneinfo import ZoneInfo
 import pandas as pd
+from django.conf import settings
+from django.db import connection
+from django.http import FileResponse, Http404
 from django.shortcuts import render, get_object_or_404
 from django.db.models import Count
 from .models import Company, DailyData, FiveMinuteData
@@ -273,25 +281,14 @@ def analysis_view(request):
 def daily_data_page(request):
     return render(request, "market/daily_data_run.html")
 
-@require_POST
-def fetch_daily_data(request):
-    task_id = str(uuid.uuid4())
-
+def _daily_worker(task_id):
     companies = Company.objects.filter(exchange="NSE")
     total_companies = companies.count()
-
-    cache.set(
-        task_id,
-        {
-            "total": total_companies,
-            "done": 0,
-            "rows": 0,
-            "status": "running",
-        },
-        None,
-    )
+    _progress(task_id, total=total_companies)
 
     inserted_rows = 0
+    errors = 0
+    no_data = 0
 
     # Get the latest NSE trading day.
     # Saturday (5) and Sunday (6) -> Friday
@@ -315,185 +312,149 @@ def fetch_daily_data(request):
     }
 
     for index, company in enumerate(companies, start=1):
-        # print(f"Processing {company.code}")
+        _progress(task_id, current=company.code)
+        try:
+            # print(f"Processing {company.code}")
 
-        latest = DailyData.objects.filter(
-            company=company
-        ).aggregate(
-            max_date=Max("date")
-        )["max_date"]
+            latest = DailyData.objects.filter(
+                company=company
+            ).aggregate(
+                max_date=Max("date")
+            )["max_date"]
 
-        # Compare against the latest market/trading day,
-        # NOT date.today().
-        if latest == market_date:
-            # print(
-            #     f"Data for {company.code} is already up to date "
-            #     f"for {market_date}."
-            # )
+            # Compare against the latest market/trading day,
+            # NOT date.today().
+            if latest == market_date:
+                # print(
+                #     f"Data for {company.code} is already up to date "
+                #     f"for {market_date}."
+                # )
 
-            cache.set(
-                task_id,
-                {
-                    "total": total_companies,
-                    "done": index,
-                    "rows": inserted_rows,
-                    "status": "running",
-                },
-                None,
-            )
-            continue
+                _progress(task_id, done=index, rows=inserted_rows, current=company.code)
+                continue
 
-        start_date = (
-            latest + timedelta(days=1)
-            if latest
-            else date(2000, 1, 1)
-        )
-
-        # yfinance end date is exclusive, so add one day.
-        end_date = market_date + timedelta(days=1)
-
-        df = yf.download(
-            company.code,
-            start=start_date.strftime("%Y-%m-%d"),
-            end=end_date.strftime("%Y-%m-%d"),
-            interval="1d",
-            auto_adjust=True,
-            progress=False,
-            threads=False,
-        )
-
-        if df.empty:
-            # print(f"No new data for {company.code}.")
-
-            cache.set(
-                task_id,
-                {
-                    "total": total_companies,
-                    "done": index,
-                    "rows": inserted_rows,
-                    "status": "running",
-                },
-                None,
-            )
-            continue
-        print(f"Processing {company.code}")
-        df.columns = df.columns.get_level_values(0)
-        df = df.reset_index()
-        df["Date"] = pd.to_datetime(df["Date"]).dt.date
-
-        # Calculations
-        df["High_Low"] = df["High"] - df["Low"]
-        df["Close_Open"] = df["Close"] - df["Open"]
-        df["High_Open"] = df["High"] - df["Open"]
-        df["Open_Low"] = df["Open"] - df["Low"]
-        df["Status"] = df["Close_Open"].apply(
-            lambda x: 1 if x > 0 else 0
-        )
-
-        df["Weekday"] = (
-            pd.to_datetime(df["Date"])
-            .dt.day_name()
-            .map(weekday)
-        )
-
-        df["WeekNumber"] = (
-            pd.to_datetime(df["Date"])
-            .dt.isocalendar()
-            .week
-        )
-
-        # Get last DB close for PreviousClose
-        last_record = (
-            DailyData.objects
-            .filter(company=company)
-            .order_by("-date")
-            .first()
-        )
-
-        last_close = (
-            last_record.close
-            if last_record
-            else None
-        )
-
-        df["PreviousClose"] = df["Close"].shift(1)
-
-        if not df.empty:
-            if last_close is not None:
-                df.loc[df.index[0], "PreviousClose"] = last_close
-            else:
-                df.loc[df.index[0], "PreviousClose"] = 0
-
-        daily_objects = []
-
-        for row in df.itertuples(index=False):
-            obj = DailyData(
-                date=row.Date,
-                company=company,
-                previous=row.PreviousClose,
-                open=row.Open,
-                low=row.Low,
-                high=row.High,
-                close=row.Close,
-                high_low=row.High_Low,
-                close_open=row.Close_Open,
-                high_open=row.High_Open,
-                open_low=row.Open_Low,
-                status=row.Status,
-                weekday=row.Weekday,
-                week_number=row.WeekNumber,
-                volume=row.Volume,
+            start_date = (
+                latest + timedelta(days=1)
+                if latest
+                else date(2000, 1, 1)
             )
 
-            daily_objects.append(obj)
-        for obj in daily_objects:
-            for field in obj._meta.fields:
-                value = getattr(obj, field.name)
+            # yfinance end date is exclusive, so add one day.
+            end_date = market_date + timedelta(days=1)
 
-                if pd.isna(value):
-                    print(f"NULL/NaN found: {field.name} = {value}")
-        DailyData.objects.bulk_create(
-            daily_objects,
-            ignore_conflicts=True,
-        )
+            df = yf.download(
+                company.code,
+                start=start_date.strftime("%Y-%m-%d"),
+                end=end_date.strftime("%Y-%m-%d"),
+                interval="1d",
+                auto_adjust=True,
+                progress=False,
+                threads=False,
+            )
 
-        inserted_rows += len(daily_objects)
+            if df.empty:
+                # print(f"No new data for {company.code}.")
+                no_data += _record_no_data(task_id, company.code)
+                _progress(task_id, done=index, rows=inserted_rows, current=company.code, no_data=no_data)
+                continue
+            print(f"Processing {company.code}")
+            df.columns = df.columns.get_level_values(0)
+            df = df.reset_index()
+            df["Date"] = pd.to_datetime(df["Date"]).dt.date
 
-        cache.set(
-            task_id,
-            {
-                "total": total_companies,
-                "done": index,
-                "rows": inserted_rows,
-                "status": "running",
-            },
-            None,
-        )
+            # Calculations
+            df["High_Low"] = df["High"] - df["Low"]
+            df["Close_Open"] = df["Close"] - df["Open"]
+            df["High_Open"] = df["High"] - df["Open"]
+            df["Open_Low"] = df["Open"] - df["Low"]
+            df["Status"] = df["Close_Open"].apply(
+                lambda x: 1 if x > 0 else 0
+            )
 
-    cache.set(
-        task_id,
-        {
-            "total": total_companies,
-            "done": total_companies,
-            "rows": inserted_rows,
-            "status": "completed",
-        },
-        None,
-    )
+            df["Weekday"] = (
+                pd.to_datetime(df["Date"])
+                .dt.day_name()
+                .map(weekday)
+            )
 
-    return JsonResponse(
-        {
-            "status": "success",
-            "rows_inserted": inserted_rows,
-            "task_id": task_id,
-        }
-    )
+            df["WeekNumber"] = (
+                pd.to_datetime(df["Date"])
+                .dt.isocalendar()
+                .week
+            )
 
-@require_POST
-def fetch_five_minute_data(request):
-    task_id = str(uuid.uuid4())
+            # Get last DB close for PreviousClose
+            last_record = (
+                DailyData.objects
+                .filter(company=company)
+                .order_by("-date")
+                .first()
+            )
+
+            last_close = (
+                last_record.close
+                if last_record
+                else None
+            )
+
+            df["PreviousClose"] = df["Close"].shift(1)
+
+            if not df.empty:
+                if last_close is not None:
+                    df.loc[df.index[0], "PreviousClose"] = last_close
+                else:
+                    df.loc[df.index[0], "PreviousClose"] = 0
+
+            daily_objects = []
+
+            for row in df.itertuples(index=False):
+                obj = DailyData(
+                    date=row.Date,
+                    company=company,
+                    previous=row.PreviousClose,
+                    open=row.Open,
+                    low=row.Low,
+                    high=row.High,
+                    close=row.Close,
+                    high_low=row.High_Low,
+                    close_open=row.Close_Open,
+                    high_open=row.High_Open,
+                    open_low=row.Open_Low,
+                    status=row.Status,
+                    weekday=row.Weekday,
+                    week_number=row.WeekNumber,
+                    volume=row.Volume,
+                )
+
+                daily_objects.append(obj)
+            for obj in daily_objects:
+                for field in obj._meta.fields:
+                    value = getattr(obj, field.name)
+
+                    # if pd.isna(value):
+                    #     print(f"NULL/NaN found: {field.name} = {value}")
+            DailyData.objects.bulk_create(
+                daily_objects,
+                ignore_conflicts=True,
+            )
+
+            inserted_rows += len(daily_objects)
+
+            _progress(task_id, done=index, rows=inserted_rows, current=company.code)
+        except Exception as exc:                      # one bad ticker must not stop the run
+            errors += 1
+            _record_exception(task_id, company.code, exc)
+            _progress(task_id, done=index, rows=inserted_rows, errors=errors)
+
+    _progress(task_id, done=total_companies, rows=inserted_rows, status="completed", current="")
+
+def _five_minute_worker(task_id):
     companies = Company.objects.filter(exchange="NSE")
+    total_companies = companies.count()
+    _progress(task_id, total=total_companies)
     inserted_rows = 0
+    errors = 0
+    no_data = 0
 
     weekday = {
         "Monday": 2,
@@ -533,224 +494,331 @@ def fetch_five_minute_data(request):
 
     print(f"Latest expected NSE market time: {latest_market_dt}")
 
-    for company in companies:
-        print(f"Processing 5m data for {company.code}")
+    for index, company in enumerate(companies, start=1):
+        _progress(task_id, done=index - 1, rows=inserted_rows, current=company.code)
+        try:
+            print(f"Processing 5m data for {company.code}")
 
-        latest_ts = (
-            FiveMinuteData.objects
-            .filter(company=company)
-            .aggregate(max_ts=Max("timestamp"))
-        )["max_ts"]
+            latest_ts = (
+                FiveMinuteData.objects
+                .filter(company=company)
+                .aggregate(max_ts=Max("timestamp"))
+            )["max_ts"]
 
-        # ---------------------------------------------------------
-        # If database already has data up to the latest market time,
-        # don't call Yahoo again.
-        # ---------------------------------------------------------
-        if latest_ts:
-            # Make sure both datetimes are timezone-aware
-            if timezone.is_naive(latest_ts):
-                latest_ts = timezone.make_aware(
-                    latest_ts,
-                    timezone.get_current_timezone(),
+            # ---------------------------------------------------------
+            # If database already has data up to the latest market time,
+            # don't call Yahoo again.
+            # ---------------------------------------------------------
+            if latest_ts:
+                # Make sure both datetimes are timezone-aware
+                if timezone.is_naive(latest_ts):
+                    latest_ts = timezone.make_aware(
+                        latest_ts,
+                        timezone.get_current_timezone(),
+                    )
+
+                if latest_ts >= latest_market_dt:
+                    print(
+                        f"{company.code} is already up to date. "
+                        f"Latest DB timestamp: {latest_ts}"
+                    )
+                    continue
+
+            # ---------------------------------------------------------
+            # Yahoo Finance 5-minute data limitation
+            # Approximately 60 days.
+            # ---------------------------------------------------------
+            yahoo_min_date = now - timedelta(days=59)
+
+            if latest_ts and latest_ts > yahoo_min_date:
+                start_dt = latest_ts + timedelta(minutes=5)
+            else:
+                start_dt = yahoo_min_date
+
+            # Don't request beyond the latest available market time.
+            end_dt = latest_market_dt + timedelta(minutes=5)
+
+            print(
+                f"{company.code}: downloading from "
+                f"{start_dt} to {end_dt}"
+            )
+
+            df = yf.download(
+                company.code,
+                start=start_dt,
+                end=end_dt,
+                interval="5m",
+                auto_adjust=True,
+                progress=False,
+                threads=False,
+            )
+
+            if df.empty:
+                print(f"No new 5m data for {company.code}")
+                no_data += _record_no_data(task_id, company.code)
+                _progress(task_id, no_data=no_data)
+                continue
+
+            # Handle MultiIndex columns returned by yfinance
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+
+            df = df.reset_index()
+
+            # yfinance may return Datetime or datetime depending on version
+            if "Datetime" in df.columns:
+                df.rename(
+                    columns={"Datetime": "Timestamp"},
+                    inplace=True,
                 )
 
-            if latest_ts >= latest_market_dt:
+            df["Timestamp"] = pd.to_datetime(
+                df["Timestamp"]
+            )
+
+            # ---------------------------------------------------------
+            # Remove data beyond the latest expected market time
+            # ---------------------------------------------------------
+            df = df[
+                df["Timestamp"] <= latest_market_dt
+            ].copy()
+
+            if df.empty:
                 print(
-                    f"{company.code} is already up to date. "
-                    f"Latest DB timestamp: {latest_ts}"
+                    f"No new market-time data for {company.code}"
                 )
                 continue
 
-        # ---------------------------------------------------------
-        # Yahoo Finance 5-minute data limitation
-        # Approximately 60 days.
-        # ---------------------------------------------------------
-        yahoo_min_date = now - timedelta(days=59)
-
-        if latest_ts and latest_ts > yahoo_min_date:
-            start_dt = latest_ts + timedelta(minutes=5)
-        else:
-            start_dt = yahoo_min_date
-
-        # Don't request beyond the latest available market time.
-        end_dt = latest_market_dt + timedelta(minutes=5)
-
-        print(
-            f"{company.code}: downloading from "
-            f"{start_dt} to {end_dt}"
-        )
-
-        df = yf.download(
-            company.code,
-            start=start_dt,
-            end=end_dt,
-            interval="5m",
-            auto_adjust=True,
-            progress=False,
-            threads=False,
-        )
-
-        if df.empty:
-            print(f"No new 5m data for {company.code}")
-            continue
-
-        # Handle MultiIndex columns returned by yfinance
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-
-        df = df.reset_index()
-
-        # yfinance may return Datetime or datetime depending on version
-        if "Datetime" in df.columns:
-            df.rename(
-                columns={"Datetime": "Timestamp"},
-                inplace=True,
+            # ---------------------------------------------------------
+            # Calculations
+            # ---------------------------------------------------------
+            df["High_Low"] = (
+                df["High"] - df["Low"]
             )
 
-        df["Timestamp"] = pd.to_datetime(
-            df["Timestamp"]
-        )
-
-        # ---------------------------------------------------------
-        # Remove data beyond the latest expected market time
-        # ---------------------------------------------------------
-        df = df[
-            df["Timestamp"] <= latest_market_dt
-        ].copy()
-
-        if df.empty:
-            print(
-                f"No new market-time data for {company.code}"
+            df["Close_Open"] = (
+                df["Close"] - df["Open"]
             )
-            continue
 
-        # ---------------------------------------------------------
-        # Calculations
-        # ---------------------------------------------------------
-        df["High_Low"] = (
-            df["High"] - df["Low"]
-        )
+            df["High_Open"] = (
+                df["High"] - df["Open"]
+            )
 
-        df["Close_Open"] = (
-            df["Close"] - df["Open"]
-        )
+            df["Open_Low"] = (
+                df["Open"] - df["Low"]
+            )
 
-        df["High_Open"] = (
-            df["High"] - df["Open"]
-        )
+            df["Status"] = df["Close_Open"].apply(
+                lambda x: 1 if x > 0 else 0
+            )
 
-        df["Open_Low"] = (
-            df["Open"] - df["Low"]
-        )
+            df["Weekday"] = (
+                df["Timestamp"]
+                .dt.day_name()
+                .map(weekday)
+            )
 
-        df["Status"] = df["Close_Open"].apply(
-            lambda x: 1 if x > 0 else 0
-        )
+            df["WeekNumber"] = (
+                df["Timestamp"]
+                .dt.isocalendar()
+                .week
+            )
 
-        df["Weekday"] = (
-            df["Timestamp"]
-            .dt.day_name()
-            .map(weekday)
-        )
+            # ---------------------------------------------------------
+            # Previous close logic
+            # ---------------------------------------------------------
+            last_record = (
+                FiveMinuteData.objects
+                .filter(company=company)
+                .order_by("-timestamp")
+                .first()
+            )
 
-        df["WeekNumber"] = (
-            df["Timestamp"]
-            .dt.isocalendar()
-            .week
-        )
+            last_close = (
+                last_record.close
+                if last_record
+                else None
+            )
 
-        # ---------------------------------------------------------
-        # Previous close logic
-        # ---------------------------------------------------------
-        last_record = (
-            FiveMinuteData.objects
-            .filter(company=company)
-            .order_by("-timestamp")
-            .first()
-        )
+            df["PreviousClose"] = (
+                df["Close"].shift(1)
+            )
 
-        last_close = (
-            last_record.close
-            if last_record
-            else None
-        )
+            if not df.empty:
+                if last_close is not None:
+                    df.loc[
+                        df.index[0],
+                        "PreviousClose"
+                    ] = last_close
+                else:
+                    df.loc[
+                        df.index[0],
+                        "PreviousClose"
+                    ] = 0
 
-        df["PreviousClose"] = (
-            df["Close"].shift(1)
-        )
+            # ---------------------------------------------------------
+            # Create objects
+            # ---------------------------------------------------------
+            objects = []
 
-        if not df.empty:
-            if last_close is not None:
-                df.loc[
-                    df.index[0],
-                    "PreviousClose"
-                ] = last_close
-            else:
-                df.loc[
-                    df.index[0],
-                    "PreviousClose"
-                ] = 0
-
-        # ---------------------------------------------------------
-        # Create objects
-        # ---------------------------------------------------------
-        objects = []
-
-        for row in df.itertuples(index=False):
-            objects.append(
-                FiveMinuteData(
-                    timestamp=row.Timestamp,
-                    company=company,
-                    previous=row.PreviousClose,
-                    open=row.Open,
-                    low=row.Low,
-                    high=row.High,
-                    close=row.Close,
-                    high_low=row.High_Low,
-                    close_open=row.Close_Open,
-                    high_open=row.High_Open,
-                    open_low=row.Open_Low,
-                    status=row.Status,
-                    weekday=row.Weekday,
-                    week_number=row.WeekNumber,
-                    volume=row.Volume,
+            for row in df.itertuples(index=False):
+                objects.append(
+                    FiveMinuteData(
+                        timestamp=row.Timestamp,
+                        company=company,
+                        previous=row.PreviousClose,
+                        open=row.Open,
+                        low=row.Low,
+                        high=row.High,
+                        close=row.Close,
+                        high_low=row.High_Low,
+                        close_open=row.Close_Open,
+                        high_open=row.High_Open,
+                        open_low=row.Open_Low,
+                        status=row.Status,
+                        weekday=row.Weekday,
+                        week_number=row.WeekNumber,
+                        volume=row.Volume,
+                    )
                 )
+
+            FiveMinuteData.objects.bulk_create(
+                objects,
+                ignore_conflicts=True,
             )
 
-        FiveMinuteData.objects.bulk_create(
-            objects,
-            ignore_conflicts=True,
-        )
+            inserted_rows += len(objects)
 
-        inserted_rows += len(objects)
-
-        print(
-            f"Inserted {len(objects)} rows for {company.code}"
-        )
+            print(
+                f"Inserted {len(objects)} rows for {company.code}"
+            )
+        except Exception as exc:                      # one bad ticker must not stop the run
+            errors += 1
+            _record_exception(task_id, company.code, exc)
+            _progress(task_id, done=index, rows=inserted_rows, errors=errors)
 
     # return JsonResponse({
     #     "status": "success",
     #     "rows_inserted": inserted_rows,
     # })
 
-    cache.set(
-        task_id,
-        {
-            # "total": total_companies,
-            # "done": total_companies,
-            "rows": inserted_rows,
-            "status": "completed",
-        },
-        None,
-    )
+    _progress(task_id, done=total_companies, rows=inserted_rows, status="completed", current="")
 
-    return JsonResponse(
-        {
-            "status": "success",
-            "rows_inserted": inserted_rows,
-            "task_id": task_id,
-        }
-    )
+
+# ---------------------------------------------------------------------------
+# Background fetch jobs.  The request only starts the job and returns its
+# task_id at once; the page polls /progress/<task_id>/ while it runs.
+# (Progress lives in the cache: with LocMemCache that means one server
+# process, which is what runserver uses.)
+#
+# Strictly sequential: yfinance fails when called in parallel, so only ONE
+# fetch job (Daily or 5 Minute) may run at a time, and it downloads one
+# company after another.
+# ---------------------------------------------------------------------------
+FETCH_JOB_KEY = "fetch_job:current"          # task_id of the job that is running, if any
+_FETCH_START_LOCK = threading.Lock()         # two clicks at once must not start two jobs
+
+
+FETCH_ERROR_DIR = Path(settings.BASE_DIR) / "logs" / "fetch_errors"
+FETCH_ERROR_NAME = re.compile(r"^[\w-]+\.log$")
+
+
+def _progress(task_id, **fields):
+    data = cache.get(task_id) or {"total": 0, "done": 0, "rows": 0, "errors": 0, "no_data": 0,
+                                  "status": "running", "current": ""}
+    data.update(fields)
+    cache.set(task_id, data, 24 * 3600)
+
+
+def _log_symbol_problem(task_id, code, kind, message, tb=None):
+    """
+    Append one symbol's problem to this run's log file, logs/fetch_errors/<job>_<time>.log.
+    The file is only created when the first problem happens.  `kind` is ERROR (an exception)
+    or NO DATA (Yahoo returned nothing and said why, e.g. "possibly delisted").
+    """
+    data = cache.get(task_id) or {}
+    name = data.get("error_log")
+    now = datetime.now(ZoneInfo("Asia/Kolkata"))
+    path_ = FETCH_ERROR_DIR / (name or "")
+    if not name:
+        name = f"{data.get('kind', 'fetch')}_{now:%Y%m%d_%H%M%S}.log"
+        path_ = FETCH_ERROR_DIR / name
+        FETCH_ERROR_DIR.mkdir(parents=True, exist_ok=True)
+        with open(path_, "w", encoding="utf-8") as fh:
+            fh.write(f"# {data.get('kind', 'fetch')} fetch started {data.get('started', '')} - task {task_id}\n")
+            fh.write("# time (IST) | symbol | type | message\n")
+        _progress(task_id, error_log=name)
+    with open(path_, "a", encoding="utf-8") as fh:
+        fh.write(f"{now:%Y-%m-%d %H:%M:%S} | {code} | {kind} | {message}\n")
+        if tb:
+            fh.write("".join("    " + line + "\n" for line in tb.rstrip().splitlines()))
+
+
+def _yahoo_error(code):
+    """The reason Yahoo gave for an empty yf.download of `code` (yfinance keeps it in shared._ERRORS)."""
+    errors = getattr(getattr(yf, "shared", None), "_ERRORS", None) or {}
+    return errors.get(code)
+
+
+def _record_no_data(task_id, code):
+    """Log an empty download only when Yahoo said why (delisted / bad symbol / no data)."""
+    reason = _yahoo_error(code)
+    if not reason:
+        return 0
+    _log_symbol_problem(task_id, code, "NO DATA", reason)
+    return 1
+
+
+def _record_exception(task_id, code, exc):
+    print(f"Fetch failed for {code}: {exc}")
+    _log_symbol_problem(task_id, code, "ERROR", f"{type(exc).__name__}: {exc}", traceback.format_exc())
+
+
+def fetch_error_log(request, name):
+    """Download a fetch run's symbol error log (logs/fetch_errors/<name>)."""
+    if not FETCH_ERROR_NAME.match(name) or not (FETCH_ERROR_DIR / name).is_file():
+        raise Http404("No such log")
+    return FileResponse(open(FETCH_ERROR_DIR / name, "rb"), content_type="text/plain; charset=utf-8",
+                        as_attachment=request.GET.get("download") == "1", filename=name)
+
+
+def _run_job(kind, task_id, worker):
+    try:
+        worker(task_id)
+    except Exception as exc:
+        _log_symbol_problem(task_id, "-", "JOB FAILED", f"{type(exc).__name__}: {exc}", traceback.format_exc())
+        _progress(task_id, status="failed", error=str(exc))
+    finally:
+        cache.delete(FETCH_JOB_KEY)
+        connection.close()                  # this thread's DB connection
+
+
+def _start_job(kind, worker):
+    """
+    Start `worker` in a background thread - unless ANY fetch job is still running (Daily or
+    5 Minute), in which case nothing new starts and the running job's task_id is returned.
+    """
+    with _FETCH_START_LOCK:
+        running = cache.get(FETCH_JOB_KEY)
+        state = cache.get(running) if running else None
+        if state and state.get("status") == "running":
+            return JsonResponse({"status": "running", "task_id": running, "already_running": True,
+                                 "running_kind": state.get("kind")})
+        task_id = str(uuid.uuid4())
+        _progress(task_id, kind=kind, started=timezone.now().isoformat())
+        cache.set(FETCH_JOB_KEY, task_id, 24 * 3600)
+        threading.Thread(target=_run_job, args=(kind, task_id, worker), daemon=True).start()
+    return JsonResponse({"status": "started", "task_id": task_id})
+
+
+@require_POST
+def fetch_daily_data(request):
+    return _start_job("daily", _daily_worker)
+
+
+@require_POST
+def fetch_five_minute_data(request):
+    return _start_job("5min", _five_minute_worker)
 def fetch_progress(request, task_id):
     data = cache.get(task_id)
     if not data:

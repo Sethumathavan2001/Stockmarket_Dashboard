@@ -19,6 +19,7 @@ urlpatterns = [
     path("api/fetch-daily-data/", views.fetch_daily_data, name="fetch_daily_data"),
     path("api/fetch-five-minute-data/", views.fetch_five_minute_data, name="fetch_five_minute_data"),
     path("progress/<str:task_id>/", views.fetch_progress, name="fetch_progress"),
+    path("fetch-error-log/<str:name>/", views.fetch_error_log, name="fetch_error_log"),
     path("delete-data/", views.delete_data_by_date, name="delete_data"),
     path("chart/", views.chart_view, name="chart_view"),
     path("chart/data/", views.chart_data, name="chart_data"),
