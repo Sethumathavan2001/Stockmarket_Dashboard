@@ -7,7 +7,28 @@ class Company(models.Model):
     exchange = models.CharField(max_length=50, blank=True)
     sector = models.CharField(max_length=100, blank=True)
     industry = models.CharField(max_length=100, blank=True)
+    latest_price = models.FloatField(null=True, blank=True)
+    # 🔥 LOW ANALYSIS
+    low_yearly = models.FloatField(null=True, blank=True)
+    low_monthly = models.FloatField(null=True, blank=True)
+    low_monthly_avg = models.FloatField(null=True, blank=True)
+    low_monthly_min = models.FloatField(null=True, blank=True)
+    low_monthly_max = models.FloatField(null=True, blank=True)
+    low_weekly = models.FloatField(null=True, blank=True)
+    low_weekly_avg = models.FloatField(null=True, blank=True)
+    low_weekly_min = models.FloatField(null=True, blank=True)
+    low_weekly_max = models.FloatField(null=True, blank=True)
 
+    # 🔥 HIGH ANALYSIS
+    high_yearly = models.FloatField(null=True, blank=True)
+    high_monthly = models.FloatField(null=True, blank=True)
+    high_monthly_avg = models.FloatField(null=True, blank=True)
+    high_monthly_min = models.FloatField(null=True, blank=True)
+    high_monthly_max = models.FloatField(null=True, blank=True)
+    high_weekly = models.FloatField(null=True, blank=True)
+    high_weekly_avg = models.FloatField(null=True, blank=True)
+    high_weekly_min = models.FloatField(null=True, blank=True)
+    high_weekly_max = models.FloatField(null=True, blank=True)
     def __str__(self):
         return f"{self.code} - {self.name}"
 

@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Candle Pattern Predictor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/apexcharts@3.45.2/dist/apexcharts.min.js"></script>
+<style>
+  :root{
+    --navy-900:#0B2545; --navy-800:#123B7A; --blue-600:#2F6FED;
+    --bg:#FFFFFF; --panel:#F7F9FC; --border:#E3E8F0;
+    --text:#101828; --text-muted:#64748B;
+    --green:#0EA968; --green-bg:#E7F8F0;
+    --red:#E5484D; --red-bg:#FDECEC;
+    --amber:#B45309; --amber-bg:#FEF3E0;
+    --radius:10px; --shadow:0 1px 2px rgba(16,24,40,.04),0 1px 3px rgba(16,24,40,.06);
+  }
+  *{box-sizing:border-box;}
+  body{ margin:0; font-family:'Inter',system-ui,sans-serif; background:var(--bg); color:var(--text); }
+  .mono{ font-family:'JetBrains Mono',monospace; }
+
+  .navbar{
+    background:linear-gradient(180deg,var(--navy-800),var(--navy-900));
+    color:#fff; padding:14px 28px; display:flex; align-items:center; justify-content:space-between;
+    box-shadow:var(--shadow); position:sticky; top:0; z-index:20;
+  }
+  .navbar .brand{ display:flex; align-items:center; gap:10px; font-weight:700; font-size:18px; }
+  .navbar .brand .dot{ width:9px;height:9px;border-radius:50%; background:#5BE49B; box-shadow:0 0 0 4px rgba(91,228,155,.18); }
+  .navbar .tag{ font-size:12px; color:rgba(255,255,255,.65); font-weight:500; border-left:1px solid rgba(255,255,255,.2); padding-left:12px; }
+
+  .wrap{ max-width:1180px; margin:0 auto; padding:0 24px; }
+
+  .filter-bar{
+    background:var(--panel); border:1px solid var(--border); border-radius:var(--radius);
+    padding:16px 18px; margin-top:22px; display:flex; flex-wrap:wrap; align-items:end; gap:16px;
+  }
+  .field{ display:flex; flex-direction:column; gap:6px; min-width:240px; }
+  .field label{ font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.06em; color:var(--text-muted); }
+  .field select{
+    appearance:none; background:#fff url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M0 0l5 6 5-6z' fill='%2364748B'/></svg>") no-repeat right 12px center;
+    border:1px solid var(--border); border-radius:8px; padding:9px 32px 9px 12px; font-size:14px; font-weight:500; min-width:240px;
+  }
+  .field select:focus{ outline:2px solid var(--blue-600); outline-offset:1px; }
+
+  .btn-primary{ background:var(--blue-600); color:#fff; border:none; border-radius:8px; padding:10px 22px; font-size:14px; font-weight:600; cursor:pointer; }
+  .btn-primary:hover{ background:#255BC9; }
+  .btn-primary:disabled{ opacity:.5; cursor:not-allowed; }
+
+  .legend-row{ display:flex; flex-wrap:wrap; align-items:center; gap:18px; margin-top:16px; font-size:12.5px; color:var(--text-muted); }
+  .legend-chip{ display:flex; align-items:center; gap:6px; }
+  .legend-swatch{ width:14px; height:10px; border-radius:2px; }
+  .legend-swatch.actual-up{ background:var(--green); }
+  .legend-swatch.actual-down{ background:var(--red); }
+  .legend-swatch.predicted{ background:linear-gradient(90deg,var(--green),var(--red)); opacity:.35; border:1px dashed var(--text-muted); }
+
+  .results{ margin-top:18px; margin-bottom:60px; }
+  .state-msg{ text-align:center; color:var(--text-muted); font-size:14px; padding:60px 0; }
+
+  .chart-card{ border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); padding:10px 10px 4px; margin-bottom:20px; }
+
+  .bias-card{
+    border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow);
+    padding:16px 20px; display:flex; flex-wrap:wrap; align-items:center; gap:16px; margin-bottom:20px;
+  }
+  .bias-pill{ font-family:'JetBrains Mono',monospace; font-size:12.5px; font-weight:700; padding:5px 12px; border-radius:999px; text-transform:uppercase; letter-spacing:.03em; }
+  .bias-pill.bullish{ color:var(--green); background:var(--green-bg); }
+  .bias-pill.bearish{ color:var(--red); background:var(--red-bg); }
+  .bias-pill.neutral{ color:var(--text-muted); background:var(--panel); }
+  .bias-meta{ font-size:12.5px; color:var(--text-muted); }
+
+  table{ width:100%; border-collapse:collapse; border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; }
+  thead th{ text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--text-muted); background:var(--panel); padding:10px 14px; border-bottom:1px solid var(--border); }
+  tbody td{ padding:10px 14px; border-bottom:1px solid var(--border); font-size:13.5px; }
+  tbody tr:last-child td{ border-bottom:none; }
+  td.num{ font-family:'JetBrains Mono',monospace; }
+  .dir-pill{ font-family:'JetBrains Mono',monospace; font-size:11.5px; font-weight:700; padding:3px 9px; border-radius:999px; }
+  .dir-pill.bullish{ color:var(--green); background:var(--green-bg); }
+  .dir-pill.bearish{ color:var(--red); background:var(--red-bg); }
+  .dir-pill.neutral{ color:var(--text-muted); background:var(--panel); }
+
+  .disclaimer{ font-size:12px; color:var(--text-muted); margin-top:14px; line-height:1.5; }
+  .section-title{ font-size:13px; font-weight:700; margin:0 0 10px; color:var(--navy-800); }
+</style>
+</head>
+<body>
+
+<nav class="navbar">
+  <div class="brand"><span class="dot"></span> Candle Pattern Predictor
+    <span class="tag">Today's 5-min candles · pattern-based projection to 3:15 PM</span>
+  </div>
+</nav>
+
+<div class="wrap">
+  <div class="filter-bar">
+    <div class="field">
+      <label for="companySelect">Company</label>
+      <select id="companySelect">
+        <option value="">Select a company</option>
+        {% for company in companies %}
+          <option value="{{ company.code }}">{{ company.code }} — {{ company.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button class="btn-primary" id="showBtn">Show</button>
+  </div>
+
+  <div class="legend-row">
+    <span class="legend-chip"><span class="legend-swatch actual-up"></span>Actual (up)</span>
+    <span class="legend-chip"><span class="legend-swatch actual-down"></span>Actual (down)</span>
+    <span class="legend-chip"><span class="legend-swatch predicted"></span>Predicted (lightened / faded region)</span>
+  </div>
+
+  <div class="results" id="results">
+    <div class="state-msg">Select a company and click "Show" to load today's candles.</div>
+  </div>
+</div>
+
+<script>
+const DATA_URL = (code) => `/api/candle-predictor/${encodeURIComponent(code)}/`;
+
+const companySelect = document.getElementById('companySelect');
+const showBtn = document.getElementById('showBtn');
+const results = document.getElementById('results');
+
+let activeChart = null;
+
+showBtn.addEventListener('click', loadData);
+
+function destroyChart(){
+  if (activeChart){ activeChart.destroy(); activeChart = null; }
+}
+
+function fmtTime(iso){
+  return new Date(iso).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+}
+
+async function loadData(){
+  const code = companySelect.value;
+  if (!code){ alert('Select a company first.'); return; }
+
+  showBtn.disabled = true;
+  results.innerHTML = '<div class="state-msg">Loading today\'s candles…</div>';
+  destroyChart();
+
+  let res, data;
+  try {
+    res = await fetch(DATA_URL(code));
+    data = await res.json();
+  } catch (e){
+    results.innerHTML = '<div class="state-msg">Could not reach the server.</div>';
+    showBtn.disabled = false;
+    return;
+  }
+
+  showBtn.disabled = false;
+
+  if (!res.ok){
+    results.innerHTML = `<div class="state-msg">${data.error || 'Something went wrong.'}</div>`;
+    return;
+  }
+
+  render(data);
+}
+
+function render(data){
+  results.innerHTML = `
+    <div class="bias-card" id="biasCard"></div>
+    <div class="chart-card"><div id="candleChart" style="min-height:380px;"></div></div>
+    <h3 class="section-title">Detected patterns today</h3>
+    <table id="patternsTable"></table>
+    <div class="disclaimer">${data.disclaimer}</div>
+  `;
+
+  renderBiasCard(data.bias_summary, data);
+  renderChart(data);
+  renderPatternsTable(data.actual_candles);
+}
+
+function renderBiasCard(bias, data){
+  const card = document.getElementById('biasCard');
+  card.innerHTML = `
+    <span class="bias-pill ${bias.direction}">${bias.direction}</span>
+    <span class="bias-meta">Bias score: <strong class="mono">${bias.bias_score}</strong></span>
+    <span class="bias-meta">Company: <strong>${data.company}</strong></span>
+    <span class="bias-meta">Market: <strong>${data.market_status.replace('_',' ')}</strong></span>
+    <span class="bias-meta">As of: <strong class="mono">${fmtTime(data.as_of)}</strong></span>
+    <span class="bias-meta">Projection cutoff: <strong class="mono">${data.prediction_cutoff}</strong></span>
+  `;
+}
+
+function renderChart(data){
+  const actual = data.actual_candles;
+  const predicted = data.predicted_candles;
+  const allCandles = actual.concat(predicted);
+
+  const seriesData = allCandles.map(c => ({ x: new Date(c.x), y: [c.o, c.h, c.l, c.c] }));
+
+  const annotations = { xaxis: [], points: [] };
+
+  if (predicted.length){
+    annotations.xaxis.push({
+      x: new Date(predicted[0].x).getTime(),
+      x2: new Date(predicted[predicted.length - 1].x).getTime(),
+      fillColor: '#FFFFFF',
+      opacity: 0.55,
+      label: {
+        text: 'Predicted (heuristic)',
+        orientation: 'horizontal',
+        style: { color: '#64748B', background: '#F7F9FC', fontSize: '10.5px', fontWeight: 700 },
+      },
+    });
+    annotations.xaxis.push({
+      x: new Date(predicted[0].x).getTime(),
+      borderColor: '#94A3B8',
+      strokeDashArray: 4,
+      label: {
+        text: 'Now →',
+        style: { color: '#fff', background: '#123B7A', fontSize: '10.5px', fontWeight: 700 },
+      },
+    });
+  }
+
+  // Mark the most recent few detected (non-neutral) patterns directly on the chart.
+  const patternHits = [];
+  actual.forEach(c => {
+    (c.patterns || []).forEach(p => {
+      if (p.direction !== 'neutral') patternHits.push({ candle: c, pattern: p });
+    });
+  });
+  patternHits.slice(-5).forEach(({ candle, pattern }) => {
+    const color = pattern.direction === 'bullish' ? '#0EA968' : '#E5484D';
+    annotations.points.push({
+      x: new Date(candle.x).getTime(),
+      y: pattern.direction === 'bullish' ? candle.l : candle.h,
+      marker: { size: 0 },
+      label: {
+        text: pattern.name,
+        borderColor: color,
+        style: { color: '#fff', background: color, fontSize: '9.5px', fontWeight: 700 },
+        offsetY: pattern.direction === 'bullish' ? 14 : -6,
+      },
+    });
+  });
+
+  activeChart = new ApexCharts(document.getElementById('candleChart'), {
+    chart:{
+      type:'candlestick',
+      height:380,
+      toolbar:{ show:true, tools:{ zoom:true, pan:true, reset:true } },
+      fontFamily:'JetBrains Mono, monospace',
+    },
+    series:[{ data: seriesData }],
+    xaxis:{ type:'datetime', labels:{ datetimeUTC:false } },
+    yaxis:{ tooltip:{ enabled:true }, labels:{ formatter:(v)=>v?.toFixed(2) } },
+    annotations,
+    plotOptions:{
+      candlestick:{ colors:{ upward:'#0EA968', downward:'#E5484D' }, wick:{ useFillColor:true } }
+    },
+    tooltip:{
+      custom: function({ dataPointIndex }){
+        const c = allCandles[dataPointIndex];
+        const time = new Date(c.x).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+        const tag = c.is_predicted ? '<span style="color:#64748B;">(predicted)</span>' : '';
+        const pats = (c.patterns || []).map(p => p.name).join(', ');
+        return `
+          <div style="padding:8px 10px;font-size:12px;">
+            <div style="font-weight:700;margin-bottom:4px;">${time} ${tag}</div>
+            <div>O <b>${c.o.toFixed(2)}</b> &nbsp; H <b>${c.h.toFixed(2)}</b></div>
+            <div>L <b>${c.l.toFixed(2)}</b> &nbsp; C <b>${c.c.toFixed(2)}</b></div>
+            ${pats ? `<div style="margin-top:4px;color:#123B7A;font-weight:700;">${pats}</div>` : ''}
+          </div>
+        `;
+      }
+    },
+    grid:{ borderColor:'#E3E8F0' },
+  });
+
+  activeChart.render();
+}
+
+function renderPatternsTable(actualCandles){
+  const rows = [];
+  actualCandles.forEach(c => {
+    (c.patterns || []).forEach(p => {
+      if (p.direction === 'neutral' && p.name !== 'Doji') return;
+      rows.push({ time: fmtTime(c.x), name: p.name, direction: p.direction });
+    });
+  });
+
+  const table = document.getElementById('patternsTable');
+  if (!rows.length){
+    table.outerHTML = '<div class="state-msg" style="padding:30px 0;">No patterns detected yet today.</div>';
+    return;
+  }
+
+  table.innerHTML = `
+    <thead><tr><th>Time</th><th>Pattern</th><th>Direction</th></tr></thead>
+    <tbody>
+      ${rows.reverse().map(r => `
+        <tr>
+          <td class="num">${r.time}</td>
+          <td>${r.name}</td>
+          <td><span class="dir-pill ${r.direction}">${r.direction}</span></td>
+        </tr>
+      `).join('')}
+    </tbody>
+  `;
+}
+</script>
+</body>
+</html>

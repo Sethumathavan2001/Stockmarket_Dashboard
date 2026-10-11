@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Market Charts</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/apexcharts@3.45.2/dist/apexcharts.min.js"></script>
+<style>
+  :root{
+    --navy-900:#0B2545;
+    --navy-800:#123B7A;
+    --blue-600:#2F6FED;
+    --blue-50:#EEF3FF;
+    --bg:#FFFFFF;
+    --panel:#F7F9FC;
+    --border:#E3E8F0;
+    --text:#101828;
+    --text-muted:#64748B;
+    --green:#0EA968;
+    --green-bg:#E7F8F0;
+    --red:#E5484D;
+    --red-bg:#FDECEC;
+    --yellow:#CA8A04;
+    --yellow-bg:#FEF9E7;
+    --radius:10px;
+    --shadow:0 1px 2px rgba(16,24,40,.04),0 1px 3px rgba(16,24,40,.06);
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    font-family:'Inter',system-ui,sans-serif;
+    background:var(--bg);
+    color:var(--text);
+  }
+  .mono{ font-family:'JetBrains Mono',monospace; }
+
+  /* ---------- Navbar ---------- */
+  .navbar{
+    background:linear-gradient(180deg,var(--navy-800),var(--navy-900));
+    color:#fff;
+    padding:14px 28px;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    box-shadow:var(--shadow);
+    position:sticky;
+    top:0;
+    z-index:20;
+  }
+  .navbar .brand{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    font-weight:700;
+    font-size:18px;
+    letter-spacing:.2px;
+  }
+  .navbar .brand .dot{
+    width:9px;height:9px;border-radius:50%;
+    background:#5BE49B;
+    box-shadow:0 0 0 4px rgba(91,228,155,.18);
+  }
+  .navbar .tag{
+    font-size:12px;
+    color:rgba(255,255,255,.65);
+    font-weight:500;
+    border-left:1px solid rgba(255,255,255,.2);
+    padding-left:12px;
+    margin-left:2px;
+  }
+
+  /* ---------- Filter bar ---------- */
+  .filter-wrap{
+    max-width:1180px;
+    margin:22px auto 0;
+    padding:0 24px;
+  }
+  .filter-bar{
+    background:var(--panel);
+    border:1px solid var(--border);
+    border-radius:var(--radius);
+    padding:16px 18px;
+    display:flex;
+    flex-wrap:wrap;
+    align-items:end;
+    gap:16px;
+  }
+  .field{
+    display:flex;
+    flex-direction:column;
+    gap:6px;
+    min-width:180px;
+  }
+  .field label{
+    font-size:11px;
+    font-weight:600;
+    text-transform:uppercase;
+    letter-spacing:.06em;
+    color:var(--text-muted);
+  }
+  .field select{
+    appearance:none;
+    background:#fff url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M0 0l5 6 5-6z' fill='%2364748B'/></svg>") no-repeat right 12px center;
+    border:1px solid var(--border);
+    border-radius:8px;
+    padding:9px 32px 9px 12px;
+    font-size:14px;
+    color:var(--text);
+    font-weight:500;
+    min-width:180px;
+  }
+  .field select:focus{ outline:2px solid var(--blue-600); outline-offset:1px; }
+
+  .btn-primary{
+    background:var(--blue-600);
+    color:#fff;
+    border:none;
+    border-radius:8px;
+    padding:10px 22px;
+    font-size:14px;
+    font-weight:600;
+    cursor:pointer;
+    transition:background .15s ease;
+  }
+  .btn-primary:hover{ background:#255BC9; }
+  .btn-primary:focus-visible{ outline:2px solid var(--navy-900); outline-offset:2px; }
+
+  /* ---------- Chart area ---------- */
+  .chart-wrap{
+    max-width:1180px;
+    margin:20px auto 60px;
+    padding:0 24px;
+    display:flex;
+    flex-direction:column;
+    gap:20px;
+  }
+  .state-msg{
+    text-align:center;
+    color:var(--text-muted);
+    font-size:14px;
+    padding:60px 0;
+  }
+  .day-card{
+    border:1px solid var(--border);
+    border-radius:var(--radius);
+    box-shadow:var(--shadow);
+    overflow:hidden;
+  }
+  .day-head{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    padding:14px 18px;
+    border-bottom:1px solid var(--border);
+    background:#fff;
+  }
+  .day-head .date{
+    font-weight:600;
+    font-size:14.5px;
+  }
+  .day-head .date .wd{
+    color:var(--text-muted);
+    font-weight:500;
+    font-size:12.5px;
+    margin-left:8px;
+  }
+  .pct-pill{
+    font-family:'JetBrains Mono',monospace;
+    font-size:12.5px;
+    font-weight:700;
+    padding:4px 10px;
+    border-radius:999px;
+  }
+  .pct-pill.up{ color:var(--green); background:var(--green-bg); }
+  .pct-pill.down{ color:var(--red); background:var(--red-bg); }
+  .pct-pill.flat{ color:var(--text-muted); background:var(--panel); }
+  .day-chart{ padding:6px 10px 10px; }
+
+  /* ---------- Previous-day legend ---------- */
+  .prev-day-legend{
+    display:flex;
+    flex-wrap:wrap;
+    align-items:center;
+    gap:14px;
+    padding:8px 18px;
+    border-bottom:1px solid var(--border);
+    background:var(--panel);
+    font-size:12px;
+  }
+  .prev-day-legend .legend-title{
+    color:var(--text-muted);
+    font-weight:600;
+    text-transform:uppercase;
+    letter-spacing:.05em;
+    font-size:10.5px;
+  }
+  .legend-chip{
+    display:flex;
+    align-items:center;
+    gap:6px;
+    font-family:'JetBrains Mono',monospace;
+    font-weight:600;
+  }
+  .legend-swatch{
+    width:12px;height:3px;border-radius:2px;flex-shrink:0;
+  }
+
+  /* ---------- Step controls (Start / Next / Reset Zoom) ---------- */
+  .day-controls{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    padding:10px 18px;
+    border-top:1px solid var(--border);
+    background:#fff;
+  }
+  .ctrl-btn{
+    background:#fff;
+    border:1px solid var(--border);
+    border-radius:8px;
+    padding:7px 16px;
+    font-size:13px;
+    font-weight:600;
+    color:var(--navy-800);
+    cursor:pointer;
+  }
+  .ctrl-btn:hover{ border-color:var(--blue-600); }
+  .ctrl-btn:disabled{ color:#C4CBD6; cursor:not-allowed; border-color:var(--border); }
+  .ctrl-btn.primary{ background:var(--blue-600); color:#fff; border-color:var(--blue-600); }
+  .ctrl-btn.primary:hover{ background:#255BC9; }
+  .step-info{
+    margin-left:auto;
+    font-size:12px;
+    font-family:'JetBrains Mono',monospace;
+    color:var(--text-muted);
+  }
+
+  /* ---------- Pagination ---------- */
+  .pagination{
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    gap:14px;
+    padding:6px 0 4px;
+  }
+  .page-btn{
+    background:#fff;
+    border:1px solid var(--border);
+    border-radius:8px;
+    padding:8px 16px;
+    font-size:13.5px;
+    font-weight:600;
+    color:var(--navy-800);
+    cursor:pointer;
+  }
+  .page-btn:disabled{ color:#C4CBD6; cursor:not-allowed; }
+  .page-btn:not(:disabled):hover{ border-color:var(--blue-600); }
+  .page-info{
+    font-size:13px;
+    color:var(--text-muted);
+    font-family:'JetBrains Mono',monospace;
+  }
+
+  /* ApexCharts tooltip tweak */
+  .apexcharts-tooltip{
+    font-family:'JetBrains Mono',monospace !important;
+    border-color:var(--border) !important;
+  }
+</style>
+</head>
+<body>
+
+<nav class="navbar">
+  <div class="brand"><span class="dot"></span> Market Charts
+    <span class="tag">Intraday · 5-min candles</span>
+  </div>
+</nav>
+
+<div class="filter-wrap">
+  <div class="filter-bar">
+    <div class="field">
+      <label for="companySelect">Company</label>
+      <select id="companySelect">
+        <option value="">Select a company</option>
+        {% for company in companies %}
+          <option value="{{ company.id }}">{{ company.code }} — {{ company.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="field">
+      <label for="weekdaySelect">Weekday</label>
+      <select id="weekdaySelect">
+        {% for value, label in weekday_choices %}
+          <option value="{{ value }}">{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="field">
+      <label for="pageSizeSelect">Days per page</label>
+      <select id="pageSizeSelect">
+        <option value="1">1</option>
+        <option value="3">3</option>
+        <option value="5">5</option>
+        <option value="10">10</option>
+      </select>
+    </div>
+
+    <button class="btn-primary" id="showChartBtn">Show Chart</button>
+  </div>
+</div>
+
+<div class="chart-wrap" id="chartWrap">
+  <div class="state-msg">Pick a company and click "Show Chart" to load candles.</div>
+</div>
+
+<script>
+const DATA_URL = "{% url 'market:chart_data' %}";
+
+const companySelect = document.getElementById('companySelect');
+const weekdaySelect = document.getElementById('weekdaySelect');
+const pageSizeSelect = document.getElementById('pageSizeSelect');
+const showChartBtn = document.getElementById('showChartBtn');
+const chartWrap = document.getElementById('chartWrap');
+
+let currentPage = 1;
+let activeCharts = [];
+let dayStates = [];
+
+showChartBtn.addEventListener('click', () => {
+  currentPage = 1;
+  loadChart();
+});
+
+function destroyCharts(){
+  activeCharts.forEach(c => c.destroy());
+  activeCharts = [];
+  dayStates = [];
+}
+
+function toSeriesData(candles){
+  return candles.map(c => ({ x: new Date(c.x), y: [c.o, c.h, c.l, c.c] }));
+}
+
+function buildPreviousDayAnnotations(prev){
+  if (!prev) return { yaxis: [] };
+  const lines = [
+    { y: prev.open,  color: '#CA8A04', label: 'Prev Open' },
+    { y: prev.high,  color: '#0EA968', label: 'Prev High' },
+    { y: prev.close, color: '#2F6FED', label: 'Prev Close' },
+    { y: prev.low,   color: '#E5484D', label: 'Prev Low' },
+  ];
+  return {
+    yaxis: lines
+      .filter(l => l.y !== null && l.y !== undefined)
+      .map(l => ({
+        y: l.y,
+        borderColor: l.color,
+        strokeDashArray: 4,
+        label: {
+          text: `${l.label} ${l.y.toFixed(2)}`,
+          borderColor: l.color,
+          style: { color: '#fff', background: l.color, fontSize: '10.5px', fontWeight: 700 },
+          position: 'left',
+        },
+      })),
+  };
+}
+
+function updateStepInfo(idx){
+  const state = dayStates[idx];
+  const infoEl = document.getElementById(`stepInfo${idx}`);
+  if (!state || !infoEl) return;
+  infoEl.textContent = `${state.revealCount} / ${state.allCandles.length} candles`;
+}
+
+function applyReveal(idx, count){
+  const state = dayStates[idx];
+  if (!state) return;
+  const total = state.allCandles.length;
+  const revealCount = Math.max(1, Math.min(count, total));
+  state.revealCount = revealCount;
+  state.visibleCandles = state.allCandles.slice(0, revealCount);
+  state.chart.updateSeries([{ data: toSeriesData(state.visibleCandles) }]);
+  updateStepInfo(idx);
+}
+
+chartWrap.addEventListener('click', (e) => {
+  const btn = e.target.closest('.ctrl-btn');
+  if (!btn) return;
+  const idx = Number(btn.dataset.idx);
+  const action = btn.dataset.action;
+  const state = dayStates[idx];
+  if (!state) return;
+
+  if (action === 'start'){
+    applyReveal(idx, 1);
+  } else if (action === 'next'){
+    applyReveal(idx, state.revealCount + 1);
+  } else if (action === 'reset'){
+    applyReveal(idx, state.allCandles.length);
+  }
+});
+
+function fmtPct(v){
+  if (v === null || v === undefined) return '—';
+  const sign = v > 0 ? '+' : '';
+  return `${sign}${v.toFixed(2)}%`;
+}
+
+function pillClass(v){
+  if (v === null || v === undefined || v === 0) return 'flat';
+  return v > 0 ? 'up' : 'down';
+}
+
+function weekdayName(n){
+  const map = {2:'Monday',3:'Tuesday',4:'Wednesday',5:'Thursday',6:'Friday',1:'Sunday',7:'Saturday'};
+  return map[n] || '';
+}
+
+async function loadChart(){
+  const companyId = companySelect.value;
+  if (!companyId){
+    chartWrap.innerHTML = '<div class="state-msg">Please select a company first.</div>';
+    return;
+  }
+
+  chartWrap.innerHTML = '<div class="state-msg">Loading candles…</div>';
+
+  const params = new URLSearchParams({
+    company: companyId,
+    weekday: weekdaySelect.value,
+    page: currentPage,
+    page_size: pageSizeSelect.value,
+  });
+
+  let res, data;
+  try {
+    res = await fetch(`${DATA_URL}?${params.toString()}`);
+    data = await res.json();
+  } catch (e){
+    chartWrap.innerHTML = '<div class="state-msg">Could not load chart data. Please try again.</div>';
+    return;
+  }
+
+  if (!res.ok){
+    chartWrap.innerHTML = `<div class="state-msg">${data.error || 'Something went wrong.'}</div>`;
+    return;
+  }
+
+  destroyCharts();
+
+  if (!data.days.length){
+    chartWrap.innerHTML = '<div class="state-msg">No data found for this selection.</div>';
+    return;
+  }
+
+  chartWrap.innerHTML = '';
+
+  dayStates = [];
+
+  data.days.forEach((day, idx) => {
+    const card = document.createElement('div');
+    card.className = 'day-card';
+
+    const pct = day.day_pct_change;
+    const prev = day.previous_day;
+
+    const legendHtml = prev ? `
+      <div class="prev-day-legend">
+        <span class="legend-title">Prev day (${prev.date})</span>
+        <span class="legend-chip"><span class="legend-swatch" style="background:var(--yellow);"></span>O ${prev.open.toFixed(2)}</span>
+        <span class="legend-chip"><span class="legend-swatch" style="background:var(--green);"></span>H ${prev.high.toFixed(2)}</span>
+        <span class="legend-chip"><span class="legend-swatch" style="background:var(--blue-600);"></span>C ${prev.close.toFixed(2)}</span>
+        <span class="legend-chip"><span class="legend-swatch" style="background:var(--red);"></span>L ${prev.low.toFixed(2)}</span>
+      </div>
+    ` : '';
+
+    card.innerHTML = `
+      <div class="day-head">
+        <div class="date">${day.date}<span class="wd">${weekdayName(day.weekday)}</span></div>
+        <div class="pct-pill ${pillClass(pct)}">${fmtPct(pct)}</div>
+      </div>
+      ${legendHtml}
+      <div class="day-chart" id="dayChart${idx}"></div>
+      <div class="day-controls">
+        <button class="ctrl-btn primary" data-idx="${idx}" data-action="start">Start</button>
+        <button class="ctrl-btn" data-idx="${idx}" data-action="next">Next</button>
+        <button class="ctrl-btn" data-idx="${idx}" data-action="reset">Reset Zoom</button>
+        <span class="step-info" id="stepInfo${idx}"></span>
+      </div>
+    `;
+    chartWrap.appendChild(card);
+
+    const allCandles = day.candles;
+    const annotations = buildPreviousDayAnnotations(prev);
+
+    const chart = new ApexCharts(document.getElementById(`dayChart${idx}`), {
+      chart:{
+        type:'candlestick',
+        height:340,
+        toolbar:{ show:true, tools:{ zoom:true, pan:true, reset:true } },
+        fontFamily:'JetBrains Mono, monospace',
+      },
+      series:[{ data: toSeriesData(allCandles) }],
+      xaxis:{ type:'datetime', labels:{ datetimeUTC:false } },
+      yaxis:{ tooltip:{ enabled:true }, labels:{ formatter:(v)=>v?.toFixed(2) } },
+      annotations,
+      plotOptions:{
+        candlestick:{
+          colors:{ upward:'#0EA968', downward:'#E5484D' },
+          wick:{ useFillColor:true }
+        }
+      },
+      tooltip:{
+        custom: function({ dataPointIndex }){
+          const c = dayStates[idx].visibleCandles[dataPointIndex];
+          if (!c) return '';
+          const cls = pillClass(c.pct_change);
+          const colorVar = cls === 'up' ? '#0EA968' : (cls === 'down' ? '#E5484D' : '#64748B');
+          const time = new Date(c.x).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+          return `
+            <div style="padding:8px 10px;font-size:12px;">
+              <div style="font-weight:700;margin-bottom:4px;">${time}</div>
+              <div>O <b>${c.o?.toFixed(2)}</b> &nbsp; H <b>${c.h?.toFixed(2)}</b></div>
+              <div>L <b>${c.l?.toFixed(2)}</b> &nbsp; C <b>${c.c?.toFixed(2)}</b></div>
+              <div style="margin-top:4px;color:${colorVar};font-weight:700;">${fmtPct(c.pct_change)}</div>
+            </div>
+          `;
+        }
+      },
+      grid:{ borderColor:'#E3E8F0' },
+    });
+
+    chart.render();
+    activeCharts.push(chart);
+    dayStates[idx] = {
+      chart,
+      allCandles,
+      visibleCandles: allCandles,
+      revealCount: allCandles.length,
+    };
+    updateStepInfo(idx);
+  });
+
+  // pagination controls
+  const pag = document.createElement('div');
+  pag.className = 'pagination';
+  pag.innerHTML = `
+    <button class="page-btn" id="prevBtn" ${!data.has_previous ? 'disabled' : ''}>&larr; Newer</button>
+    <span class="page-info">Page ${data.page} of ${data.num_pages} · ${data.total_days} day(s) total</span>
+    <button class="page-btn" id="nextBtn" ${!data.has_next ? 'disabled' : ''}>Older &rarr;</button>
+  `;
+  chartWrap.appendChild(pag);
+
+  document.getElementById('prevBtn')?.addEventListener('click', () => {
+    if (currentPage > 1){ currentPage -= 1; loadChart(); }
+  });
+  document.getElementById('nextBtn')?.addEventListener('click', () => {
+    currentPage += 1; loadChart();
+  });
+}
+</script>
+</body>
+</html>

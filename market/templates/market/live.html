@@ -1,19 +1,568 @@
 {% extends 'market/base.html' %}
-{% block content %}
-<h1>Live Data</h1>
-<form method="get">
-  <label>Select company:</label>
-  <select name="company">
-    <option value="">-- select --</option>
-    {% for c in companies %}
-      <option value="{{ c.code }}" {% if company and c.code == company.code %}selected{% endif %}>{{ c.code }} - {{ c.name }}</option>
-    {% endfor %}
-  </select>
-  <button type="submit">Show</button>
-</form>
 
-{% if company %}
-  <h2>Live for {{ company }}</h2>
-  <p>{{ live.note }}</p>
-{% endif %}
+{% block content %}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+  /* ============================================================
+     TOKENS — light background, blue accent (matches site nav)
+     ============================================================ */
+  .lt {
+    --blue: #1657d6;
+    --blue-dark: #0f3fa3;
+    --blue-tint: #eaf1ff;
+    --bg: #f3f5f9;
+    --panel: #ffffff;
+    --border: #e1e5ee;
+    --text: #1f2433;
+    --text-dim: #6b7180;
+    --text-faint: #9aa0ad;
+    --green: #16924f;
+    --green-bg: #e9f9ef;
+    --red: #d13c3c;
+    --red-bg: #fdecec;
+    --font: 'Inter', system-ui, -apple-system, sans-serif;
+
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    margin: -1.5rem -1rem -1rem;
+    padding: 1.5rem 1rem 3rem;
+    min-height: 100vh;
+  }
+  .lt * { box-sizing: border-box; }
+
+  /* ============================================================
+     TOP STATUS BAR
+     ============================================================ */
+  .lt-topbar {
+    display: flex; align-items: center; gap: .6rem; flex-wrap: wrap;
+    padding: .85rem 1.1rem; margin-bottom: 1.25rem;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    box-shadow: 0 1px 2px rgba(16, 24, 40, .04);
+    font-size: .85rem; color: var(--text-dim);
+  }
+  .lt-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--green); flex: none;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .lt-dot { animation: lt-pulse 1.8s ease-in-out infinite; }
+  }
+  @keyframes lt-pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+  .lt-title {
+    font-weight: 700; color: var(--text); font-size: 1rem; letter-spacing: -.01em;
+  }
+  .lt-sep { color: var(--text-faint); }
+  .lt-refresh { margin-left: auto; }
+  .lt-btn {
+    font-family: var(--font); font-weight: 600;
+    background: var(--blue); border: 1px solid var(--blue);
+    color: #fff; padding: .45rem .9rem; font-size: .82rem;
+    cursor: pointer; border-radius: 6px;
+    transition: background .15s;
+  }
+  .lt-btn:hover { background: var(--blue-dark); }
+  .lt-btn:focus-visible, .lt th button:focus-visible, .lt-modal-close:focus-visible {
+    outline: 2px solid var(--blue); outline-offset: 2px;
+  }
+
+  /* ============================================================
+     PANEL GRID
+     ============================================================ */
+  .lt-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.1rem;
+  }
+  .lt-panel--wide { grid-column: 1 / -1; }
+  @media (max-width: 860px) {
+    .lt-grid { grid-template-columns: 1fr; }
+  }
+
+  .lt-panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 1px 2px rgba(16, 24, 40, .04);
+  }
+  .lt-panel-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: .7rem 1rem;
+    background: var(--blue);
+    color: #fff;
+  }
+  .lt-panel-head h3 {
+    font-weight: 600; font-size: .88rem; letter-spacing: .02em;
+    margin: 0;
+  }
+  .lt-panel-head .lt-count {
+    font-size: .74rem; color: rgba(255,255,255,.8);
+  }
+  .lt-scroll { overflow-x: auto; }
+
+  table.lt-table { width: 100%; border-collapse: collapse; font-size: .82rem; white-space: nowrap; }
+  .lt-table thead th {
+    text-align: right; padding: .55rem .8rem;
+    color: var(--text-dim); font-weight: 600; font-size: .75rem;
+    border-bottom: 1px solid var(--border);
+    background: #f8f9fc;
+  }
+  .lt-table thead th:first-child, .lt-table td:first-child { text-align: left; }
+  .lt-table th button {
+    all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: .3rem;
+    color: inherit; font: inherit;
+  }
+  .lt-table th button:hover { color: var(--blue); }
+  .lt-sort-arrow { font-size: .62rem; opacity: .35; }
+  .lt-table th[data-active="1"] { color: var(--blue); }
+  .lt-table th[data-active="1"] .lt-sort-arrow { opacity: 1; }
+
+  .lt-table tbody td { padding: .55rem .8rem; text-align: right; border-bottom: 1px solid #eef0f5; }
+  .lt-table tbody tr:nth-child(even) { background: #fafbfd; }
+  .lt-table tbody tr { cursor: pointer; transition: background .12s; }
+  .lt-table tbody tr:hover { background: var(--blue-tint); }
+
+  .lt-sym { font-weight: 600; color: var(--text); }
+  .lt-pos { color: var(--green); font-weight: 600; }
+  .lt-neg { color: var(--red); font-weight: 600; }
+  .lt-empty { padding: 1.4rem; text-align: center; color: var(--text-faint); }
+
+  .lt-foot {
+    margin-top: 1.2rem; font-size: .78rem; color: var(--text-faint);
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: .5rem;
+  }
+
+  /* ============================================================
+     POPUP — click a row to see it linked across every table
+     ============================================================ */
+  .lt-modal-backdrop {
+    position: fixed; inset: 0; background: rgba(15, 23, 42, .45);
+    display: flex; align-items: center; justify-content: center;
+    padding: 1.5rem; z-index: 50;
+  }
+  .lt-modal {
+    background: var(--panel); border-radius: 12px;
+    width: 100%; max-width: 640px; max-height: 85vh;
+    display: flex; flex-direction: column;
+    box-shadow: 0 20px 50px rgba(15, 23, 42, .25);
+  }
+  .lt-modal-head {
+    display: flex; align-items: center; gap: .7rem;
+    padding: 1rem 1.2rem; border-bottom: 1px solid var(--border);
+  }
+  .lt-modal-sym { font-size: 1.15rem; font-weight: 700; color: var(--text); }
+  .lt-modal-src { font-size: .75rem; color: var(--text-dim); background: #f1f3f8; padding: .2rem .55rem; border-radius: 999px; }
+  .lt-modal-close {
+    margin-left: auto; all: unset; cursor: pointer;
+    width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
+    border-radius: 6px; color: var(--text-dim); font-size: 1rem;
+  }
+  .lt-modal-close:hover { background: #f1f3f8; color: var(--text); }
+  .lt-modal-body { padding: 1rem 1.2rem 1.3rem; overflow-y: auto; }
+  .lt-modal-body h4 {
+    font-size: .72rem; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--text-faint); margin: 1.1rem 0 .5rem;
+  }
+  .lt-modal-body h4:first-child { margin-top: 0; }
+
+  .lt-match {
+    border: 1px solid var(--border); border-radius: 8px; padding: .8rem .9rem;
+    margin-bottom: .6rem;
+  }
+  .lt-match-title {
+    font-weight: 600; font-size: .82rem; color: var(--blue); margin-bottom: .5rem;
+  }
+  .lt-match-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: .4rem .8rem;
+  }
+  .lt-match-field { font-size: .78rem; }
+  .lt-match-field .k { color: var(--text-faint); display: block; font-size: .68rem; text-transform: uppercase; letter-spacing: .03em; }
+  .lt-match-field .v { color: var(--text); font-weight: 600; }
+  .lt-none { color: var(--text-faint); font-size: .82rem; }
+</style>
+
+<div class="lt">
+
+  <div class="lt-topbar">
+    <span class="lt-dot" aria-hidden="true"></span>
+    <span class="lt-title">NSE Live Market Scan</span>
+    <span class="lt-sep">/</span>
+    <span id="lt-updated">connecting…</span>
+    <div class="lt-refresh">
+      <button class="lt-btn" id="lt-refresh-btn" type="button">Refresh now</button>
+    </div>
+  </div>
+
+  <div class="lt-grid" id="lt-grid">
+    <section class="lt-panel" id="panel-pdh_data" data-panel="pdh_data">
+      <div class="lt-panel-head"><h3>Previous Day High</h3><span class="lt-count"></span></div>
+      <div class="lt-scroll"><table class="lt-table"><thead></thead><tbody></tbody></table></div>
+    </section>
+
+    <section class="lt-panel" id="panel-pdl_data" data-panel="pdl_data">
+      <div class="lt-panel-head"><h3>Previous Day Low</h3><span class="lt-count"></span></div>
+      <div class="lt-scroll"><table class="lt-table"><thead></thead><tbody></tbody></table></div>
+    </section>
+    
+    <section class="lt-panel" id="panel-gainers" data-panel="gainers">
+      <div class="lt-panel-head"><h3>Gainers</h3><span class="lt-count"></span></div>
+      <div class="lt-scroll"><table class="lt-table"><thead></thead><tbody></tbody></table></div>
+    </section>
+
+    <section class="lt-panel" id="panel-loosers" data-panel="loosers">
+      <div class="lt-panel-head"><h3>Losers</h3><span class="lt-count"></span></div>
+      <div class="lt-scroll"><table class="lt-table"><thead></thead><tbody></tbody></table></div>
+    </section>
+
+    <section class="lt-panel lt-panel--wide" id="panel-open_intrest" data-panel="open_intrest">
+      <div class="lt-panel-head"><h3>Open Interest</h3><span class="lt-count"></span></div>
+      <div class="lt-scroll"><table class="lt-table"><thead></thead><tbody></tbody></table></div>
+    </section>
+
+    
+
+  </div>
+
+  <div class="lt-foot">
+    <span>Click any row to see that symbol's matching records across all tables.</span>
+    <span id="lt-error" style="color:var(--red);"></span>
+  </div>
+
+  <div id="lt-modal-root"></div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ----------------------------------------------------------------
+  // CONFIG — one entry per table. `symbolKey` = field JS reads to
+  // match rows across panels. `columns` also drives the popup fields.
+  // ----------------------------------------------------------------
+  var PANELS = [
+    {
+      id: "gainers", title: "Gainers", dataKey: "gainers", symbolKey: "symbol",
+      columns: [
+        { label: "Symbol", key: "symbol", type: "text" },
+        { label: "Open", key: "open_price", type: "num2" },
+        { label: "High", key: "high_price", type: "num2" },
+        { label: "Low", key: "low_price", type: "num2" },
+        { label: "LTP", key: "ltp", type: "num2" },
+        { label: "Prev", key: "prev_price", type: "num2" },
+        { label: "Qty", key: "trade_quantity", type: "int" },
+        { label: "Turnover", key: "turnover", type: "num2" },
+        { label: "% Chg", key: "perChange", type: "pct" }
+      ]
+    },
+    {
+      id: "loosers", title: "Losers", dataKey: "loosers", symbolKey: "symbol",
+      columns: [
+        { label: "Symbol", key: "symbol", type: "text" },
+        { label: "Open", key: "open_price", type: "num2" },
+        { label: "High", key: "high_price", type: "num2" },
+        { label: "Low", key: "low_price", type: "num2" },
+        { label: "LTP", key: "ltp", type: "num2" },
+        { label: "Prev", key: "prev_price", type: "num2" },
+        { label: "Qty", key: "trade_quantity", type: "int" },
+        { label: "Turnover", key: "turnover", type: "num2" },
+        { label: "% Chg", key: "perChange", type: "pct" }
+      ]
+    },
+    {
+      id: "open_intrest", title: "Open Interest", dataKey: "open_intrest", symbolKey: "symbol",
+      columns: [
+        { label: "Symbol", key: "symbol", type: "text" },
+        { label: "Latest OI", key: "latestOI", type: "int" },
+        { label: "Prev OI", key: "prevOI", type: "int" },
+        { label: "Chg OI", key: "changeInOI", type: "int", signed: true },
+        { label: "Avg OI %", key: "avgInOI", type: "pct" },
+        { label: "Volume", key: "volume", type: "int" },
+        { label: "Fut Value", key: "futValue", type: "num2" },
+        { label: "Opt Value", key: "optValue", type: "num2" },
+        { label: "Total", key: "total", type: "num2" },
+        { label: "Prem Value", key: "premValue", type: "num2" },
+        { label: "Underlying", key: "underlyingValue", type: "num2" }
+      ]
+    },
+    {
+      id: "pdh_data", title: "Previous Day High", dataKey: "pdh_data", symbolKey: "nsecode",
+      columns: [
+        { label: "Symbol", key: "nsecode", type: "text" },
+        { label: "Name", key: "name", type: "text" },
+        { label: "Close", key: "scan-column-default-close", type: "num2" },
+        { label: "% Chg", key: "scan-column-default-percent-change", type: "pct" },
+        { label: "Volume", key: "scan-column-default-volume", type: "int" }
+      ]
+    },
+    {
+      id: "pdl_data", title: "Previous Day Low", dataKey: "pdl_data", symbolKey: "nsecode",
+      columns: [
+        { label: "Symbol", key: "nsecode", type: "text" },
+        { label: "Name", key: "name", type: "text" },
+        { label: "Close", key: "scan-column-default-close", type: "num2" },
+        { label: "% Chg", key: "scan-column-default-percent-change", type: "pct" },
+        { label: "Volume", key: "scan-column-default-volume", type: "int" }
+      ]
+    }
+  ];
+
+  var FETCH_URL = "/fetch_live/";
+  var AUTO_REFRESH_MS = 60000;
+
+  var sortState = {};   // panel.id -> { key, dir }
+  var dataStore = {};   // panel.id -> array of row objects
+
+  // ----------------------------------------------------------------
+  // FORMATTING HELPERS
+  // ----------------------------------------------------------------
+  function toNum(v) {
+    var n = typeof v === "string" ? parseFloat(v) : v;
+    return typeof n === "number" && !isNaN(n) ? n : null;
+  }
+  function fmt(v, type) {
+    var n = toNum(v);
+    if (n === null) return v === null || v === undefined || v === "" ? "—" : String(v);
+    if (type === "int") return Math.round(n).toLocaleString("en-IN");
+    if (type === "num2") return n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    if (type === "pct") return (n > 0 ? "+" : "") + n.toFixed(2) + "%";
+    return String(v);
+  }
+  function signClass(v) {
+    var n = toNum(v);
+    if (n === null || n === 0) return "";
+    return n > 0 ? "lt-pos" : "lt-neg";
+  }
+  function symOf(row, symbolKey) {
+    var v = row[symbolKey];
+    return v ? String(v).trim().toUpperCase() : null;
+  }
+
+  // ----------------------------------------------------------------
+  // TABLE RENDERING
+  // ----------------------------------------------------------------
+  function renderPanel(panel) {
+    var rows = dataStore[panel.id] || [];
+    var root = document.getElementById("panel-" + panel.id);
+    var thead = root.querySelector("thead");
+    var tbody = root.querySelector("tbody");
+    var count = root.querySelector(".lt-count");
+    count.textContent = rows.length + (rows.length === 1 ? " row" : " rows");
+
+    // ---- header ----
+    var tr = document.createElement("tr");
+    panel.columns.forEach(function (col) {
+      var th = document.createElement("th");
+      var active = sortState[panel.id] && sortState[panel.id].key === col.key;
+      th.dataset.active = active ? "1" : "0";
+      var btn = document.createElement("button");
+      btn.type = "button";
+      var arrowDir = active && sortState[panel.id].dir === -1 ? "▼" : "▲";
+      btn.innerHTML = col.label + ' <span class="lt-sort-arrow">' + arrowDir + "</span>";
+      btn.addEventListener("click", function () { sortAndRender(panel, col.key); });
+      th.appendChild(btn);
+      tr.appendChild(th);
+    });
+    thead.innerHTML = "";
+    thead.appendChild(tr);
+
+    // ---- body ----
+    tbody.innerHTML = "";
+    if (!rows.length) {
+      var emptyTr = document.createElement("tr");
+      var emptyTd = document.createElement("td");
+      emptyTd.colSpan = panel.columns.length;
+      emptyTd.className = "lt-empty";
+      emptyTd.textContent = "No data";
+      emptyTr.appendChild(emptyTd);
+      tbody.appendChild(emptyTr);
+      return;
+    }
+
+    rows.forEach(function (row) {
+      var sym = symOf(row, panel.symbolKey);
+      var rowEl = document.createElement("tr");
+      if (sym) rowEl.dataset.symbol = sym;
+
+      panel.columns.forEach(function (col, i) {
+        var td = document.createElement("td");
+        var raw = row[col.key];
+        td.textContent = fmt(raw, col.type);
+        if (i === 0) td.classList.add("lt-sym");
+        if (col.type === "pct" || col.signed) {
+          var cls = signClass(raw);
+          if (cls) td.classList.add(cls);
+        }
+        rowEl.appendChild(td);
+      });
+
+      if (sym) {
+        rowEl.addEventListener("click", function () { openModal(sym, panel.id); });
+      }
+      tbody.appendChild(rowEl);
+    });
+  }
+
+  function sortAndRender(panel, key) {
+    var state = sortState[panel.id];
+    var dir = state && state.key === key ? -state.dir : 1;
+    sortState[panel.id] = { key: key, dir: dir };
+
+    var col = panel.columns.filter(function (c) { return c.key === key; })[0];
+    var isNumeric = col.type !== "text";
+
+    dataStore[panel.id] = (dataStore[panel.id] || []).slice().sort(function (a, b) {
+      var av = a[key], bv = b[key];
+      if (isNumeric) {
+        var an = toNum(av), bn = toNum(bv);
+        an = an === null ? -Infinity : an;
+        bn = bn === null ? -Infinity : bn;
+        return (an - bn) * dir;
+      }
+      return String(av || "").localeCompare(String(bv || "")) * dir;
+    });
+
+    renderPanel(panel);
+  }
+
+  function renderAll() {
+    PANELS.forEach(renderPanel);
+  }
+
+  // ----------------------------------------------------------------
+  // POPUP — click a row, see this symbol's rows in every table
+  // ----------------------------------------------------------------
+  var modalRoot = document.getElementById("lt-modal-root");
+
+  function openModal(symbol, sourcePanelId) {
+    var sourcePanel = PANELS.filter(function (p) { return p.id === sourcePanelId; })[0];
+
+    var backdrop = document.createElement("div");
+    backdrop.className = "lt-modal-backdrop";
+    backdrop.addEventListener("click", function (e) { if (e.target === backdrop) closeModal(); });
+
+    var modal = document.createElement("div");
+    modal.className = "lt-modal";
+    modal.setAttribute("role", "dialog");
+    modal.setAttribute("aria-modal", "true");
+
+    var head = document.createElement("div");
+    head.className = "lt-modal-head";
+    head.innerHTML =
+      '<span class="lt-modal-sym">' + symbol + '</span>' +
+      '<span class="lt-modal-src">from ' + sourcePanel.title + '</span>';
+    var closeBtn = document.createElement("button");
+    closeBtn.className = "lt-modal-close";
+    closeBtn.innerHTML = "✕";
+    closeBtn.addEventListener("click", closeModal);
+    head.appendChild(closeBtn);
+
+    var body = document.createElement("div");
+    body.className = "lt-modal-body";
+    body.appendChild(buildLinkedRecords(symbol));
+
+    modal.appendChild(head);
+    modal.appendChild(body);
+    backdrop.appendChild(modal);
+    modalRoot.innerHTML = "";
+    modalRoot.appendChild(backdrop);
+
+    document.addEventListener("keydown", onEscape);
+    closeBtn.focus();
+  }
+
+  function closeModal() {
+    modalRoot.innerHTML = "";
+    document.removeEventListener("keydown", onEscape);
+  }
+  function onEscape(e) { if (e.key === "Escape") closeModal(); }
+
+  function buildLinkedRecords(symbol) {
+    var wrap = document.createElement("div");
+    var found = 0;
+
+    PANELS.forEach(function (panel) {
+      var rows = dataStore[panel.id] || [];
+      var matches = rows.filter(function (r) { return symOf(r, panel.symbolKey) === symbol; });
+      if (!matches.length) return;
+
+      var h4 = document.createElement("h4");
+      h4.textContent = panel.title;
+      wrap.appendChild(h4);
+
+      matches.forEach(function (row) {
+        found++;
+        var card = document.createElement("div");
+        card.className = "lt-match";
+
+        var grid = document.createElement("div");
+        grid.className = "lt-match-grid";
+        panel.columns.forEach(function (col) {
+          var raw = row[col.key];
+          var field = document.createElement("div");
+          field.className = "lt-match-field";
+          var valClass = (col.type === "pct" || col.signed) ? signClass(raw) : "";
+          field.innerHTML =
+            '<span class="k">' + col.label + '</span>' +
+            '<span class="v ' + valClass + '">' + fmt(raw, col.type) + '</span>';
+          grid.appendChild(field);
+        });
+        card.appendChild(grid);
+        wrap.appendChild(card);
+      });
+    });
+
+    if (!found) {
+      var none = document.createElement("p");
+      none.className = "lt-none";
+      none.textContent = "No matching records in other tables.";
+      wrap.appendChild(none);
+    }
+    return wrap;
+  }
+
+  // ----------------------------------------------------------------
+  // FETCH
+  // ----------------------------------------------------------------
+  var updatedEl = document.getElementById("lt-updated");
+  var errorEl = document.getElementById("lt-error");
+  var lastFetch = null;
+
+  function tickClock() {
+    if (!lastFetch) return;
+    var secs = Math.round((Date.now() - lastFetch) / 1000);
+    updatedEl.textContent = "updated " + secs + "s ago";
+  }
+  setInterval(tickClock, 1000);
+
+  function load() {
+    errorEl.textContent = "";
+    fetch(FETCH_URL, { headers: { "Accept": "application/json" } })
+      .then(function (res) {
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        return res.json();
+      })
+      .then(function (json) {
+        PANELS.forEach(function (panel) {
+          dataStore[panel.id] = Array.isArray(json[panel.dataKey]) ? json[panel.dataKey] : [];
+        });
+        lastFetch = Date.now();
+        tickClock();
+        renderAll();
+      })
+      .catch(function (err) {
+        errorEl.textContent = "Could not load live data: " + err.message;
+        updatedEl.textContent = "connection failed";
+      });
+  }
+
+  document.getElementById("lt-refresh-btn").addEventListener("click", load);
+  load();
+  setInterval(load, AUTO_REFRESH_MS);
+})();
+</script>
 {% endblock %}

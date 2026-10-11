@@ -15,6 +15,9 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'market',
+    "prediction",
+    "patterns",
+    "paper_trading"
 ]
 # Local development settings note: update SECRET_KEY and DEBUG for production
 
@@ -27,7 +30,26 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
-
+REST_FRAMEWORK = {
+    "DEFAULT_RENDERER_CLASSES": (
+        "rest_framework.renderers.JSONRenderer",
+        "rest_framework.renderers.BrowsableAPIRenderer",
+    ),
+    "DEFAULT_PERMISSION_CLASSES": (
+        # tighten this for production, e.g. IsAuthenticated
+        "rest_framework.permissions.AllowAny",
+    ),
+}
+YFINANCE_TICKER_MAP = {
+    # "RELIANCE": "RELIANCE.NS",
+    # "TCS": "TCS.NS",
+}
+MARKET_HOLIDAYS = [
+    # "2026-01-26", "2026-08-15", ...
+]
+ENABLE_MARKET_CONTEXT = False
+YFINANCE_DEFAULT_SUFFIX = ".NS"
+ML_MODELS_DIR = BASE_DIR / "ml_models"
 ROOT_URLCONF = 'sethu_project.urls'
 
 TEMPLATES = [
@@ -58,6 +80,14 @@ CACHES = {
     "default": {
         "BACKEND": "django.core.cache.backends.locmem.LocMemCache"
     }
+}
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {"console": {"class": "logging.StreamHandler"}},
+    "loggers": {
+        "prediction": {"handlers": ["console"], "level": "INFO"},
+    },
 }
 
 AUTH_PASSWORD_VALIDATORS = []

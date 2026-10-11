@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stock Prediction</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --navy-900:#0B2545; --navy-800:#123B7A; --blue-600:#2F6FED;
+    --bg:#FFFFFF; --panel:#F7F9FC; --border:#E3E8F0;
+    --text:#101828; --text-muted:#64748B;
+    --green:#0EA968; --green-bg:#E7F8F0;
+    --red:#E5484D; --red-bg:#FDECEC;
+    --amber:#B45309; --amber-bg:#FEF3E0;
+    --radius:10px; --shadow:0 1px 2px rgba(16,24,40,.04),0 1px 3px rgba(16,24,40,.06);
+  }
+  *{box-sizing:border-box;}
+  body{ margin:0; font-family:'Inter',system-ui,sans-serif; background:var(--bg); color:var(--text); }
+  .mono{ font-family:'JetBrains Mono',monospace; }
+
+  .navbar{
+    background:linear-gradient(180deg,var(--navy-800),var(--navy-900));
+    color:#fff; padding:14px 28px; display:flex; align-items:center; justify-content:space-between;
+    box-shadow:var(--shadow); position:sticky; top:0; z-index:20;
+  }
+  .navbar .brand{ display:flex; align-items:center; gap:10px; font-weight:700; font-size:18px; }
+  .navbar .brand .dot{ width:9px;height:9px;border-radius:50%; background:#5BE49B; box-shadow:0 0 0 4px rgba(91,228,155,.18); }
+  .navbar .tag{ font-size:12px; color:rgba(255,255,255,.65); font-weight:500; border-left:1px solid rgba(255,255,255,.2); padding-left:12px; }
+
+  .wrap{ max-width:1180px; margin:0 auto; padding:0 24px; }
+
+  .filter-bar{
+    background:var(--panel); border:1px solid var(--border); border-radius:var(--radius);
+    padding:16px 18px; margin-top:22px; display:flex; flex-wrap:wrap; align-items:end; gap:16px;
+  }
+  .field{ display:flex; flex-direction:column; gap:6px; min-width:220px; }
+  .field label{ font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.06em; color:var(--text-muted); }
+  .field select{
+    appearance:none; background:#fff url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M0 0l5 6 5-6z' fill='%2364748B'/></svg>") no-repeat right 12px center;
+    border:1px solid var(--border); border-radius:8px; padding:9px 32px 9px 12px; font-size:14px; font-weight:500; min-width:220px;
+  }
+  .field select:focus{ outline:2px solid var(--blue-600); outline-offset:1px; }
+
+  .btn{ border:none; border-radius:8px; padding:10px 22px; font-size:14px; font-weight:600; cursor:pointer; transition:background .15s ease, opacity .15s ease; }
+  .btn-primary{ background:var(--blue-600); color:#fff; }
+  .btn-primary:hover{ background:#255BC9; }
+  .btn-secondary{ background:var(--navy-900); color:#fff; }
+  .btn-secondary:hover{ background:#081A31; }
+  .btn:disabled{ opacity:.5; cursor:not-allowed; }
+
+  .status-row{ display:flex; align-items:center; gap:10px; margin-top:14px; font-size:13px; color:var(--text-muted); }
+  .status-pill{ font-family:'JetBrains Mono',monospace; font-size:11.5px; font-weight:700; padding:4px 10px; border-radius:999px; }
+  .status-pill.idle{ color:var(--text-muted); background:var(--panel); }
+  .status-pill.training{ color:var(--amber); background:var(--amber-bg); }
+  .status-pill.completed{ color:var(--green); background:var(--green-bg); }
+  .status-pill.failed{ color:var(--red); background:var(--red-bg); }
+
+  .results{ margin-top:26px; margin-bottom:60px; }
+  .state-msg{ text-align:center; color:var(--text-muted); font-size:14px; padding:60px 0; }
+
+  .summary-card{
+    border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow);
+    padding:18px 20px; display:flex; flex-wrap:wrap; gap:24px; align-items:center; margin-bottom:18px;
+  }
+  .summary-card .price{ font-family:'JetBrains Mono',monospace; font-size:26px; font-weight:700; }
+  .summary-meta{ display:flex; flex-direction:column; gap:2px; font-size:12.5px; color:var(--text-muted); }
+  .badge{ font-size:11px; font-weight:700; padding:3px 9px; border-radius:999px; text-transform:uppercase; letter-spacing:.03em; }
+  .badge.open{ background:var(--green-bg); color:var(--green); }
+  .badge.closed, .badge.weekend, .badge.holiday{ background:var(--panel); color:var(--text-muted); }
+  .badge.pre_market, .badge.post_market{ background:var(--amber-bg); color:var(--amber); }
+  .badge.stale{ background:var(--red-bg); color:var(--red); }
+
+  table{ width:100%; border-collapse:collapse; border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; }
+  thead th{
+    text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--text-muted);
+    background:var(--panel); padding:10px 14px; border-bottom:1px solid var(--border);
+  }
+  tbody td{ padding:12px 14px; border-bottom:1px solid var(--border); font-size:14px; }
+  tbody tr:last-child td{ border-bottom:none; }
+  td.num{ font-family:'JetBrains Mono',monospace; }
+  .dir-pill{ font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:700; padding:3px 9px; border-radius:999px; }
+  .dir-pill.up{ color:var(--green); background:var(--green-bg); }
+  .dir-pill.down{ color:var(--red); background:var(--red-bg); }
+  .dir-pill.flat{ color:var(--text-muted); background:var(--panel); }
+  .conf-bar{ position:relative; background:var(--panel); border-radius:6px; height:6px; width:90px; overflow:hidden; }
+  .conf-bar span{ position:absolute; left:0; top:0; bottom:0; background:var(--blue-600); border-radius:6px; }
+
+  .disclaimer{ font-size:12px; color:var(--text-muted); margin-top:14px; line-height:1.5; }
+</style>
+</head>
+<body>
+
+<nav class="navbar">
+  <div class="brand"><span class="dot"></span> Stock Prediction
+    <span class="tag">5-min candles · XGBoost · walk-forward validated</span>
+  </div>
+</nav>
+
+<div class="wrap">
+  <div class="filter-bar">
+    <div class="field">
+      <label for="companySelect">Company</label>
+      <select id="companySelect">
+        <option value="">Select a company</option>
+        {% for company in companies %}
+          <option value="{{ company.code }}">{{ company.code }} — {{ company.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button class="btn btn-secondary" id="trainBtn">Train</button>
+    <button class="btn btn-primary" id="predictBtn">Predict</button>
+  </div>
+
+  <div class="status-row" id="statusRow" style="display:none;">
+    <span>Training status:</span>
+    <span class="status-pill idle" id="statusPill">idle</span>
+    <span id="statusDetail"></span>
+  </div>
+
+  <div class="results" id="results">
+    <div class="state-msg">Select a company, then Train (first time only) and Predict.</div>
+  </div>
+</div>
+
+<script>
+const API_PREDICT = (code) => `/api/predict/${encodeURIComponent(code)}/`;
+const API_TRAIN = (code) => `/api/train/${encodeURIComponent(code)}/`;
+
+const companySelect = document.getElementById('companySelect');
+const trainBtn = document.getElementById('trainBtn');
+const predictBtn = document.getElementById('predictBtn');
+const statusRow = document.getElementById('statusRow');
+const statusPill = document.getElementById('statusPill');
+const statusDetail = document.getElementById('statusDetail');
+const results = document.getElementById('results');
+
+let pollTimer = null;
+
+function getCookie(name){
+  const v = document.cookie.match('(^|;)\\s*' + name + '\\s*=\\s*([^;]+)');
+  return v ? v.pop() : '';
+}
+
+function setStatus(state, detail){
+  statusRow.style.display = 'flex';
+  statusPill.textContent = state;
+  statusPill.className = `status-pill ${state}`;
+  statusDetail.textContent = detail || '';
+}
+
+trainBtn.addEventListener('click', async () => {
+  const code = companySelect.value;
+  if (!code){ alert('Select a company first.'); return; }
+
+  trainBtn.disabled = true;
+  setStatus('training', 'starting…');
+
+  try {
+    await fetch(API_TRAIN(code), {
+      method: 'POST',
+      headers: { 'X-CSRFToken': getCookie('csrftoken') },
+    });
+  } catch (e){
+    setStatus('failed', 'Could not reach the server.');
+    trainBtn.disabled = false;
+    return;
+  }
+
+  pollTrainingStatus(code);
+});
+
+function pollTrainingStatus(code){
+  clearInterval(pollTimer);
+  pollTimer = setInterval(async () => {
+    try {
+      const res = await fetch(API_TRAIN(code));
+      const data = await res.json();
+      if (data.state === 'training'){
+        setStatus('training', 'this can take a while on first run…');
+      } else if (data.state === 'completed'){
+        setStatus('completed', `trained at ${data.trained_at || ''}`);
+        clearInterval(pollTimer);
+        trainBtn.disabled = false;
+      } else if (data.state === 'failed'){
+        setStatus('failed', data.error || 'Training failed.');
+        clearInterval(pollTimer);
+        trainBtn.disabled = false;
+      }
+    } catch (e){
+      clearInterval(pollTimer);
+      trainBtn.disabled = false;
+    }
+  }, 3000);
+}
+
+predictBtn.addEventListener('click', async () => {
+  const code = companySelect.value;
+  if (!code){ alert('Select a company first.'); return; }
+
+  predictBtn.disabled = true;
+  results.innerHTML = '<div class="state-msg">Fetching prediction…</div>';
+
+  let res, data;
+  try {
+    res = await fetch(API_PREDICT(code));
+    data = await res.json();
+  } catch (e){
+    results.innerHTML = '<div class="state-msg">Could not reach the server.</div>';
+    predictBtn.disabled = false;
+    return;
+  }
+
+  predictBtn.disabled = false;
+
+  if (!res.ok){
+    results.innerHTML = `<div class="state-msg">${data.error || 'Prediction failed.'}</div>`;
+    return;
+  }
+
+  renderResults(data);
+});
+
+function pctClass(v){
+  if (v > 0) return 'up';
+  if (v < 0) return 'down';
+  return 'flat';
+}
+
+function fmtPct(v){
+  const sign = v > 0 ? '+' : '';
+  return `${sign}${v.toFixed(2)}%`;
+}
+
+function renderResults(data){
+  const marketBadgeClass = data.market_status.toLowerCase();
+  const staleBadge = data.data_stale ? '<span class="badge stale">Stale data</span>' : '';
+
+  const rows = data.predictions.map(p => `
+    <tr>
+      <td class="num">${p.horizon_minutes} min</td>
+      <td class="num">${fmtPct(p.predicted_return_percent)}</td>
+      <td class="num">${p.predicted_open.toFixed(2)}</td>
+      <td class="num">${p.predicted_high.toFixed(2)}</td>
+      <td class="num">${p.predicted_low.toFixed(2)}</td>
+      <td class="num">${p.predicted_close.toFixed(2)}</td>
+      <td><span class="dir-pill ${p.direction.toLowerCase()}">${p.direction}</span></td>
+      <td>
+        <div class="conf-bar"><span style="width:${(p.confidence*100).toFixed(0)}%"></span></div>
+        <span class="mono" style="font-size:11.5px;color:var(--text-muted);">${(p.confidence*100).toFixed(0)}%</span>
+      </td>
+    </tr>
+  `).join('');
+
+  results.innerHTML = `
+    <div class="summary-card">
+      <div class="price">₹${data.current_price.toFixed(2)}</div>
+      <div class="summary-meta">
+        <div><strong>${data.company}</strong></div>
+        <div>Latest candle: ${data.latest_candle_timestamp}</div>
+        <div>Source: ${data.data_source} · ${data.historical_candles_used} candles used</div>
+        <div>Model v${data.model_version} · trained ${data.model_trained_at}</div>
+      </div>
+      <div style="margin-left:auto;display:flex;gap:8px;">
+        <span class="badge ${marketBadgeClass}">${data.market_status.replace('_',' ')}</span>
+        ${staleBadge}
+      </div>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Horizon</th><th>Return</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Direction</th><th>Confidence</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+
+    <div class="disclaimer">${data.disclaimer}</div>
+  `;
+}
+</script>
+</body>
+</html>

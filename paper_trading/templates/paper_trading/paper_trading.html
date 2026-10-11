@@ -1,0 +1,1546 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Paper Trading</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  :root{
+    --navy-900:#0B2545; --navy-800:#123B7A; --blue-600:#2F6FED; --blue-50:#EEF3FF;
+    --bg:#FFFFFF; --panel:#F7F9FC; --border:#E3E8F0;
+    --text:#101828; --text-muted:#64748B;
+    --green:#0EA968; --green-dark:#0A8A54; --green-bg:#E7F8F0;
+    --red:#E5484D; --red-dark:#C93A3F; --red-bg:#FDECEC;
+    --amber:#B45309; --amber-bg:#FEF3E0;
+    --radius:10px; --shadow:0 1px 2px rgba(16,24,40,.04),0 1px 3px rgba(16,24,40,.06);
+  }
+  *{ box-sizing:border-box; }
+  [hidden]{ display:none !important; }
+  body{ margin:0; font-family:'Inter',system-ui,sans-serif; background:var(--bg); color:var(--text); }
+  .mono{ font-family:'JetBrains Mono',monospace; }
+  .up{ color:var(--green); } .down{ color:var(--red); } .flat{ color:var(--text-muted); }
+
+  /* ---------- navbar ---------- */
+  .navbar{
+    background:linear-gradient(180deg,var(--navy-800),var(--navy-900)); color:#fff;
+    padding:14px 28px; display:flex; align-items:center; justify-content:space-between;
+    box-shadow:var(--shadow); position:sticky; top:0; z-index:30;
+  }
+  .brand{ display:flex; align-items:center; gap:10px; font-weight:700; font-size:18px; }
+  .brand .dot{ width:9px; height:9px; border-radius:50%; background:#5BE49B; box-shadow:0 0 0 4px rgba(91,228,155,.18); }
+  .brand .tag{ font-size:12px; color:rgba(255,255,255,.65); font-weight:500; border-left:1px solid rgba(255,255,255,.2); padding-left:12px; }
+  .nav-wallet{ font-size:12px; color:rgba(255,255,255,.7); text-align:right; }
+  .nav-wallet strong{ display:block; font-family:'JetBrains Mono',monospace; font-size:15px; color:#fff; }
+
+  .wrap{ max-width:1320px; margin:0 auto; padding:0 24px 60px; }
+
+  /* ---------- filter bar ---------- */
+  .filter-bar{
+    background:var(--panel); border:1px solid var(--border); border-radius:var(--radius);
+    padding:14px 18px; margin-top:20px; display:flex; flex-wrap:wrap; align-items:flex-end; gap:16px;
+  }
+  .field{ display:flex; flex-direction:column; gap:6px; }
+  .field > label, .field > .lbl{ font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.06em; color:var(--text-muted); }
+  select, input[type=date], input[type=number]{
+    border:1px solid var(--border); border-radius:8px; background:#fff; padding:9px 12px;
+    font-size:14px; font-weight:500; font-family:inherit; color:var(--text);
+  }
+  select{
+    appearance:none; min-width:250px; padding-right:32px;
+    background:#fff url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M0 0l5 6 5-6z' fill='%2364748B'/></svg>") no-repeat right 12px center;
+  }
+  select:focus, input:focus{ outline:2px solid var(--blue-600); outline-offset:1px; }
+  .date-hint{ font-size:11px; color:var(--text-muted); min-height:14px; }
+
+  .seg{ display:inline-flex; background:#fff; border:1px solid var(--border); border-radius:8px; padding:3px; }
+  .seg button{
+    border:none; background:transparent; padding:7px 18px; border-radius:6px; font-size:13.5px;
+    font-weight:600; color:var(--text-muted); cursor:pointer; font-family:inherit;
+  }
+  .seg button.active{ background:var(--navy-800); color:#fff; }
+
+  .btn-primary{
+    background:var(--blue-600); color:#fff; border:none; border-radius:8px; padding:10px 24px;
+    font-size:14px; font-weight:600; cursor:pointer; font-family:inherit;
+  }
+  .btn-primary:hover{ background:#255BC9; }
+  .btn-primary:disabled{ opacity:.55; cursor:not-allowed; }
+
+  .notice{
+    margin-top:14px; padding:11px 16px; border-radius:8px; font-size:13.5px; line-height:1.45;
+    background:var(--blue-50); color:var(--navy-800); border:1px solid #D6E2FF;
+  }
+  .notice.warn{ background:var(--amber-bg); color:var(--amber); border-color:#F6DDB4; }
+  .notice.error{ background:var(--red-bg); color:var(--red-dark); border-color:#F7CACC; }
+
+  /* ---------- layout ---------- */
+  .layout{ display:grid; grid-template-columns:minmax(0,1fr) 340px; gap:20px; margin-top:20px; align-items:start; }
+  @media (max-width:1000px){ .layout{ grid-template-columns:1fr; } }
+  .card{ border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); background:#fff; }
+  .card-title{ font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.07em; color:var(--text-muted); margin-bottom:12px; display:flex; justify-content:space-between; align-items:center; }
+
+  /* ---------- quote header ---------- */
+  .quote{ padding:16px 20px; display:flex; flex-wrap:wrap; align-items:center; gap:14px 28px; margin-bottom:16px; }
+  .q-symbol{ font-size:20px; font-weight:700; }
+  .q-name{ font-size:12.5px; color:var(--text-muted); margin-top:2px; }
+  .q-ltp{ font-family:'JetBrains Mono',monospace; font-size:30px; font-weight:700; line-height:1; }
+  .q-chg{ font-family:'JetBrains Mono',monospace; font-size:13px; font-weight:600; margin-top:6px; }
+  .q-meta{ margin-left:auto; display:flex; flex-direction:column; align-items:flex-end; gap:6px; font-size:12.5px; color:var(--text-muted); }
+  .badge{ font-size:11px; font-weight:700; letter-spacing:.05em; padding:4px 10px; border-radius:999px; display:inline-flex; align-items:center; gap:6px; text-transform:uppercase; }
+  .badge.live{ background:var(--green-bg); color:var(--green); }
+  .badge.replay{ background:var(--blue-50); color:var(--navy-800); }
+  .badge.closed{ background:var(--panel); color:var(--text-muted); }
+  .badge.stale{ background:var(--red-bg); color:var(--red); }
+  .pulse{ width:7px; height:7px; border-radius:50%; background:currentColor; animation:pulse 1.4s infinite; }
+  @keyframes pulse{ 0%{ opacity:1; } 50%{ opacity:.25; } 100%{ opacity:1; } }
+
+  /* ---------- chart ---------- */
+  .chart-card{ position:relative; padding:6px; }
+  #chart{ height:420px; width:100%; }
+  .ohlc-legend{ position:absolute; top:12px; left:16px; z-index:5; font-family:'JetBrains Mono',monospace; font-size:11.5px; color:var(--text-muted); display:flex; gap:12px; pointer-events:none; background:rgba(255,255,255,.85); padding:2px 6px; border-radius:4px; }
+  .ohlc-legend b{ color:var(--text); font-weight:600; }
+  .chart-empty{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; text-align:center; padding:20px; color:var(--text-muted); font-size:14px; z-index:4; pointer-events:none; }
+
+  /* ---------- replay controls ---------- */
+  .replay-controls{ display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding:10px 14px; margin-top:12px; }
+  .ctrl{ border:1px solid var(--border); background:#fff; border-radius:8px; padding:7px 14px; font-size:13px; font-weight:600; color:var(--navy-800); cursor:pointer; font-family:inherit; }
+  .ctrl:hover:not(:disabled){ border-color:var(--blue-600); }
+  .ctrl:disabled{ color:#B6BEC9; cursor:not-allowed; }
+  .ctrl.main{ background:var(--navy-800); color:#fff; border-color:var(--navy-800); min-width:92px; }
+  .ctrl-speed{ display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--text-muted); }
+  .ctrl-speed select{ min-width:0; padding:6px 28px 6px 10px; font-size:13px; }
+  .sim-clock{ margin-left:auto; font-family:'JetBrains Mono',monospace; font-size:13px; color:var(--text-muted); }
+  .sim-clock b{ color:var(--text); font-size:15px; }
+
+  /* ---------- tabs & tables ---------- */
+  .tabs{ display:flex; gap:4px; margin-top:20px; border-bottom:1px solid var(--border); }
+  .tab{ border:none; background:none; padding:10px 16px; font-size:13.5px; font-weight:600; color:var(--text-muted); cursor:pointer; border-bottom:2px solid transparent; font-family:inherit; }
+  .tab.active{ color:var(--navy-800); border-bottom-color:var(--blue-600); }
+  .table-wrap{ overflow-x:auto; margin-top:0; }
+  table{ width:100%; border-collapse:collapse; font-size:13.5px; }
+  thead th{ text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--text-muted); padding:10px 12px; background:var(--panel); border-bottom:1px solid var(--border); white-space:nowrap; }
+  tbody td{ padding:11px 12px; border-bottom:1px solid var(--border); white-space:nowrap; }
+  td.num, th.num{ text-align:right; font-family:'JetBrains Mono',monospace; }
+  .empty-row{ text-align:center; color:var(--text-muted); padding:26px 0 !important; font-family:'Inter',sans-serif !important; }
+  .side-pill{ font-family:'JetBrains Mono',monospace; font-size:11px; font-weight:700; padding:3px 9px; border-radius:999px; }
+  .side-pill.buy, .side-pill.long{ background:var(--green-bg); color:var(--green); }
+  .side-pill.sell, .side-pill.short{ background:var(--red-bg); color:var(--red); }
+  .ctx{ font-size:11px; color:var(--text-muted); }
+  .btn-exit{ border:1px solid var(--border); background:#fff; border-radius:6px; padding:4px 12px; font-size:12px; font-weight:600; cursor:pointer; color:var(--navy-800); font-family:inherit; }
+  .btn-exit:hover:not(:disabled){ border-color:var(--red); color:var(--red); }
+  .btn-exit:disabled{ color:#B6BEC9; cursor:not-allowed; }
+
+  /* ---------- side column ---------- */
+  .side-col{ display:flex; flex-direction:column; gap:16px; position:sticky; top:74px; }
+  @media (max-width:1000px){ .side-col{ position:static; } }
+  .wallet-card, .order-card{ padding:16px 18px; }
+  .wallet-balance{ font-size:28px; font-weight:700; }
+  .wallet-sub{ font-size:12px; color:var(--text-muted); margin-top:2px; }
+  .wallet-stats{ display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:14px 0; padding-top:12px; border-top:1px dashed var(--border); font-size:11.5px; color:var(--text-muted); }
+  .wallet-stats strong{ display:block; font-family:'JetBrains Mono',monospace; font-size:13.5px; color:var(--text); margin-top:2px; }
+  .wallet-add{ display:flex; gap:8px; }
+  .wallet-add input{ flex:1; min-width:0; }
+
+  .order-head{ display:flex; justify-content:space-between; align-items:baseline; }
+  .order-symbol{ font-weight:700; font-size:15px; }
+  .order-ltp{ font-family:'JetBrains Mono',monospace; font-weight:700; font-size:17px; }
+  .order-position{ margin:10px 0 14px; font-size:12.5px; color:var(--text-muted); background:var(--panel); border-radius:8px; padding:8px 10px; line-height:1.5; }
+  .qty-row{ display:flex; gap:8px; }
+  .qty-row input{ flex:1; min-width:0; font-family:'JetBrains Mono',monospace; }
+  .chip{ border:1px solid var(--border); background:#fff; border-radius:8px; padding:0 14px; font-size:12.5px; font-weight:600; color:var(--navy-800); cursor:pointer; font-family:inherit; }
+  .chip:hover:not(:disabled){ border-color:var(--blue-600); }
+  .order-meta{ display:flex; justify-content:space-between; font-size:12.5px; color:var(--text-muted); margin-top:10px; }
+  .order-meta strong{ color:var(--text); font-family:'JetBrains Mono',monospace; }
+  .order-buttons{ display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:16px; }
+  .btn-trade{ border:none; border-radius:8px; padding:14px 0; font-size:15px; font-weight:700; letter-spacing:.04em; color:#fff; cursor:pointer; font-family:inherit; transition:filter .12s ease, transform .05s ease; }
+  .btn-trade:active:not(:disabled){ transform:translateY(1px); }
+  .btn-buy{ background:var(--green); } .btn-buy:hover:not(:disabled){ background:var(--green-dark); }
+  .btn-sell{ background:var(--red); } .btn-sell:hover:not(:disabled){ background:var(--red-dark); }
+  .btn-trade:disabled{ opacity:.4; cursor:not-allowed; }
+  .order-hint{ margin-top:12px; font-size:11.5px; line-height:1.5; color:var(--text-muted); }
+  .order-hint.blocked{ color:var(--amber); }
+
+  /* ---------- previous-day legend ---------- */
+  .prev-legend{ display:flex; flex-wrap:wrap; align-items:center; gap:6px 16px; padding:8px 12px 2px; font-size:12px; }
+  .prev-legend .title{ color:var(--text-muted); font-weight:600; text-transform:uppercase; letter-spacing:.05em; font-size:10.5px; }
+  .prev-chip{ display:flex; align-items:center; gap:6px; font-family:'JetBrains Mono',monospace; font-weight:600; }
+  .prev-sw{ width:14px; height:3px; border-radius:2px; flex-shrink:0; }
+  .prev-fit{ margin-left:auto; display:flex; align-items:center; gap:6px; color:var(--text-muted); font-size:11.5px; cursor:pointer; user-select:none; }
+
+  /* ---------- stop loss / target ---------- */
+  .bracket{ margin-top:14px; padding-top:12px; border-top:1px dashed var(--border); }
+  .bracket-head{ display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+  .bracket-title{ font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--text-muted); }
+  .mini-seg{ display:inline-flex; border:1px solid var(--border); border-radius:6px; padding:2px; background:#fff; }
+  .mini-seg button{ border:none; background:none; font-size:11px; font-weight:700; padding:3px 10px; border-radius:4px; cursor:pointer; color:var(--text-muted); font-family:inherit; }
+  .mini-seg button.active.long{ background:var(--green-bg); color:var(--green); }
+  .mini-seg button.active.short{ background:var(--red-bg); color:var(--red); }
+  .mini-seg.locked button{ cursor:not-allowed; }
+  .lvl{ margin-bottom:10px; }
+  .lvl-top{ display:flex; justify-content:space-between; align-items:center; font-size:12px; margin-bottom:5px; gap:8px; }
+  .lvl-name{ font-weight:700; }
+  .lvl-name.sl{ color:var(--red); } .lvl-name.tgt{ color:var(--green); }
+  .lvl-current{ font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--text-muted); display:flex; align-items:center; gap:6px; text-align:right; }
+  .mini-x{ border:1px solid var(--border); background:#fff; border-radius:4px; width:18px; height:18px; line-height:14px; font-size:11px; cursor:pointer; color:var(--text-muted); padding:0; }
+  .mini-x:hover{ border-color:var(--red); color:var(--red); }
+  .lvl-inputs{ display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .lvl-inputs .ip{ position:relative; }
+  .lvl-inputs input{ width:100%; font-family:'JetBrains Mono',monospace; padding:8px 28px 8px 10px; font-size:13px; }
+  .lvl-inputs .unit{ position:absolute; right:10px; top:50%; transform:translateY(-50%); font-size:12px; color:var(--text-muted); pointer-events:none; }
+  .bracket-note{ font-size:11px; color:var(--text-muted); line-height:1.45; margin-top:2px; }
+  .btn-update{ width:100%; margin-top:10px; padding:9px 0; border:1px solid var(--blue-600); background:var(--blue-50); color:var(--navy-800); border-radius:8px; font-weight:700; font-size:13px; cursor:pointer; font-family:inherit; }
+  .btn-update:hover:not(:disabled){ background:#E0EAFF; }
+  .btn-update:disabled{ opacity:.5; cursor:not-allowed; }
+  .reason-tag{ font-size:10px; font-weight:700; padding:2px 7px; border-radius:999px; background:var(--amber-bg); color:var(--amber); margin-left:6px; white-space:nowrap; }
+  .reason-tag.target{ background:var(--green-bg); color:var(--green); }
+  .reason-tag.stop_loss{ background:var(--red-bg); color:var(--red); }
+  td small{ color:var(--text-muted); font-size:11px; }
+
+  /* ---------- product (intraday / delivery) ---------- */
+  .product-block{ margin-bottom:12px; }
+  .seg.compact{ display:flex; width:100%; }
+  .seg.compact button{ flex:1; padding:7px 10px; font-size:13px; }
+  .product-note{ font-size:11px; color:var(--text-muted); line-height:1.45; margin-top:6px; min-height:30px; }
+  .prod-pill{ font-family:'JetBrains Mono',monospace; font-size:10.5px; font-weight:700; padding:2px 8px; border-radius:999px; white-space:nowrap; }
+  .prod-pill.intraday{ background:var(--amber-bg); color:var(--amber); }
+  .prod-pill.delivery{ background:var(--blue-50); color:var(--navy-800); }
+  tfoot td{ background:var(--panel); font-weight:700; border-top:1px solid var(--border); border-bottom:none; }
+  .btn-ghost{ border:1px solid var(--border); background:#fff; color:var(--navy-800); border-radius:8px; padding:10px 14px; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; }
+  .btn-ghost:hover{ border-color:var(--blue-600); }
+  .wallet-stats .wide{ grid-column:1 / -1; }
+
+  #toasts{ position:fixed; top:74px; right:20px; display:flex; flex-direction:column; gap:8px; z-index:100; }
+  .toast{ background:var(--navy-900); color:#fff; padding:11px 16px; border-radius:8px; font-size:13px; box-shadow:0 6px 20px rgba(16,24,40,.25); max-width:340px; border-left:4px solid var(--blue-600); }
+  .toast.success{ border-left-color:var(--green); }
+  .toast.error{ border-left-color:var(--red); }
+  .disclaimer{ margin-top:22px; font-size:12px; color:var(--text-muted); line-height:1.55; }
+</style>
+</head>
+<body>
+
+<nav class="navbar">
+  <div class="brand"><span class="dot"></span> Paper Trading <span class="tag">Practice with live &amp; replayed markets · virtual money</span></div>
+  <div class="nav-wallet">Wallet<strong id="navBalance">₹0.00</strong></div>
+</nav>
+
+<div class="wrap">
+  <div class="filter-bar">
+    <div class="field">
+      <label for="companySelect">Company</label>
+      <select id="companySelect">
+        <option value="">Select a company</option>
+        {% for company in companies %}
+          <option value="{{ company.code }}" data-name="{{ company.name }}">{{ company.code }} — {{ company.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="field">
+      <span class="lbl">Data</span>
+      <div class="seg" id="modeToggle" role="group" aria-label="Live or old data">
+        <button type="button" data-mode="live" class="active">Live</button>
+        <button type="button" data-mode="replay">Old</button>
+      </div>
+    </div>
+
+    <div class="field" id="dateField" hidden>
+      <label for="dateInput">Date</label>
+      <input type="date" id="dateInput">
+      <span class="date-hint" id="dateHint"></span>
+    </div>
+
+    <button class="btn-primary" id="showBtn" type="button">Show</button>
+    <button class="btn-ghost" id="copyLinkBtn" type="button" hidden title="Copy a direct link to this stock and mode">Copy link</button>
+  </div>
+
+  <div class="notice" id="notice" hidden></div>
+
+  <div class="layout">
+    <section>
+      <div class="card quote" id="quote">
+        <div>
+          <div class="q-symbol" id="qSymbol">—</div>
+          <div class="q-name" id="qName">Select a company to begin</div>
+        </div>
+        <div>
+          <div class="q-ltp" id="qLtp">—</div>
+          <div class="q-chg flat" id="qChg">—</div>
+        </div>
+        <div class="q-meta">
+          <span id="qBadge"></span>
+          <span id="qClock"></span>
+        </div>
+      </div>
+
+      <div class="card chart-card">
+        <div class="prev-legend" id="prevLegend"></div>
+        <div class="ohlc-legend" id="ohlcLegend"></div>
+        <div id="chart"></div>
+        <div class="chart-empty" id="chartEmpty">Select a company, choose Live or Old, then press Show.</div>
+      </div>
+
+      <div class="card replay-controls" id="replayControls" hidden>
+        <button class="ctrl main" id="playBtn" type="button">Pause</button>
+        <button class="ctrl" id="nextBtn" type="button" title="Jump to the next candle">Next candle ⏭</button>
+        <button class="ctrl" id="restartBtn" type="button">Restart day</button>
+        <label class="ctrl-speed">Speed
+          <select id="speedSelect">
+            <option value="0.5">0.5 s / candle</option>
+            <option value="1">1 s / candle</option>
+            <option value="2" selected>2 s / candle</option>
+            <option value="5">5 s / candle</option>
+            <option value="10">10 s / candle</option>
+          </select>
+        </label>
+        <div class="sim-clock">Market time <b id="simClock">--:--:--</b></div>
+      </div>
+
+      <div class="tabs">
+        <button class="tab active" data-tab="positions" type="button">Positions</button>
+        <button class="tab" data-tab="orders" type="button">Orders</button>
+      </div>
+      <div class="card table-wrap" style="border-top:none; border-radius:0 0 10px 10px;">
+        <table id="positionsTable"></table>
+        <table id="ordersTable" hidden></table>
+      </div>
+    </section>
+
+    <aside class="side-col">
+      <div class="card wallet-card">
+        <div class="card-title">Wallet</div>
+        <div class="wallet-balance mono" id="walletBalance">₹0.00</div>
+        <div class="wallet-sub">Available balance</div>
+        <div class="wallet-stats">
+          <div>Blocked in positions<strong id="walletBlocked">₹0.00</strong></div>
+          <div>Realized P&amp;L<strong id="walletRealized">₹0.00</strong></div>
+          <div class="wide">Open P&amp;L (all positions)<strong id="walletUnrealized">₹0.00</strong></div>
+        </div>
+        <div class="wallet-add">
+          <input type="number" id="walletInput" min="1" step="0.01" inputmode="decimal" placeholder="Amount to add">
+          <button class="btn-primary" id="walletAddBtn" type="button">Add</button>
+        </div>
+      </div>
+
+      <div class="card order-card">
+        <div class="card-title"><span>Place order</span><span>Market</span></div>
+        <div class="order-head">
+          <span class="order-symbol" id="orderSymbol">—</span>
+          <span class="order-ltp" id="orderLtp">—</span>
+        </div>
+        <div class="order-position" id="orderPosition">No open position</div>
+
+        <div class="product-block">
+          <div class="field">
+            <span class="lbl">Product</span>
+            <div class="seg compact" id="productToggle" role="group" aria-label="Intraday or delivery">
+              <button type="button" data-product="INTRADAY" class="active">Intraday</button>
+              <button type="button" data-product="DELIVERY">Delivery</button>
+            </div>
+          </div>
+          <div class="product-note" id="productNote"></div>
+        </div>
+
+        <div class="field">
+          <label for="qtyInput">Quantity</label>
+          <div class="qty-row">
+            <input type="number" id="qtyInput" min="1" step="1" value="1" inputmode="numeric">
+            <button class="chip" id="maxBtn" type="button" title="Largest quantity your wallet can open">Max</button>
+          </div>
+        </div>
+        <div class="order-meta"><span>Approx. value</span><strong id="orderValue">—</strong></div>
+        <div class="order-meta"><span>Max you can open</span><strong id="orderMax">—</strong></div>
+
+        <div class="bracket" id="bracket">
+          <div class="bracket-head">
+            <span class="bracket-title">Stop loss &amp; target <span style="text-transform:none;font-weight:500;">(optional)</span></span>
+            <div class="mini-seg" id="dirToggle" title="Which kind of position these levels are for">
+              <button type="button" data-dir="long" class="active long">Long</button>
+              <button type="button" data-dir="short" class="short">Short</button>
+            </div>
+          </div>
+
+          <div class="lvl">
+            <div class="lvl-top">
+              <span class="lvl-name sl">Stop loss</span>
+              <span class="lvl-current"><span id="slCurrent"></span><button class="mini-x" id="slClear" type="button" title="Remove stop loss" hidden>✕</button></span>
+            </div>
+            <div class="lvl-inputs">
+              <div class="ip"><input type="number" id="slPct" step="0.01" min="0" inputmode="decimal" placeholder="Percent" aria-label="Stop loss percent"><span class="unit">%</span></div>
+              <div class="ip"><input type="number" id="slPrice" step="0.05" min="0" inputmode="decimal" placeholder="Price" aria-label="Stop loss price"><span class="unit">₹</span></div>
+            </div>
+          </div>
+
+          <div class="lvl">
+            <div class="lvl-top">
+              <span class="lvl-name tgt">Target</span>
+              <span class="lvl-current"><span id="tgtCurrent"></span><button class="mini-x" id="tgtClear" type="button" title="Remove target" hidden>✕</button></span>
+            </div>
+            <div class="lvl-inputs">
+              <div class="ip"><input type="number" id="tgtPct" step="0.01" min="0" inputmode="decimal" placeholder="Percent" aria-label="Target percent"><span class="unit">%</span></div>
+              <div class="ip"><input type="number" id="tgtPrice" step="0.05" min="0" inputmode="decimal" placeholder="Price" aria-label="Target price"><span class="unit">₹</span></div>
+            </div>
+          </div>
+
+          <div class="bracket-note" id="bracketNote"></div>
+          <button class="btn-update" id="updateBracketBtn" type="button" hidden>Update stop loss / target on open position</button>
+        </div>
+
+        <div class="order-buttons">
+          <button class="btn-trade btn-buy" id="buyBtn" type="button">BUY</button>
+          <button class="btn-trade btn-sell" id="sellBtn" type="button">SELL</button>
+        </div>
+        <div class="order-hint" id="orderHint"></div>
+      </div>
+    </aside>
+  </div>
+
+  <p class="disclaimer">
+    Virtual money only — nothing here is real trading or investment advice. Orders fill instantly at the last
+    price (no slippage, brokerage or taxes). Selling without a holding opens a short position and blocks the full
+    order value from your wallet, exactly like buying does.
+  </p>
+</div>
+
+<div id="toasts"></div>
+
+{{ initial|json_script:"initial-state" }}
+
+<script>
+(() => {
+'use strict';
+
+/* ======================================================================
+   config
+   ====================================================================== */
+const URLS = {
+  page:      "{% url 'paper_trading:page' %}",
+  account:   "{% url 'paper_trading:account' %}",
+  walletAdd: "{% url 'paper_trading:wallet_add' %}",
+  order:     "{% url 'paper_trading:order' %}",
+  bracket:   "{% url 'paper_trading:bracket' %}",
+  quotes:    "{% url 'paper_trading:quotes' %}",
+  squareoff: "{% url 'paper_trading:squareoff' %}",
+  candles:   "{% url 'paper_trading:candles' 'CODE_PLACEHOLDER' %}",
+  dateRange: "{% url 'paper_trading:date_range' 'CODE_PLACEHOLDER' %}",
+};
+const forCompany = (tpl, code) => tpl.replace('CODE_PLACEHOLDER', encodeURIComponent(code));
+
+const INITIAL = JSON.parse(document.getElementById('initial-state').textContent);
+const SQUAREOFF_LABEL = "{{ squareoff_label }}";
+const LIVE_POLL_MS = {{ live_poll_seconds }} * 1000;
+const TICKS = 7;           // ticks per candle: open, mid, low/high, mid, high/low, mid, close
+const IST_SHIFT = 19800;   // +5:30. Chart times are shifted so the (UTC) axis reads as IST.
+const PREV_COLORS = { open: '#CA8A04', high: '#0EA968', low: '#E5484D', close: '#2F6FED' };  // yellow, green, red, blue
+const REASON_LABEL = { stop_loss: 'SL hit', target: 'Target hit', session_end: 'Auto close' };
+const PRODUCT_LABEL = { INTRADAY: 'Intraday', DELIVERY: 'Delivery' };
+const PRODUCT_NOTE = {
+  INTRADAY: `Can go short. Closed automatically at the end of the day (Old) or at ${SQUAREOFF_LABEL} (Live).`,
+  DELIVERY: 'Buy and hold — no short selling, never auto-closed. Old-mode holdings carry over to later dates.',
+};
+
+/* ======================================================================
+   state
+   ====================================================================== */
+const S = {
+  uiMode: 'live',                       // what the toggle currently shows
+  mode: 'live', date: null,             // the session that is actually loaded
+  company: '', companyName: '',
+  product: 'INTRADAY',                  // product chosen in the order ticket
+  candles: [], live: null,
+  quotes: {},                           // LIVE: quotes for the OTHER companies we hold, by code
+  books: {}, booksDate: null,           // OLD: each held company's candles for the replay date
+  account: { balance: 0, blocked: 0, realized_pnl: 0, positions: [], orders: [], resume_market_time: null },
+  chart: null, series: null, lastBar: null, barCount: 0,
+  avgLine: null, slLine: null, tgtLine: null,           // lines for the selected position
+  prev: null, prevLines: [], fitPrev: true,             // previous-day O/H/L/C lines
+  dir: 'long',                                          // side the SL/target inputs are for (when flat)
+  replayClock: null,                                    // {date, x}: shared by every stock on that date
+  cooldown: {},                                         // position key -> time before which we won't retry an auto exit
+  lastSkipMsg: '',
+  pollTimer: null, gen: 0, busy: false,
+};
+// R.q[code] = {price, prevPrice, x, prevX}: that stock's simulated price at the current replay tick
+const R = { idx: 0, tick: 0, timer: null, playing: false, finished: false, secondsPerCandle: 2, paths: {}, q: {} };
+
+const $ = (id) => document.getElementById(id);
+const els = {
+  company: $('companySelect'), toggle: $('modeToggle'), dateField: $('dateField'), date: $('dateInput'),
+  dateHint: $('dateHint'), showBtn: $('showBtn'), copyLink: $('copyLinkBtn'), notice: $('notice'),
+  qSymbol: $('qSymbol'), qName: $('qName'), qLtp: $('qLtp'), qChg: $('qChg'), qBadge: $('qBadge'), qClock: $('qClock'),
+  chart: $('chart'), chartEmpty: $('chartEmpty'), legend: $('ohlcLegend'),
+  replay: $('replayControls'), playBtn: $('playBtn'), nextBtn: $('nextBtn'), restartBtn: $('restartBtn'),
+  speed: $('speedSelect'), simClock: $('simClock'),
+  posTable: $('positionsTable'), ordTable: $('ordersTable'),
+  navBalance: $('navBalance'), walletBalance: $('walletBalance'), walletBlocked: $('walletBlocked'),
+  walletRealized: $('walletRealized'), walletUnrealized: $('walletUnrealized'),
+  walletInput: $('walletInput'), walletAdd: $('walletAddBtn'),
+  orderSymbol: $('orderSymbol'), orderLtp: $('orderLtp'), orderPosition: $('orderPosition'),
+  qty: $('qtyInput'), maxBtn: $('maxBtn'), orderValue: $('orderValue'), orderMax: $('orderMax'),
+  buy: $('buyBtn'), sell: $('sellBtn'), hint: $('orderHint'),
+  productToggle: $('productToggle'), productNote: $('productNote'),
+  prevLegend: $('prevLegend'), dirToggle: $('dirToggle'), bracketNote: $('bracketNote'), updateBracket: $('updateBracketBtn'),
+};
+// Stop loss / target inputs. `src` remembers which box the user typed in last
+// ('pct' or 'price'); the other box is always derived from it.
+const LV = {
+  sl:  { pct: $('slPct'),  price: $('slPrice'),  src: null, cur: $('slCurrent'),  clr: $('slClear'),  field: 'stop_loss',    body: ['stop_loss_percent', 'stop_loss_price'] },
+  tgt: { pct: $('tgtPct'), price: $('tgtPrice'), src: null, cur: $('tgtCurrent'), clr: $('tgtClear'), field: 'target_price', body: ['target_percent', 'target_price'] },
+};
+
+/* ======================================================================
+   utilities
+   ====================================================================== */
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+const nf = new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const money = (n) => (n < 0 ? '-₹' : '₹') + nf.format(Math.abs(n));
+const pnlText = (n) => (n > 0 ? '+' : n < 0 ? '-' : '') + '₹' + nf.format(Math.abs(n));
+const tone = (n) => (n > 0 ? 'up' : n < 0 ? 'down' : 'flat');
+const pad = (n) => String(n).padStart(2, '0');
+const round2 = (n) => Math.round(n * 100) / 100;
+const signedPct = (v, base) => { const p = ((v - base) / base) * 100; return (p >= 0 ? '+' : '') + p.toFixed(2) + '%'; };
+
+const chartTime = (iso) => Math.floor(new Date(iso).getTime() / 1000) + IST_SHIFT;
+const hm = (iso) => { const d = new Date(chartTime(iso) * 1000); return pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()); };
+const toBar = (c) => ({ time: chartTime(c.x), open: c.o, high: c.h, low: c.l, close: c.c });
+
+function csrfToken() {
+  const m = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/);
+  return m ? decodeURIComponent(m[1]) : '';
+}
+
+async function apiFetch(url, options = {}) {
+  const res = await fetch(url, options);
+  let data = {};
+  try { data = await res.json(); } catch (e) { /* non-JSON error page */ }
+  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  return data;
+}
+const postJson = (url, body) => apiFetch(url, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken() },
+  body: JSON.stringify(body),
+});
+
+function toast(message, kind = 'info') {
+  const t = document.createElement('div');
+  t.className = 'toast ' + kind;
+  t.textContent = message;
+  $('toasts').appendChild(t);
+  setTimeout(() => t.remove(), 4200);
+}
+
+function setNotice(message, kind = 'info') {
+  els.notice.hidden = !message;
+  els.notice.textContent = message || '';
+  els.notice.className = 'notice' + (kind === 'info' ? '' : ' ' + kind);
+}
+
+/* ======================================================================
+   positions & prices — every open position is priced and watched,
+   not just the stock on the chart
+   ====================================================================== */
+const positionFor = (code, product = S.product) =>
+  S.account.positions.find((p) => p.company === code && p.product === product) || null;
+const selPos = () => (S.company ? positionFor(S.company, S.product) : null);
+const posKey = (p) => `${p.company}|${p.product}`;
+const heldCodes = () => [...new Set(S.account.positions.map((p) => p.company))];
+// anything that would be lost / confused by rewinding the replay day
+const hasDayPositions = () => S.account.positions.some(
+  (p) => p.product === 'INTRADAY' || (p.last_entry_at && p.last_entry_at.slice(0, 10) === S.date));
+
+const liveQuoteFor = (code) => (code === S.company ? S.live : S.quotes[code]) || null;
+
+function ltpFor(code) {
+  if (!code) return null;
+  if (S.mode === 'replay') { const q = R.q[code]; return q && q.price != null ? q.price : null; }
+  const lq = liveQuoteFor(code);
+  return lq && lq.ltp != null ? lq.ltp : null;
+}
+const currentLtp = () => ltpFor(S.company);
+
+/* Why (if at all) trading `code` is blocked right now. '' means tradable. */
+function tradeBlockReason(code = S.company, force = false) {
+  if (!S.company) return 'Select a company and press Show to start trading.';
+  if (S.mode === 'live') {
+    const lq = liveQuoteFor(code);
+    if (!lq) return 'Loading live data…';
+    if (lq.ltp == null) return `No live price for ${code} yet today.`;
+    if (lq.market_status !== 'OPEN') {
+      return `Market is ${lq.market_status.replace('_', ' ').toLowerCase()} — live orders are disabled. Use Old mode to practise.`;
+    }
+    if (lq.stale) return 'Live data looks stale — orders are disabled until it refreshes.';
+    return '';
+  }
+  const q = R.q[code];
+  if (!q || q.price == null) return 'Loading…';
+  if (R.finished && !force) return 'Replay finished (market closed).';
+  const cur = S.candles[R.idx];
+  if (!force && cur && q.x !== cur.x) return `${code} has no candle at this time.`;
+  return '';
+}
+
+/* ======================================================================
+   chart
+   ====================================================================== */
+function initChart() {
+  S.chart = LightweightCharts.createChart(els.chart, {
+    width: els.chart.clientWidth,
+    height: 420,
+    layout: { background: { type: 'solid', color: '#FFFFFF' }, textColor: '#64748B', fontFamily: 'JetBrains Mono, monospace', fontSize: 11 },
+    grid: { vertLines: { color: '#EEF2F7' }, horzLines: { color: '#EEF2F7' } },
+    rightPriceScale: { borderColor: '#E3E8F0' },
+    timeScale: { borderColor: '#E3E8F0', timeVisible: true, secondsVisible: false, barSpacing: 12, rightOffset: 6 },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+  });
+  S.series = S.chart.addCandlestickSeries({
+    upColor: '#0EA968', downColor: '#E5484D', borderVisible: false,
+    wickUpColor: '#0EA968', wickDownColor: '#E5484D',
+    // Price lines don't affect autoscale on their own - widen the range so the
+    // previous-day levels and the position's SL / target stay visible.
+    autoscaleInfoProvider: (original) => {
+      const res = original();
+      const extra = extraScalePrices();
+      if (!res || !res.priceRange || !extra.length) return res;
+      let lo = res.priceRange.minValue, hi = res.priceRange.maxValue;
+      extra.forEach((p) => { if (p < lo) lo = p; if (p > hi) hi = p; });
+      return { priceRange: { minValue: lo, maxValue: hi }, margins: res.margins };
+    },
+  });
+  S.chart.subscribeCrosshairMove((param) => {
+    const bar = param && param.time && param.seriesData ? param.seriesData.get(S.series) : null;
+    showLegend(bar || S.lastBar);
+  });
+  new ResizeObserver(() => S.chart.applyOptions({ width: els.chart.clientWidth })).observe(els.chart);
+}
+
+function showLegend(b) {
+  if (!b) { els.legend.innerHTML = ''; return; }
+  const cls = b.close >= b.open ? 'up' : 'down';
+  els.legend.innerHTML =
+    `<span>O <b>${b.open.toFixed(2)}</b></span><span>H <b>${b.high.toFixed(2)}</b></span>` +
+    `<span>L <b>${b.low.toFixed(2)}</b></span><span>C <b class="${cls}">${b.close.toFixed(2)}</b></span>`;
+}
+
+function refreshScale() {
+  S.chart.priceScale('right').applyOptions({ autoScale: true });
+}
+
+function extraScalePrices() {
+  const out = [];
+  if (S.fitPrev && S.prev) out.push(S.prev.open, S.prev.high, S.prev.low, S.prev.close);
+  const pos = selPos();
+  if (pos) {
+    out.push(pos.avg_price);
+    if (pos.stop_loss != null) out.push(pos.stop_loss);
+    if (pos.target_price != null) out.push(pos.target_price);
+  }
+  return out;
+}
+
+/* entry / stop-loss / target lines for the selected stock + product */
+function updateAvgLine() {
+  [S.avgLine, S.slLine, S.tgtLine].forEach((l) => { if (l) S.series.removePriceLine(l); });
+  S.avgLine = S.slLine = S.tgtLine = null;
+  const pos = selPos();
+  if (pos) {
+    const LS = LightweightCharts.LineStyle;
+    S.avgLine = S.series.createPriceLine({
+      price: pos.avg_price, color: '#0B2545', lineWidth: 1, lineStyle: LS.Dashed, axisLabelVisible: true,
+      title: `${pos.side} ${Math.abs(pos.quantity)} avg`,
+    });
+    if (pos.stop_loss != null) {
+      S.slLine = S.series.createPriceLine({
+        price: pos.stop_loss, color: '#DC2626', lineWidth: 2, lineStyle: LS.Dotted, axisLabelVisible: true,
+        title: `SL ${signedPct(pos.stop_loss, pos.avg_price)}`,
+      });
+    }
+    if (pos.target_price != null) {
+      S.tgtLine = S.series.createPriceLine({
+        price: pos.target_price, color: '#059669', lineWidth: 2, lineStyle: LS.Dotted, axisLabelVisible: true,
+        title: `TGT ${signedPct(pos.target_price, pos.avg_price)}`,
+      });
+    }
+  }
+  refreshScale();
+}
+
+/* previous trading day: Open (yellow), High (green), Low (red), Close (blue).
+   Live mode: from Yahoo.  Old mode: from your database. */
+function clearPrevLines() {
+  S.prevLines.forEach((l) => S.series.removePriceLine(l));
+  S.prevLines = [];
+}
+
+function applyPrevDay(prev) {
+  clearPrevLines();
+  S.prev = prev || null;
+  if (prev) {
+    [['open', 'Prev Open'], ['high', 'Prev High'], ['low', 'Prev Low'], ['close', 'Prev Close']].forEach(([k, title]) => {
+      S.prevLines.push(S.series.createPriceLine({
+        price: prev[k], color: PREV_COLORS[k], lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Solid,
+        axisLabelVisible: true, title,
+      }));
+    });
+  }
+  renderPrevLegend();
+  refreshScale();
+}
+
+function renderPrevLegend() {
+  const p = S.prev;
+  if (!S.company) { els.prevLegend.innerHTML = ''; return; }
+  const src = S.mode === 'live' ? 'from Yahoo' : 'from your data';
+  if (!p) {
+    els.prevLegend.innerHTML = '<span class="title">Previous day</span><span style="color:var(--text-muted)">' +
+      (S.mode === 'live' ? 'Yahoo has no previous-day data for this stock right now.' : 'No earlier day stored for this company.') + '</span>';
+    return;
+  }
+  const chip = (k, label) =>
+    `<span class="prev-chip"><i class="prev-sw" style="background:${PREV_COLORS[k]}"></i>${label} ${nf.format(p[k])}</span>`;
+  els.prevLegend.innerHTML =
+    `<span class="title">Prev day ${esc(p.date)} · ${src}</span>` +
+    chip('open', 'O') + chip('high', 'H') + chip('low', 'L') + chip('close', 'C') +
+    `<label class="prev-fit" title="Zoom the price axis so all four lines are visible"><input type="checkbox" id="prevFit" ${S.fitPrev ? 'checked' : ''}> fit chart to these levels</label>`;
+}
+
+/* ======================================================================
+   rendering
+   ====================================================================== */
+function openPnl() {
+  let total = 0, priced = 0;
+  S.account.positions.forEach((p) => {
+    const l = ltpFor(p.company);
+    if (l != null) { total += (l - p.avg_price) * p.quantity; priced += 1; }
+  });
+  return { total, priced, count: S.account.positions.length };
+}
+
+function renderWallet() {
+  const a = S.account;
+  els.walletBalance.textContent = money(a.balance);
+  els.navBalance.textContent = money(a.balance);
+  els.walletBlocked.textContent = money(a.blocked);
+  els.walletRealized.textContent = pnlText(a.realized_pnl);
+  els.walletRealized.className = tone(a.realized_pnl);
+  const o = openPnl();
+  els.walletUnrealized.textContent = o.count ? pnlText(o.total) + (o.priced < o.count ? `  (${o.priced} of ${o.count} priced)` : '') : '₹0.00';
+  els.walletUnrealized.className = tone(o.total);
+}
+
+function renderQuote() {
+  const ltp = currentLtp();
+  const first = S.candles[0];
+  els.qSymbol.textContent = S.company || '—';
+  els.qName.textContent = S.company ? S.companyName : 'Select a company to begin';
+  els.qLtp.textContent = ltp != null ? nf.format(ltp) : '—';
+
+  if (ltp != null && first) {
+    const chg = ltp - first.o;
+    const pct = first.o ? (chg / first.o) * 100 : 0;
+    els.qChg.textContent = `${pnlText(chg).replace('₹', '')} (${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%) vs day open`;
+    els.qChg.className = 'q-chg ' + tone(chg);
+    els.qLtp.className = 'q-ltp ' + tone(chg);
+  } else {
+    els.qChg.textContent = '—'; els.qChg.className = 'q-chg flat'; els.qLtp.className = 'q-ltp';
+  }
+
+  if (!S.company) { els.qBadge.innerHTML = ''; els.qClock.textContent = ''; return; }
+  if (S.mode === 'live') {
+    const st = S.live ? S.live.market_status : '';
+    const open = st === 'OPEN';
+    els.qBadge.innerHTML =
+      `<span class="badge ${open ? 'live' : 'closed'}">${open ? '<i class="pulse"></i>' : ''}Live · ${esc(st.replace('_', ' ') || '…')}</span>` +
+      (S.live && S.live.stale && S.live.ltp != null ? ' <span class="badge stale">Stale</span>' : '');
+    els.qClock.textContent = S.live && S.live.last_candle_time ? `Last candle ${hm(S.live.last_candle_time)} IST` : '';
+  } else {
+    els.qBadge.innerHTML = `<span class="badge replay">Old · ${esc(S.date)}</span>`;
+    els.qClock.textContent = 'Replay — treated as live';
+  }
+}
+
+function renderOrderPanel() {
+  const ltp = currentLtp();
+  els.orderSymbol.textContent = S.company || '—';
+  els.orderLtp.textContent = ltp != null ? nf.format(ltp) : '—';
+
+  els.productToggle.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.product === S.product));
+  els.productNote.textContent = PRODUCT_NOTE[S.product];
+
+  const pos = selPos();
+  const other = S.company ? positionFor(S.company, S.product === 'INTRADAY' ? 'DELIVERY' : 'INTRADAY') : null;
+  let html;
+  if (pos && ltp != null) {
+    const pnl = (ltp - pos.avg_price) * pos.quantity;
+    html = `<span class="side-pill ${pos.side.toLowerCase()}">${pos.side}</span> ${Math.abs(pos.quantity)} @ ${nf.format(pos.avg_price)}` +
+      ` &nbsp;·&nbsp; <span class="${tone(pnl)}">${pnlText(pnl)}</span>` +
+      (pos.stop_loss != null || pos.target_price != null
+        ? `<br>SL ${pos.stop_loss != null ? nf.format(pos.stop_loss) : '—'} &nbsp;·&nbsp; Target ${pos.target_price != null ? nf.format(pos.target_price) : '—'}`
+        : '');
+  } else {
+    html = `No open ${PRODUCT_LABEL[S.product]} position`;
+  }
+  if (other) html += `<br><span style="color:var(--text-muted)">Also: ${other.side} ${Math.abs(other.quantity)} in ${PRODUCT_LABEL[other.product]}</span>`;
+  els.orderPosition.innerHTML = html;
+
+  const qty = parseInt(els.qty.value, 10);
+  els.orderValue.textContent = ltp != null && qty > 0 ? money(qty * ltp) : '—';
+  els.orderMax.textContent = ltp != null ? String(Math.floor(S.account.balance / ltp)) : '—';
+
+  const reason = tradeBlockReason();
+  const noHolding = S.product === 'DELIVERY' && !pos;          // delivery can't be sold short
+  els.buy.disabled = !!reason || S.busy;
+  els.sell.disabled = !!reason || S.busy || noHolding;
+  els.maxBtn.disabled = ltp == null;
+  els.hint.className = 'order-hint' + (reason ? ' blocked' : '');
+  els.hint.textContent = reason
+    || (noHolding ? 'You hold nothing in Delivery, so there is nothing to sell. Choose Intraday to short sell.'
+      : 'Market order · fills instantly at the last price. Buying or selling needs the order value in your wallet.');
+  renderLevels();
+}
+
+/* ---------------- stop loss / target inputs ---------------- */
+const levelSign = () => {
+  const pos = selPos();
+  if (pos) return pos.quantity > 0 ? 1 : -1;
+  if (S.product === 'DELIVERY') return 1;                      // delivery is always long
+  return S.dir === 'long' ? 1 : -1;
+};
+// With an open position, % is measured from its average price (same as the server);
+// otherwise from the current price, which is where a market order will fill.
+const levelAnchor = () => { const pos = selPos(); return pos ? pos.avg_price : currentLtp(); };
+const priceFromPct = (kind, pct, sign, a) => (kind === 'sl' ? a * (1 - (sign * pct) / 100) : a * (1 + (sign * pct) / 100));
+const pctFromPrice = (kind, price, sign, a) => (kind === 'sl' ? ((a - price) * sign * 100) / a : ((price - a) * sign * 100) / a);
+
+function syncLevel(kind, edited) {
+  const L = LV[kind];
+  if (edited) L.src = edited;
+  const a = levelAnchor(), sign = levelSign();
+  if (!a || !L.src) return;
+  if (L.src === 'pct') {
+    const v = parseFloat(L.pct.value);
+    L.price.value = Number.isFinite(v) && v > 0 ? priceFromPct(kind, v, sign, a).toFixed(2) : '';
+  } else {
+    const v = parseFloat(L.price.value);
+    L.pct.value = Number.isFinite(v) && v > 0 ? pctFromPrice(kind, v, sign, a).toFixed(2) : '';
+  }
+}
+
+function clearLevelInputs(kind) {
+  const kinds = kind ? [kind] : ['sl', 'tgt'];
+  kinds.forEach((k) => { LV[k].pct.value = ''; LV[k].price.value = ''; LV[k].src = null; });
+}
+
+function collectLevels() {
+  const out = {};
+  Object.values(LV).forEach((L) => {
+    if (L.src === 'pct' && L.pct.value !== '') out[L.body[0]] = L.pct.value;
+    else if (L.src === 'price' && L.price.value !== '') out[L.body[1]] = L.price.value;
+  });
+  return out;
+}
+
+function renderLevels() {
+  const pos = selPos();
+  const sign = levelSign();
+  const locked = !!pos || S.product === 'DELIVERY';
+  els.dirToggle.classList.toggle('locked', locked);
+  els.dirToggle.querySelectorAll('button').forEach((b) => {
+    b.classList.toggle('active', (b.dataset.dir === 'long') === (sign > 0));
+    b.disabled = locked;
+  });
+
+  ['sl', 'tgt'].forEach((k) => {
+    syncLevel(k);
+    const L = LV[k], v = pos ? pos[L.field] : null;
+    if (v != null) {
+      L.cur.textContent = `${nf.format(v)} (${signedPct(v, pos.avg_price)})`;
+      L.clr.hidden = false;
+    } else {
+      L.cur.textContent = pos ? 'not set' : '';
+      L.clr.hidden = true;
+    }
+  });
+
+  els.updateBracket.hidden = !pos;
+  els.updateBracket.disabled = S.busy;
+  els.bracketNote.textContent = pos
+    ? `Percent is measured from your average price (${nf.format(pos.avg_price)}). Fill either box, then press Update. Every open position is watched while this page is open.`
+    : 'Type a percent or a price — the other box fills itself. Applied when you open or add to a position. Every open position is watched while this page is open.';
+}
+
+/* ---------------- positions & orders tables (ALL stocks) ---------------- */
+function renderPositions() {
+  let total = 0, priced = 0;
+  const rows = S.account.positions.map((p) => {
+    const ltp = ltpFor(p.company);
+    const pnl = ltp != null ? (ltp - p.avg_price) * p.quantity : null;
+    const pct = pnl != null && p.cost_basis ? (pnl / p.cost_basis) * 100 : null;
+    if (pnl != null) { total += pnl; priced += 1; }
+    const canExit = !tradeBlockReason(p.company) && !S.busy;
+    const since = p.product === 'DELIVERY' && p.last_entry_at && p.last_entry_at.slice(0, 10) !== S.date && S.mode === 'replay'
+      ? `<div class="ctx">held since ${esc(p.last_entry_at.slice(0, 10))}</div>` : '';
+    return `<tr>
+      <td><strong>${esc(p.company)}</strong><div class="ctx">${esc(p.name)}</div>${since}</td>
+      <td><span class="prod-pill ${p.product.toLowerCase()}">${PRODUCT_LABEL[p.product]}</span></td>
+      <td><span class="side-pill ${p.side.toLowerCase()}">${p.side}</span></td>
+      <td class="num">${Math.abs(p.quantity)}</td>
+      <td class="num">${nf.format(p.avg_price)}</td>
+      <td class="num">${p.stop_loss != null ? `${nf.format(p.stop_loss)}<br><small>${signedPct(p.stop_loss, p.avg_price)}</small>` : '—'}</td>
+      <td class="num">${p.target_price != null ? `${nf.format(p.target_price)}<br><small>${signedPct(p.target_price, p.avg_price)}</small>` : '—'}</td>
+      <td class="num">${ltp != null ? nf.format(ltp) : '—'}</td>
+      <td class="num ${pnl != null ? tone(pnl) : 'flat'}">${pnl != null ? pnlText(pnl) + ` (${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%)` : '—'}</td>
+      <td class="num"><button class="btn-exit" data-exit="${esc(p.company)}" data-product="${esc(p.product)}" ${canExit ? '' : 'disabled'}
+          title="Close this position at the last price">Exit</button></td>
+    </tr>`;
+  }).join('');
+
+  const foot = S.account.positions.length > 1
+    ? `<tfoot><tr><td colspan="8">Total open P&amp;L${priced < S.account.positions.length ? ` (${priced} of ${S.account.positions.length} priced)` : ''}</td>
+       <td class="num ${tone(total)}">${pnlText(total)}</td><td></td></tr></tfoot>` : '';
+  els.posTable.innerHTML =
+    `<thead><tr><th>Symbol</th><th>Product</th><th>Side</th><th class="num">Qty</th><th class="num">Avg price</th><th class="num">Stop loss</th><th class="num">Target</th><th class="num">LTP</th><th class="num">Unrealized P&amp;L</th><th class="num"></th></tr></thead>` +
+    `<tbody>${rows || '<tr><td colspan="10" class="empty-row">No open positions in this session.</td></tr>'}</tbody>${foot}`;
+}
+
+function renderOrders() {
+  const rows = S.account.orders.map((o) => {
+    const when = o.market_time ? hm(o.market_time) : hm(o.created_at);
+    const realized = o.realized_pnl !== 0 ? `<span class="${tone(o.realized_pnl)}">${pnlText(o.realized_pnl)}</span>` : '<span class="flat">—</span>';
+    return `<tr>
+      <td class="num">${when}</td>
+      <td><strong>${esc(o.company)}</strong></td>
+      <td><span class="prod-pill ${esc(o.product.toLowerCase())}">${esc(PRODUCT_LABEL[o.product] || o.product)}</span></td>
+      <td><span class="side-pill ${o.side.toLowerCase()}">${o.side}</span>${o.reason ? `<span class="reason-tag ${esc(o.reason)}">${esc(REASON_LABEL[o.reason] || o.reason)}</span>` : ''}</td>
+      <td class="num">${o.quantity}</td>
+      <td class="num">${nf.format(o.price)}</td>
+      <td class="num">${realized}</td>
+      <td class="num">${money(o.balance_after)}</td>
+    </tr>`;
+  }).join('');
+  els.ordTable.innerHTML =
+    `<thead><tr><th class="num">Time (IST)</th><th>Symbol</th><th>Product</th><th>Side</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Realized P&amp;L</th><th class="num">Wallet after</th></tr></thead>` +
+    `<tbody>${rows || '<tr><td colspan="8" class="empty-row">No orders in this session yet.</td></tr>'}</tbody>`;
+}
+
+function renderReplayControls() {
+  const on = S.mode === 'replay' && !!S.company && S.candles.length > 0;
+  els.replay.hidden = !on;
+  if (!on) return;
+  els.playBtn.textContent = R.finished ? 'Finished' : (R.playing ? 'Pause' : 'Play');
+  els.playBtn.disabled = R.finished;
+  els.nextBtn.disabled = R.finished;
+  const holding = hasDayPositions();
+  els.restartBtn.disabled = holding;
+  els.restartBtn.title = holding ? 'Close your open positions from this day first (Exit), then you can restart the day.' : 'Rewind to 09:15 and start again';
+}
+
+function renderAll() {
+  renderWallet(); renderQuote(); renderOrderPanel(); renderPositions(); renderOrders(); renderReplayControls();
+}
+
+/* ======================================================================
+   account
+   ====================================================================== */
+async function refreshAccount() {
+  const q = new URLSearchParams({ mode: S.mode });
+  if (S.mode === 'replay' && S.date) q.set('date', S.date);
+  if (S.company) q.set('company', S.company);
+  S.account = await apiFetch(URLS.account + '?' + q);
+  updateAvgLine();
+  renderAll();
+  if (S.mode === 'replay' && S.date) ensureBooks(S.gen);     // price the other stocks we hold
+}
+
+/* ======================================================================
+   live mode
+   ====================================================================== */
+async function refreshOtherQuotes(gen) {
+  const others = heldCodes().filter((c) => c !== S.company);
+  if (!others.length) { S.quotes = {}; return; }
+  try {
+    const r = await apiFetch(URLS.quotes + '?' + new URLSearchParams({ companies: others.join(',') }));
+    if (gen === S.gen) S.quotes = r.quotes || {};
+  } catch (e) { /* keep the previous quotes; the chart refresh below must not fail because of this */ }
+}
+
+// Intraday positions left over from an earlier day, or still open at the square-off time, are
+// closed by the server (at that day's close / the latest price).  Cheap when nothing is due.
+async function maybeSquareoff(gen) {
+  if (S.busy || S.mode !== 'live') return;
+  if (!S.account.positions.some((p) => p.product === 'INTRADAY')) return;
+  try {
+    const res = await postJson(URLS.squareoff, {});
+    if (gen !== S.gen) return;
+    res.closed.forEach((o) => toast(
+      `Auto close: ${o.side} ${o.quantity} ${o.company} @ ${nf.format(o.price)}` + (o.realized_pnl !== 0 ? ` · P&L ${pnlText(o.realized_pnl)}` : ''), 'info'));
+    if (res.closed.length) await refreshAccount();
+    const key = res.skipped.join('|');
+    if (key && key !== S.lastSkipMsg) toast('Could not auto-close: ' + res.skipped.join('; '), 'error');
+    S.lastSkipMsg = key;
+  } catch (e) { /* try again on the next refresh */ }
+}
+
+async function pollLive(gen, first) {
+  try {
+    const data = await apiFetch(forCompany(URLS.candles, S.company) + '?mode=live');
+    if (gen !== S.gen) return;
+    S.live = data;
+    S.candles = data.candles;
+    if (first || (data.previous_day && (!S.prev || data.previous_day.date !== S.prev.date))) applyPrevDay(data.previous_day);
+
+    const bars = data.candles.map(toBar);
+    if (first || bars.length < S.barCount) {
+      S.series.setData(bars);
+      S.chart.timeScale().scrollToRealTime();
+    } else {
+      bars.slice(Math.max(0, S.barCount - 1)).forEach((b) => S.series.update(b));
+    }
+    S.barCount = bars.length;
+    S.lastBar = bars.length ? bars[bars.length - 1] : null;
+    showLegend(S.lastBar);
+
+    els.chartEmpty.hidden = bars.length > 0;
+    if (!bars.length) {
+      els.chartEmpty.textContent = `No candles for ${S.company} yet today (market: ${data.market_status.replace('_', ' ')}). This page keeps checking automatically.`;
+    }
+    if (!data.tradable && bars.length) {
+      setNotice(`Market is ${data.market_status.replace('_', ' ').toLowerCase()}${data.stale ? ' / data is stale' : ''} — you can look at the chart, but live orders are disabled. Use Old mode to practise.`, 'warn');
+    } else {
+      setNotice('');
+    }
+    renderQuote(); renderOrderPanel(); renderPositions(); renderWallet();
+
+    await refreshOtherQuotes(gen);                    // every other stock we hold
+    if (gen !== S.gen) return;
+    renderOrderPanel(); renderPositions(); renderWallet();
+    await maybeSquareoff(gen);
+    if (gen !== S.gen) return;
+    checkLevelTriggers();
+  } catch (e) {
+    if (gen === S.gen) setNotice(e.message, 'error');
+  }
+}
+
+async function startLive(gen) {
+  await refreshAccount();
+  if (gen !== S.gen) return;
+  await pollLive(gen, true);
+  if (gen !== S.gen) return;
+  S.pollTimer = setInterval(() => pollLive(S.gen, false), LIVE_POLL_MS);
+}
+
+/* ======================================================================
+   replay mode ("Old"): the selected day is played back as if it were live.
+   One clock drives every stock we hold, so each position is priced at the
+   same simulated moment.
+   ====================================================================== */
+const makeBook = (list) => ({ list, byX: new Map(list.map((c) => [c.x, c])) });
+
+function candlePath(c) {
+  // Price walks open -> (low|high) -> (high|low) -> close, so the forming
+  // candle grows realistically and touches its true high and low.
+  const wp = c.c >= c.o ? [c.o, c.l, c.h, c.c] : [c.o, c.h, c.l, c.c];
+  const out = [];
+  for (let t = 0; t < TICKS; t += 1) {
+    const s = (t * 3) / (TICKS - 1);
+    const seg = Math.min(2, Math.floor(s));
+    out.push(wp[seg] + (wp[seg + 1] - wp[seg]) * (s - seg));
+  }
+  return out;
+}
+const pathFor = (code, c) => { const k = code + '|' + c.x; return R.paths[k] || (R.paths[k] = candlePath(c)); };
+
+// Move every tracked stock's quote to the current tick (shift=false just re-reads without ageing prev*).
+function updateReplayQuotes(shift = true) {
+  const cur = S.candles[R.idx];
+  if (!cur) return;
+  const codes = new Set([S.company, ...heldCodes()]);
+  codes.forEach((code) => {
+    const book = S.books[code];
+    const cand = code === S.company ? cur : (book && book.byX.get(cur.x));
+    const q = R.q[code] || (R.q[code] = { price: null, prevPrice: null, x: null, prevX: null });
+    if (shift) { q.prevPrice = q.price; q.prevX = q.x; }
+    if (cand) { q.price = round2(pathFor(code, cand)[R.tick]); q.x = cur.x; }
+  });
+}
+
+async function ensureBooks(gen) {
+  if (S.mode !== 'replay' || !S.date) return;
+  const need = heldCodes().filter((c) => c !== S.company && !S.books[c]);
+  if (!need.length) return;
+  await Promise.all(need.map(async (code) => {
+    try {
+      const d = await apiFetch(forCompany(URLS.candles, code) + '?' + new URLSearchParams({ mode: 'replay', date: S.date }));
+      if (gen === S.gen) S.books[code] = makeBook(d.candles);
+    } catch (e) {
+      if (gen === S.gen) { S.books[code] = makeBook([]); toast(`No ${S.date} candles for ${code}, so it can't be priced: ${e.message}`, 'error'); }
+    }
+  }));
+  if (gen !== S.gen) return;
+  updateReplayQuotes(false);
+  renderWallet(); renderPositions(); renderOrderPanel();
+}
+
+function applyReplayFrame() {
+  const c = S.candles[R.idx];
+  const path = pathFor(S.company, c);
+  const seen = path.slice(0, R.tick + 1);
+  const bar = { time: chartTime(c.x), open: c.o, high: Math.max(...seen), low: Math.min(...seen), close: path[R.tick] };
+  S.series.update(bar);
+  S.lastBar = bar;
+  S.replayClock = { date: S.date, x: c.x };
+  updateReplayQuotes(true);
+  showLegend(bar);
+
+  const secs = Math.floor((R.tick * 300) / TICKS);
+  const d = new Date((chartTime(c.x) + secs) * 1000);
+  els.simClock.textContent = `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
+
+  renderQuote(); renderOrderPanel(); renderPositions(); renderWallet();
+  checkLevelTriggers();
+}
+
+function sealCurrentBar() {           // make sure a candle we leave is stored at its true OHLC
+  S.series.update(toBar(S.candles[R.idx]));
+}
+
+function atEnd() { return R.idx === S.candles.length - 1 && R.tick === TICKS - 1; }
+
+function stepTick() {
+  if (R.tick < TICKS - 1) {
+    R.tick += 1;
+  } else if (R.idx < S.candles.length - 1) {
+    sealCurrentBar();
+    R.idx += 1; R.tick = 0;
+  }
+  applyReplayFrame();
+  if (atEnd()) finishReplay();
+}
+
+function nextCandle() {
+  if (R.finished) return;
+  if (R.idx < S.candles.length - 1) { sealCurrentBar(); R.idx += 1; R.tick = 0; } else { R.tick = TICKS - 1; }
+  applyReplayFrame();
+  if (atEnd()) finishReplay();
+}
+
+function play() {
+  if (R.finished) return;
+  clearInterval(R.timer);
+  R.playing = true;
+  R.timer = setInterval(stepTick, (R.secondsPerCandle * 1000) / TICKS);
+  renderReplayControls();
+}
+
+function pause() {
+  clearInterval(R.timer);
+  R.timer = null; R.playing = false;
+  renderReplayControls();
+}
+
+// The closing quote of a stock at the end of the replay day (its last candle if it stopped early).
+function closingQuote(code) {
+  const book = S.books[code];
+  if (!book || !book.list.length) return null;
+  const lastX = S.candles[S.candles.length - 1].x;
+  const c = book.byX.get(lastX) || book.list[book.list.length - 1];
+  return { price: c.c, x: c.x };
+}
+
+async function finishReplay() {
+  pause();
+  R.finished = true;
+  S.series.update(toBar(S.candles[R.idx]));
+  renderAll();
+  const hasDelivery = S.account.positions.some((p) => p.product === 'DELIVERY');
+  toast('Replay finished — market closed.' + (hasDelivery ? ' Delivery holdings stay open.' : ''), 'info');
+
+  // Intraday rule: anything still open (in ANY stock) is squared off at that stock's closing price.
+  // Delivery holdings are kept.
+  for (const pos of S.account.positions.filter((p) => p.product === 'INTRADAY')) {
+    const q = closingQuote(pos.company);
+    if (!q) { toast(`Couldn't auto-close ${pos.company}: no closing price loaded.`, 'error'); continue; }
+    await submitOrder(pos.quantity > 0 ? 'SELL' : 'BUY', Math.abs(pos.quantity),
+      { auto: true, reason: 'session_end', company: pos.company, product: 'INTRADAY', override: q });
+  }
+}
+
+function restartReplay() {
+  if (hasDayPositions()) return;
+  pause();
+  R.finished = false; R.idx = 0; R.tick = 0; R.q = {};
+  S.replayClock = null;
+  S.series.setData([]);
+  S.barCount = 0;
+  applyReplayFrame();
+  play();
+}
+
+async function startReplay(gen) {
+  const q = new URLSearchParams({ mode: 'replay', date: S.date });
+  const data = await apiFetch(forCompany(URLS.candles, S.company) + '?' + q);
+  if (gen !== S.gen) return;
+  S.candles = data.candles;
+  S.books[S.company] = makeBook(S.candles);
+  await refreshAccount();                // open positions (every stock) + where to resume
+  if (gen !== S.gen) return;
+
+  R.paths = {}; R.q = {}; R.finished = false; R.idx = 0; R.tick = 0;
+  // Resume only while something from THIS day is open; the clock is shared by all stocks.
+  let resumeX = null;
+  if (hasDayPositions()) {
+    const mem = S.replayClock && S.replayClock.date === S.date ? S.replayClock.x : null;
+    resumeX = mem || S.account.resume_market_time;
+  }
+  if (resumeX) {
+    const t = new Date(resumeX).getTime();
+    const i = S.candles.findIndex((c) => new Date(c.x).getTime() >= t);
+    if (i >= 0) R.idx = i;
+  } else {
+    S.replayClock = null;
+  }
+  S.series.setData(S.candles.slice(0, R.idx).map(toBar));
+  S.barCount = R.idx;
+  applyPrevDay(data.previous_day);
+  els.chartEmpty.hidden = true;
+  S.chart.timeScale().scrollToRealTime();
+  applyReplayFrame();
+  renderReplayControls();
+  if (R.idx > 0) toast(`Resumed from ${hm(S.candles[R.idx].x)} where you left off.`, 'info');
+  await ensureBooks(gen);
+  if (gen !== S.gen) return;
+  play();
+}
+
+/* ======================================================================
+   session control
+   ====================================================================== */
+function stopAll() {
+  clearInterval(S.pollTimer); S.pollTimer = null;
+  clearInterval(R.timer); R.timer = null; R.playing = false;
+  [S.avgLine, S.slLine, S.tgtLine].forEach((l) => { if (l) S.series.removePriceLine(l); });
+  S.avgLine = S.slLine = S.tgtLine = null;
+  clearPrevLines();
+  S.prev = null;
+  S.series.setData([]);
+}
+
+const canonicalUrl = () => {
+  const code = encodeURIComponent(S.company);
+  return S.mode === 'live' ? `${URLS.page}${code}/live/` : `${URLS.page}${code}/old/${S.date}/`;
+};
+
+async function startSession() {
+  const code = els.company.value;
+  if (!code) { toast('Select a company first.', 'error'); return; }
+  let date = null;
+  if (S.uiMode === 'replay') {
+    date = els.date.value;
+    if (!date) { toast('Pick a date for Old mode.', 'error'); return; }
+  }
+
+  stopAll();
+  const gen = ++S.gen;
+  const sameReplayDay = S.uiMode === 'replay' && S.mode === 'replay' && S.date === date;
+  S.mode = S.uiMode; S.date = date; S.company = code;
+  S.companyName = els.company.selectedOptions[0].dataset.name || '';
+  S.live = null; S.quotes = {}; S.candles = []; S.barCount = 0; S.lastBar = null;
+  if (!sameReplayDay) { S.books = {}; R.paths = {}; }
+  R.q = {}; R.finished = false; R.idx = 0; R.tick = 0;
+  clearLevelInputs();
+  els.prevLegend.innerHTML = '';
+  setNotice('');
+  els.legend.innerHTML = '';
+  els.chartEmpty.hidden = false;
+  els.chartEmpty.textContent = 'Loading…';
+  els.showBtn.disabled = true; els.showBtn.textContent = 'Loading…';
+  renderAll();
+
+  // Make the address bar a shareable direct link to what is on screen.
+  try { history.replaceState(null, '', canonicalUrl()); } catch (e) { /* e.g. sandboxed frame */ }
+  els.copyLink.hidden = false;
+
+  try {
+    if (S.mode === 'live') await startLive(gen); else await startReplay(gen);
+  } catch (e) {
+    if (gen === S.gen) {
+      setNotice(e.message, 'error');
+      els.chartEmpty.hidden = false;
+      els.chartEmpty.textContent = 'Nothing to show.';
+    }
+  } finally {
+    els.showBtn.disabled = false; els.showBtn.textContent = 'Show';
+    renderAll();
+  }
+}
+
+/* ======================================================================
+   auto exit: stop loss / target for EVERY open position
+   ====================================================================== */
+// When the price of any held stock touches its stop loss or target, close that position with an
+// ordinary market order tagged with the reason.  Stop loss wins if one tick reaches both.
+// One exit is sent at a time; the next is picked up on the following tick / refresh.
+function checkLevelTriggers() {
+  if (S.busy) return;
+  const now = Date.now();
+  for (const pos of S.account.positions) {
+    if (pos.stop_loss == null && pos.target_price == null) continue;
+    if (now < (S.cooldown[posKey(pos)] || 0)) continue;
+    const price = ltpFor(pos.company);
+    if (price == null || tradeBlockReason(pos.company)) continue;
+
+    const long = pos.quantity > 0;
+    let hit = null;
+    if (pos.stop_loss != null && (long ? price <= pos.stop_loss : price >= pos.stop_loss)) hit = 'stop_loss';
+    else if (pos.target_price != null && (long ? price >= pos.target_price : price <= pos.target_price)) hit = 'target';
+    if (!hit) continue;
+
+    submitOrder(long ? 'SELL' : 'BUY', Math.abs(pos.quantity), {
+      auto: true, reason: hit, company: pos.company, product: pos.product,
+      fillAt: hit === 'stop_loss' ? pos.stop_loss : pos.target_price,
+    });
+    return;
+  }
+}
+
+/* ======================================================================
+   orders & wallet
+   ====================================================================== */
+async function submitOrder(side, qty, opts = {}) {
+  if (S.busy) return;
+  const code = opts.company || S.company;
+  const product = opts.product || S.product;
+  const blocked = tradeBlockReason(code, !!opts.override);
+  if (blocked) { toast(blocked, 'error'); return; }
+  if (!Number.isInteger(qty) || qty < 1) { toast('Enter a valid quantity (whole number, 1 or more).', 'error'); return; }
+
+  // Stop loss / target only travel with orders that open or add to a position.
+  const pos = positionFor(code, product);
+  const orderSign = side === 'BUY' ? 1 : -1;
+  const entryLike = !pos || (pos.quantity > 0 ? 1 : -1) === orderSign;
+  let levels = {};
+  if (!opts.auto) {
+    levels = collectLevels();
+    if (Object.keys(levels).length) {
+      if (!entryLike) {
+        toast('Stop loss / target apply to entries, not exits — they were ignored for this order.', 'info');
+        levels = {};
+      } else if (!pos && levelSign() !== orderSign) {
+        toast(`Your stop loss / target are set for a ${levelSign() > 0 ? 'Long (BUY)' : 'Short (SELL)'} position. Switch the Long / Short toggle, or clear them.`, 'error');
+        return;
+      }
+    }
+  }
+
+  const body = Object.assign({ company: code, side, quantity: qty, mode: S.mode, product }, levels);
+  if (opts.reason) body.reason = opts.reason;
+  if (S.mode === 'replay') {          // capture time + price together, before any await
+    const q = opts.override || R.q[code];
+    body.date = S.date;
+    body.market_time = q.x;
+    let px = q.price;
+    // A stop / target crossed *inside* this candle fills at its own level (like a resting
+    // order); if price gapped over it between candles, it fills at the price it gapped to.
+    if (opts.fillAt != null && !opts.override && q.prevPrice != null && q.prevX === q.x) {
+      const lo = Math.min(q.prevPrice, q.price), hi = Math.max(q.prevPrice, q.price);
+      if (opts.fillAt >= lo && opts.fillAt <= hi) px = opts.fillAt;
+    }
+    body.price = px.toFixed(2);
+  }
+
+  S.busy = true; renderOrderPanel(); renderPositions();
+  try {
+    const res = await postJson(URLS.order, body);
+    S.account.balance = res.balance;
+    const pnl = res.order.realized_pnl;
+    const prefix = opts.reason === 'stop_loss' ? 'Stop loss hit: '
+      : opts.reason === 'target' ? 'Target hit: '
+      : opts.auto ? 'Auto square-off: ' : '';
+    toast(
+      `${prefix}${side} ${qty} ${code}${product === 'DELIVERY' ? ' (Delivery)' : ''} @ ${nf.format(res.order.price)}` + (pnl !== 0 ? ` · P&L ${pnlText(pnl)}` : ''),
+      opts.reason === 'stop_loss' ? 'error' : 'success'
+    );
+    if (Object.keys(levels).length) clearLevelInputs();
+    await refreshAccount();
+  } catch (e) {
+    toast(e.message, 'error');
+    if (opts.reason === 'stop_loss' || opts.reason === 'target') S.cooldown[`${code}|${product}`] = Date.now() + 5000;
+  } finally {
+    S.busy = false; renderOrderPanel(); renderPositions();
+  }
+}
+
+/* Change or clear stop loss / target on the selected open position without trading. */
+async function updateBracketLevels(extra = {}) {
+  if (S.busy) return;
+  if (!selPos()) { toast('You have no open position to update.', 'error'); return; }
+  const levels = collectLevels();
+  const clearing = extra.clear_stop_loss || extra.clear_target;
+  if (!clearing && !Object.keys(levels).length) { toast('Enter a stop loss and/or target first.', 'error'); return; }
+
+  const body = Object.assign({ company: S.company, mode: S.mode, product: S.product }, clearing ? {} : levels, extra);
+  if (S.mode === 'replay') body.date = S.date;
+
+  S.busy = true; renderOrderPanel();
+  try {
+    await postJson(URLS.bracket, body);
+    if (extra.clear_stop_loss) clearLevelInputs('sl');
+    else if (extra.clear_target) clearLevelInputs('tgt');
+    else clearLevelInputs();
+    await refreshAccount();
+    toast(clearing ? 'Level removed.' : 'Stop loss / target updated.', 'success');
+  } catch (e) {
+    toast(e.message, 'error');
+  } finally {
+    S.busy = false; renderOrderPanel(); renderPositions();
+  }
+}
+
+async function addToWallet() {
+  const amount = els.walletInput.value.trim();
+  if (!amount) { toast('Enter an amount to add.', 'error'); return; }
+  els.walletAdd.disabled = true;
+  try {
+    const res = await postJson(URLS.walletAdd, { amount });
+    S.account.balance = res.balance;
+    els.walletInput.value = '';
+    renderWallet(); renderOrderPanel();
+    toast(`Added ${money(Number(amount))} to your wallet.`, 'success');
+  } catch (e) {
+    toast(e.message, 'error');
+  } finally {
+    els.walletAdd.disabled = false;
+  }
+}
+
+/* ======================================================================
+   date range for Old mode
+   ====================================================================== */
+async function loadDateRange(keepValue = false) {
+  const code = els.company.value;
+  if (S.uiMode !== 'replay' || !code) return;
+  try {
+    const r = await apiFetch(forCompany(URLS.dateRange, code));
+    if (r.min && r.max) {
+      els.date.min = r.min; els.date.max = r.max;
+      els.dateHint.textContent = `Available: ${r.min} → ${r.max}`;
+      // A date that came from a direct link is kept exactly as given; the server says if it has no data.
+      if (!keepValue && (!els.date.value || els.date.value < r.min || els.date.value > r.max)) els.date.value = r.max;
+    } else {
+      els.date.removeAttribute('min'); els.date.removeAttribute('max');
+      els.dateHint.textContent = 'No previous-day candles stored for this company.';
+    }
+  } catch (e) {
+    els.dateHint.textContent = '';
+  }
+}
+
+function setUiMode(mode) {
+  S.uiMode = mode;
+  els.toggle.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.mode === mode));
+  els.dateField.hidden = mode !== 'replay';
+}
+
+/* ======================================================================
+   events
+   ====================================================================== */
+els.toggle.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-mode]');
+  if (!btn) return;
+  setUiMode(btn.dataset.mode);
+  loadDateRange();
+});
+els.company.addEventListener('change', () => loadDateRange());
+els.showBtn.addEventListener('click', startSession);
+els.copyLink.addEventListener('click', async () => {
+  const url = location.origin + canonicalUrl();
+  try { await navigator.clipboard.writeText(url); toast('Link copied.', 'success'); }
+  catch (e) { toast(url, 'info'); }
+});
+
+els.productToggle.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-product]');
+  if (!btn || btn.dataset.product === S.product) return;
+  S.product = btn.dataset.product;
+  clearLevelInputs();
+  updateAvgLine();
+  renderOrderPanel(); renderPositions();
+});
+
+els.buy.addEventListener('click', () => submitOrder('BUY', parseInt(els.qty.value, 10)));
+els.sell.addEventListener('click', () => submitOrder('SELL', parseInt(els.qty.value, 10)));
+els.qty.addEventListener('input', renderOrderPanel);
+els.maxBtn.addEventListener('click', () => {
+  const ltp = currentLtp();
+  if (ltp == null) return;
+  els.qty.value = Math.max(1, Math.floor(S.account.balance / ltp));
+  renderOrderPanel();
+});
+
+Object.entries(LV).forEach(([kind, L]) => {
+  [['pct', L.pct], ['price', L.price]].forEach(([src, input]) => input.addEventListener('input', () => {
+    if (input.value === '') clearLevelInputs(kind); else syncLevel(kind, src);
+  }));
+});
+els.dirToggle.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-dir]');
+  if (!btn || btn.disabled) return;
+  S.dir = btn.dataset.dir;
+  renderLevels();
+});
+els.updateBracket.addEventListener('click', () => updateBracketLevels());
+LV.sl.clr.addEventListener('click', () => updateBracketLevels({ clear_stop_loss: true }));
+LV.tgt.clr.addEventListener('click', () => updateBracketLevels({ clear_target: true }));
+els.prevLegend.addEventListener('change', (e) => {
+  if (e.target && e.target.id === 'prevFit') { S.fitPrev = e.target.checked; refreshScale(); }
+});
+
+els.walletAdd.addEventListener('click', addToWallet);
+els.walletInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') addToWallet(); });
+
+els.playBtn.addEventListener('click', () => (R.playing ? pause() : play()));
+els.nextBtn.addEventListener('click', nextCandle);
+els.restartBtn.addEventListener('click', restartReplay);
+els.speed.addEventListener('change', () => {
+  R.secondsPerCandle = parseFloat(els.speed.value);
+  if (R.playing) play();
+});
+
+document.querySelectorAll('.tab').forEach((tab) => tab.addEventListener('click', () => {
+  document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t === tab));
+  els.posTable.hidden = tab.dataset.tab !== 'positions';
+  els.ordTable.hidden = tab.dataset.tab !== 'orders';
+}));
+
+els.posTable.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-exit]');
+  if (!btn || btn.disabled) return;
+  const pos = positionFor(btn.dataset.exit, btn.dataset.product);
+  if (pos) submitOrder(pos.quantity > 0 ? 'SELL' : 'BUY', Math.abs(pos.quantity), { company: pos.company, product: pos.product });
+});
+
+/* ======================================================================
+   boot — a direct link (/paper-trading/<code>/live/ or /old/<date>/) starts by itself
+   ====================================================================== */
+async function boot() {
+  initChart();
+  renderAll();
+  try { await refreshAccount(); } catch (e) { toast(e.message, 'error'); }
+
+  if (INITIAL.error) setNotice(INITIAL.error, 'error');
+  if (INITIAL.company) {
+    els.company.value = INITIAL.company;
+    setUiMode(INITIAL.mode === 'replay' ? 'replay' : 'live');
+    if (INITIAL.mode === 'replay' && INITIAL.date) els.date.value = INITIAL.date;
+    await loadDateRange(true);
+    if (INITIAL.autostart) startSession();
+  }
+}
+boot();
+})();
+</script>
+</body>
+</html>
