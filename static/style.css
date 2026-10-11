@@ -12,37 +12,6 @@ body {
   line-height: 1.6;
 }
 
-/* Navbar */
-.navbar {
-  background: linear-gradient(90deg, #1e3a8a, #2563eb);
-  color: white;
-  padding: 14px 30px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
-}
-
-.logo {
-  font-size: 1.3rem;
-  font-weight: 700;
-}
-
-.nav-links a {
-  color: white;
-  text-decoration: none;
-  margin-left: 20px;
-  font-weight: 500;
-  padding-bottom: 3px;
-  border-bottom: 2px solid transparent;
-  transition: all 0.3s ease;
-}
-
-.nav-links a:hover {
-  border-bottom: 2px solid #fff;
-  opacity: 0.9;
-}
-
 /* Main Container */
 .container {
   padding: 30px;

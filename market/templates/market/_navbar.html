@@ -1,0 +1,52 @@
+{% comment %}
+  Site-wide top navbar, identical on every page. Included in market/base.html
+  and in the standalone pages (chart, paper trading, stock prediction, candle
+  predictor). Styles use their own "site-" class names and set every size
+  explicitly, so page CSS cannot change the navbar's height or width.
+  Add new pages to the link list here only.
+{% endcomment %}
+{% with current=request.resolver_match.url_name app=request.resolver_match.app_name %}
+<style>
+  .site-header{
+    box-sizing:border-box; width:100%; min-height:60px; margin:0; padding:10px 28px;
+    display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px 24px;
+    background:linear-gradient(180deg,#123B7A,#0B2545); color:#fff;
+    box-shadow:0 1px 2px rgba(16,24,40,.04),0 1px 3px rgba(16,24,40,.06);
+    position:sticky; top:0; z-index:30;
+    font-family:'Inter',system-ui,sans-serif; line-height:1.4;
+  }
+  .site-header *{ box-sizing:border-box; }
+  .site-brand{
+    display:flex; align-items:center; gap:10px; margin:0;
+    font-size:18px; font-weight:700; letter-spacing:.2px; color:#fff; white-space:nowrap;
+  }
+  .site-brand-dot{
+    width:9px; height:9px; border-radius:50%; flex:none;
+    background:#5BE49B; box-shadow:0 0 0 4px rgba(91,228,155,.18);
+  }
+  .site-nav{ display:flex; flex-wrap:wrap; align-items:center; gap:4px; margin:0; padding:0; }
+  .site-nav a{
+    display:inline-block; margin:0; padding:6px 10px; border:none; border-radius:6px;
+    color:rgba(255,255,255,.85); text-decoration:none; white-space:nowrap;
+    font-size:13.5px; font-weight:500; line-height:1.4;
+    transition:background .15s ease, color .15s ease;
+  }
+  .site-nav a:hover{ background:rgba(255,255,255,.12); color:#fff; }
+  .site-nav a.active{ background:rgba(255,255,255,.2); color:#fff; font-weight:600; }
+</style>
+<header class="site-header">
+  <div class="site-brand"><span class="site-brand-dot"></span> Market Dashboard</div>
+  <nav class="site-nav">
+    <a href="{% url 'market:home' %}" class="{% if app == 'market' and current == 'home' %}active{% endif %}">Home</a>
+    <a href="{% url 'market:daily_data' %}" class="{% if app == 'market' and current == 'daily_data' %}active{% endif %}">Daily Data</a>
+    <a href="{% url 'market:five_min' %}" class="{% if app == 'market' and current == 'five_min' %}active{% endif %}">5 Minutes</a>
+    <a href="{% url 'market:live' %}" class="{% if app == 'market' and current == 'live' %}active{% endif %}">Live</a>
+    <a href="{% url 'market:analysis' %}" class="{% if app == 'market' and current == 'analysis' %}active{% endif %}">Analysis</a>
+    <a href="{% url 'market:chart_view' %}" class="{% if app == 'market' and current == 'chart_view' %}active{% endif %}">Chart</a>
+    <a href="{% url 'market:daily_data_page' %}" class="{% if app == 'market' and current == 'daily_data_page' %}active{% endif %}">Daily Data Scraper</a>
+    <a href="{% url 'stock_prediction_page' %}" class="{% if current == 'stock_prediction_page' %}active{% endif %}">Stock Prediction</a>
+    <a href="{% url 'candle_predictor_page' %}" class="{% if current == 'candle_predictor_page' %}active{% endif %}">Candle Predictor</a>
+    <a href="{% url 'paper_trading:page' %}" class="{% if app == 'paper_trading' %}active{% endif %}">Paper Trading</a>
+  </nav>
+</header>
+{% endwith %}

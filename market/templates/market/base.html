@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
   <!-- Google Font -->
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
   <!-- Static CSS -->
   <link rel="stylesheet" href="/static/style.css">
@@ -14,17 +14,7 @@
 <body>
 
   <!-- Top Navbar -->
-  <header class="navbar">
-    <div class="logo">📈 Market Dashboard</div>
-    <nav class="nav-links">
-      <a href="{% url 'market:home' %}">Home</a>
-      <a href="{% url 'market:daily_data' %}">Daily Data</a>
-      <a href="{% url 'market:five_min' %}">5 Minutes</a>
-      <a href="{% url 'market:live' %}">Live</a>
-      <a href="{% url 'market:analysis' %}">Analysis</a>
-      <a href="{% url 'market:daily_data_page' %}">Daily Data Scraper</a>
-    </nav>
-  </header>
+  {% include 'market/_navbar.html' %}
 
   <!-- Main Content -->
   <main class="container">
