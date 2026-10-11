@@ -212,6 +212,31 @@
   .toast.success{ border-left-color:var(--green); }
   .toast.error{ border-left-color:var(--red); }
   .disclaimer{ margin-top:22px; font-size:12px; color:var(--text-muted); line-height:1.55; }
+
+  /* ---------- strategy signals ---------- */
+  .sig-card{ margin-top:16px; padding:14px 16px; }
+  .sig-head{ display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px 16px; margin-bottom:10px; }
+  .sig-head .card-title{ margin:0; }
+  .sig-meta{ font-size:12px; color:var(--text-muted); }
+  .sig-only{ display:inline-flex; align-items:center; gap:6px; font-size:12.5px; font-weight:600; color:var(--navy-800); cursor:pointer; }
+  .sig-table{ width:100%; border-collapse:collapse; font-size:12.5px; }
+  .sig-table th{ text-align:left; font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--text-muted); padding:7px 8px; background:var(--panel); border-bottom:1px solid var(--border); white-space:nowrap; }
+  .sig-table td{ padding:7px 8px; border-bottom:1px solid var(--border); white-space:nowrap; }
+  .sig-table td.num, .sig-table th.num{ text-align:right; font-family:'JetBrains Mono',monospace; }
+  .sig-table tr.muted td{ color:var(--text-muted); }
+  .sig-sub{ font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--text-muted); margin:14px 0 6px; }
+  .q-pill{ font-size:10.5px; font-weight:700; padding:2px 8px; border-radius:999px; }
+  .q-pill.yes{ background:var(--green-bg); color:var(--green-dark); }
+  .q-pill.no{ background:var(--panel); color:var(--text-muted); border:1px solid var(--border); }
+  .res-pill{ font-family:'JetBrains Mono',monospace; font-size:11px; font-weight:700; padding:2px 8px; border-radius:999px; }
+  .res-pill.win{ background:var(--green-bg); color:var(--green-dark); }
+  .res-pill.loss{ background:var(--red-bg); color:var(--red-dark); }
+  .res-pill.open{ background:var(--blue-50); color:var(--blue-600); }
+  .use-btn{ border:1px solid var(--blue-600); background:#fff; color:var(--blue-600); border-radius:6px; padding:3px 10px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit; }
+  .use-btn:hover{ background:var(--blue-50); }
+  .use-btn:disabled{ opacity:.4; cursor:not-allowed; }
+  .sig-note{ font-size:11.5px; color:var(--text-muted); margin-top:10px; line-height:1.5; }
+  .sig-why{ font-size:11px; color:var(--text-muted); }
 </style>
 </head>
 <body>
@@ -292,6 +317,18 @@
           </select>
         </label>
         <div class="sim-clock">Market time <b id="simClock">--:--:--</b></div>
+      </div>
+
+      <div class="card sig-card" id="sigCard" hidden>
+        <div class="sig-head">
+          <div class="card-title">Strategy signals · entry &amp; exit</div>
+          <span class="sig-meta" id="sigMeta"></span>
+          <label class="sig-only"><input type="checkbox" id="sigOnly" checked> Only qualified strategies</label>
+        </div>
+        <div class="table-wrap"><table class="sig-table" id="sigStrategies"></table></div>
+        <div class="sig-sub">Signals on this day</div>
+        <div class="table-wrap"><table class="sig-table" id="sigList"></table></div>
+        <div class="sig-note" id="sigNote"></div>
       </div>
 
       <div class="tabs">
@@ -421,6 +458,7 @@ const URLS = {
   squareoff: "{% url 'paper_trading:squareoff' %}",
   candles:   "{% url 'paper_trading:candles' 'CODE_PLACEHOLDER' %}",
   dateRange: "{% url 'paper_trading:date_range' 'CODE_PLACEHOLDER' %}",
+  signals:   "{% url 'paper_trading:signals' 'CODE_PLACEHOLDER' %}",
 };
 const forCompany = (tpl, code) => tpl.replace('CODE_PLACEHOLDER', encodeURIComponent(code));
 
@@ -458,6 +496,8 @@ const S = {
   lastSkipMsg: '',
   pollTimer: null, gen: 0, busy: false,
 };
+// Strategy signals: data from the server, which strategies are shown, and what is drawn on the chart.
+const SG = { data: null, show: {}, onlyQualified: true, idx: new Map(), drawnKey: '', lines: [], openLevels: [] };
 // R.q[code] = {price, prevPrice, x, prevX}: that stock's simulated price at the current replay tick
 const R = { idx: 0, tick: 0, timer: null, playing: false, finished: false, secondsPerCandle: 2, paths: {}, q: {} };
 
@@ -478,6 +518,8 @@ const els = {
   buy: $('buyBtn'), sell: $('sellBtn'), hint: $('orderHint'),
   productToggle: $('productToggle'), productNote: $('productNote'),
   prevLegend: $('prevLegend'), dirToggle: $('dirToggle'), bracketNote: $('bracketNote'), updateBracket: $('updateBracketBtn'),
+  sigCard: $('sigCard'), sigMeta: $('sigMeta'), sigOnly: $('sigOnly'), sigStrategies: $('sigStrategies'),
+  sigList: $('sigList'), sigNote: $('sigNote'),
 };
 // Stop loss / target inputs. `src` remembers which box the user typed in last
 // ('pct' or 'price'); the other box is always derived from it.
@@ -633,6 +675,7 @@ function extraScalePrices() {
     if (pos.stop_loss != null) out.push(pos.stop_loss);
     if (pos.target_price != null) out.push(pos.target_price);
   }
+  SG.openLevels.forEach((p) => out.push(p));
   return out;
 }
 
@@ -1008,6 +1051,8 @@ async function pollLive(gen, first) {
       setNotice('');
     }
     renderQuote(); renderOrderPanel(); renderPositions(); renderWallet();
+    await loadSignals(gen);
+    if (gen !== S.gen) return;
 
     await refreshOtherQuotes(gen);                    // every other stock we hold
     if (gen !== S.gen) return;
@@ -1026,6 +1071,175 @@ async function startLive(gen) {
   await pollLive(gen, true);
   if (gen !== S.gen) return;
   S.pollTimer = setInterval(() => pollLive(S.gen, false), LIVE_POLL_MS);
+}
+
+/* ======================================================================
+   strategy signals - where to enter and exit, from six intraday setups that
+   are back-tested on this stock's own history.  Old mode: each signal appears
+   only when the replay reaches its entry candle, its exit only when the replay
+   reaches the exit.  Live mode: completed candles only.
+   ====================================================================== */
+async function loadSignals(gen) {
+  const q = new URLSearchParams({ mode: S.mode });
+  if (S.mode === 'replay') q.set('date', S.date);
+  try {
+    const data = await apiFetch(forCompany(URLS.signals, S.company) + '?' + q);
+    if (gen !== S.gen) return;
+    const first = !SG.data || SG.data.company !== data.company || SG.data.date !== data.date;
+    SG.data = data;
+    if (first) {
+      SG.show = {};
+      data.strategies.forEach((st) => { SG.show[st.key] = st.qualified; });
+    }
+    indexCandles();
+    SG.drawnKey = '';
+    drawSignals();
+  } catch (e) {
+    if (gen === S.gen) { SG.data = null; renderSignalsPanel(); }
+  }
+}
+
+function indexCandles() {
+  SG.idx = new Map(S.candles.map((c, i) => [new Date(c.x).getTime(), i]));
+}
+const candleIdx = (iso) => { const i = SG.idx.get(new Date(iso).getTime()); return i == null ? -1 : i; };
+
+// Where the session is "now": [candle index, tick].  Live: everything loaded is history.
+const sessionNow = () => (S.mode === 'replay' ? [R.idx, R.tick] : [S.candles.length, 0]);
+
+function entryShown(sg) {
+  const i = candleIdx(sg.entry_x);
+  return i >= 0 && i <= sessionNow()[0];
+}
+function exitShown(sg) {
+  if (sg.status !== 'closed') return false;
+  const i = candleIdx(sg.exit_x);
+  const [idx, tick] = sessionNow();
+  if (i < 0) return false;
+  if (S.mode !== 'replay') return true;
+  return i < idx || (i === idx && (sg.exit_at_open || tick === TICKS - 1 || R.finished));
+}
+const signalVisible = (sg) => !!SG.show[sg.strategy] && (!SG.onlyQualified || sg.qualified) && sg.passes_filter;
+
+function drawSignals() {
+  if (!S.series) return;
+  const list = SG.data ? SG.data.signals.filter((sg) => signalVisible(sg) && entryShown(sg)) : [];
+  const key = list.map((sg) => sg.entry_x + sg.strategy + (exitShown(sg) ? 'x' : '')).join('|') +
+    '#' + Object.keys(SG.show).filter((k) => SG.show[k]).join(',') + SG.onlyQualified;
+  if (key === SG.drawnKey) return;
+  SG.drawnKey = key;
+
+  const markers = [];
+  list.forEach((sg) => {
+    const buy = sg.side === 'BUY';
+    markers.push({
+      time: chartTime(sg.entry_x), position: buy ? 'belowBar' : 'aboveBar', shape: buy ? 'arrowUp' : 'arrowDown',
+      color: buy ? '#0EA968' : '#E5484D', text: `${sg.label} ${buy ? 'BUY' : 'SELL'} ${nf.format(sg.entry)}`,
+    });
+    if (exitShown(sg)) {
+      const win = sg.result_r > 0;
+      markers.push({
+        time: chartTime(sg.exit_x), position: buy ? 'aboveBar' : 'belowBar', shape: 'circle',
+        color: win ? '#0A8A54' : '#C93A3F',
+        text: `${sg.label} EXIT ${nf.format(sg.exit_price)} (${sg.result_r > 0 ? '+' : ''}${sg.result_r.toFixed(2)}R)`,
+      });
+    }
+  });
+  markers.sort((a, b) => a.time - b.time);
+  S.series.setMarkers(markers);
+
+  // stop-loss / target lines for signals that are open right now
+  SG.lines.forEach((l) => S.series.removePriceLine(l));
+  SG.lines = []; SG.openLevels = [];
+  const LS = LightweightCharts.LineStyle;
+  list.filter((sg) => !exitShown(sg)).forEach((sg) => {
+    SG.lines.push(S.series.createPriceLine({ price: sg.stop, color: '#DC2626', lineWidth: 1, lineStyle: LS.Dashed, axisLabelVisible: true, title: `${sg.label} SL` }));
+    SG.lines.push(S.series.createPriceLine({ price: sg.target, color: '#059669', lineWidth: 1, lineStyle: LS.Dashed, axisLabelVisible: true, title: `${sg.label} TGT` }));
+    SG.openLevels.push(sg.stop, sg.target);
+  });
+  renderSignalsPanel();
+  refreshScale();
+}
+
+function clearSignals() {
+  if (S.series) S.series.setMarkers([]);
+  SG.lines.forEach((l) => S.series.removePriceLine(l));
+  SG.lines = []; SG.openLevels = []; SG.drawnKey = ''; SG.data = null;
+  renderSignalsPanel();
+}
+
+function renderSignalsPanel() {
+  const d = SG.data;
+  els.sigCard.hidden = !d || !S.company;
+  if (!d) return;
+  const h = d.history;
+  els.sigMeta.textContent = h.days
+    ? `Back-tested on ${h.days} trading days before this day (${h.from} → ${h.to})`
+    : 'No earlier days stored for this stock - nothing to back-test.';
+
+  const fmtR = (r) => (r == null ? '—' : (r > 0 ? '+' : '') + r.toFixed(2) + ' R');
+  els.sigStrategies.innerHTML =
+    `<thead><tr><th>Show</th><th>Strategy</th><th>Type</th><th class="num">Past trades</th><th class="num">Win rate</th><th class="num">Avg / trade</th><th class="num">Target</th><th>Money flow</th><th>Status</th></tr></thead><tbody>` +
+    d.strategies.map((st) => `<tr class="${st.qualified ? '' : 'muted'}">
+      <td><input type="checkbox" data-show="${esc(st.key)}" ${SG.show[st.key] ? 'checked' : ''} ${!st.qualified && SG.onlyQualified ? 'disabled' : ''}></td>
+      <td><strong>${esc(st.name)}</strong> <span class="sig-why">(${esc(st.label)})</span></td>
+      <td>${esc(st.type)}</td>
+      <td class="num">${st.trades}</td>
+      <td class="num">${st.win_rate == null ? '—' : st.win_rate.toFixed(0) + '%'}</td>
+      <td class="num">${fmtR(st.avg_r)}</td>
+      <td class="num">${st.target_r == null ? '—' : st.target_r + ' R'}</td>
+      <td>${st.money_flow ? 'Required' : 'Not used'}</td>
+      <td>${st.qualified ? '<span class="q-pill yes">Qualified</span>' : `<span class="q-pill no">Not qualified</span> <span class="sig-why">${esc(st.reason)}</span>`}</td>
+    </tr>`).join('') + '</tbody>';
+
+  const list = d.signals.filter((sg) => signalVisible(sg) && entryShown(sg));
+  const rows = list.map((sg) => {
+    const done = exitShown(sg);
+    let res;
+    if (done) {
+      const win = sg.result_r > 0;
+      res = `<span class="res-pill ${win ? 'win' : 'loss'}">${esc(sg.exit_reason)} ${hm(sg.exit_x)} · ${sg.result_r > 0 ? '+' : ''}${sg.result_r.toFixed(2)} R</span>`;
+    } else {
+      res = '<span class="res-pill open">Open</span>';
+    }
+    const flow = sg.flow != null ? `vol ${sg.flow.toFixed(1)}x` : 'vol n/a';
+    return `<tr>
+      <td class="num">${hm(sg.entry_x)}</td>
+      <td><strong>${esc(sg.label)}</strong> <span class="sig-why">${esc(sg.note)}</span></td>
+      <td><span class="side-pill ${sg.side.toLowerCase()}">${sg.side}</span></td>
+      <td class="num">${nf.format(sg.entry)}</td>
+      <td class="num">${nf.format(sg.stop)}</td>
+      <td class="num">${nf.format(sg.target)}</td>
+      <td class="sig-why">${flow}${sg.mfi != null ? ' · MFI ' + sg.mfi.toFixed(0) : ''}</td>
+      <td>${res}</td>
+      <td><button class="use-btn" type="button" data-use="${d.signals.indexOf(sg)}" ${done ? 'disabled' : ''} title="Fill the order ticket with this side, stop loss and target">Use</button></td>
+    </tr>`;
+  }).join('');
+  const waiting = S.mode === 'replay' ? 'No signal yet - they appear here as the replay reaches them.' : 'No signal so far today.';
+  els.sigList.innerHTML =
+    `<thead><tr><th class="num">Entry</th><th>Strategy</th><th>Side</th><th class="num">Entry price</th><th class="num">Stop loss</th><th class="num">Target</th><th>Volume / MFI</th><th>Result</th><th></th></tr></thead>` +
+    `<tbody>${rows || `<tr><td colspan="9" class="empty-row">${waiting}</td></tr>`}</tbody>`;
+
+  const r = d.rules;
+  els.sigNote.textContent =
+    `Qualified = at least ${r.min_trades} past signals on this stock, won ${r.min_win_rate}% or more, and made money on average after estimated charges. ` +
+    `Entry is the open of the candle after the signal; exit at the stop, the target or ${r.squareoff}. No new signals after ${r.last_signal}. ` +
+    'Past win rates describe history only - they are not a promise for the next trade. Results are in R (multiples of the risk), after charges.';
+}
+
+// "Use": fill the order ticket (Intraday, direction, stop loss and target prices) from a signal.
+function useSignal(sg) {
+  if (selPos()) { toast('You already have a position here - exit it first or adjust its levels.', 'error'); return; }
+  S.product = 'INTRADAY';
+  els.productToggle.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.product === 'INTRADAY'));
+  S.dir = sg.side === 'BUY' ? 'long' : 'short';
+  clearLevelInputs();
+  LV.sl.price.value = sg.stop.toFixed(2); LV.sl.src = 'price';
+  LV.tgt.price.value = sg.target.toFixed(2); LV.tgt.src = 'price';
+  const ltp = currentLtp();
+  if (ltp) els.qty.value = Math.max(1, Math.floor(Math.min(S.account.balance, 100000) / ltp));
+  renderOrderPanel();
+  toast(`Ticket filled from ${sg.label}: ${sg.side} with SL ${nf.format(sg.stop)} and target ${nf.format(sg.target)}. Press ${sg.side} to place it.`, 'info');
 }
 
 /* ======================================================================
@@ -1096,6 +1310,7 @@ function applyReplayFrame() {
   els.simClock.textContent = `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
 
   renderQuote(); renderOrderPanel(); renderPositions(); renderWallet();
+  drawSignals();
   checkLevelTriggers();
 }
 
@@ -1150,6 +1365,7 @@ async function finishReplay() {
   pause();
   R.finished = true;
   S.series.update(toBar(S.candles[R.idx]));
+  SG.drawnKey = ''; drawSignals();
   renderAll();
   const hasDelivery = S.account.positions.some((p) => p.product === 'DELIVERY');
   toast('Replay finished — market closed.' + (hasDelivery ? ' Delivery holdings stay open.' : ''), 'info');
@@ -1171,6 +1387,7 @@ function restartReplay() {
   S.replayClock = null;
   S.series.setData([]);
   S.barCount = 0;
+  SG.drawnKey = '';
   applyReplayFrame();
   play();
 }
@@ -1208,6 +1425,8 @@ async function startReplay(gen) {
   if (R.idx > 0) toast(`Resumed from ${hm(S.candles[R.idx].x)} where you left off.`, 'info');
   await ensureBooks(gen);
   if (gen !== S.gen) return;
+  await loadSignals(gen);
+  if (gen !== S.gen) return;
   play();
 }
 
@@ -1221,6 +1440,7 @@ function stopAll() {
   S.avgLine = S.slLine = S.tgtLine = null;
   clearPrevLines();
   S.prev = null;
+  clearSignals();
   S.series.setData([]);
 }
 
@@ -1492,6 +1712,24 @@ LV.sl.clr.addEventListener('click', () => updateBracketLevels({ clear_stop_loss:
 LV.tgt.clr.addEventListener('click', () => updateBracketLevels({ clear_target: true }));
 els.prevLegend.addEventListener('change', (e) => {
   if (e.target && e.target.id === 'prevFit') { S.fitPrev = e.target.checked; refreshScale(); }
+});
+
+els.sigOnly.addEventListener('change', () => {
+  SG.onlyQualified = els.sigOnly.checked;
+  if (SG.onlyQualified && SG.data) SG.data.strategies.forEach((st) => { if (!st.qualified) SG.show[st.key] = false; });
+  drawSignals(); renderSignalsPanel();
+});
+els.sigStrategies.addEventListener('change', (e) => {
+  const key = e.target && e.target.dataset ? e.target.dataset.show : null;
+  if (!key) return;
+  SG.show[key] = e.target.checked;
+  drawSignals(); renderSignalsPanel();
+});
+els.sigList.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-use]');
+  if (!btn || btn.disabled || !SG.data) return;
+  const sg = SG.data.signals[parseInt(btn.dataset.use, 10)];
+  if (sg) useSignal(sg);
 });
 
 els.walletAdd.addEventListener('click', addToWallet);

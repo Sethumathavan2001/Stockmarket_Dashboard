@@ -14,6 +14,7 @@ urlpatterns = [
     path("api/paper/wallet/add/", views.wallet_add, name="wallet_add"),
     path("api/paper/date-range/<str:company_code>/", views.date_range, name="date_range"),
     path("api/paper/candles/<str:company_code>/", views.candles, name="candles"),
+    path("api/paper/signals/<str:company_code>/", views.strategy_signals, name="signals"),
     path("api/paper/order/", views.place_order, name="order"),
     path("api/paper/bracket/", views.bracket_update, name="bracket"),
     path("api/paper/quotes/", views.quotes, name="quotes"),

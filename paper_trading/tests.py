@@ -1197,3 +1197,94 @@ class DirectUrlTests(BaseCase):
     def test_initial_state_is_embedded_safely_in_the_html(self):
         r = self.client.get(f"/paper-trading/TST/old/{self.day.isoformat()}/")
         self.assertIn('id="initial-state"', r.content.decode())
+
+
+# --------------------------------------------------------------------------
+# strategy signals
+# --------------------------------------------------------------------------
+from . import signals as sg  # noqa: E402
+
+
+def bar(day, hhmm, o, h, l, c, v=1000):
+    hh, mm = map(int, hhmm.split(":"))
+    return sg.Bar(datetime.combine(day, time(hh, mm), tzinfo=svc.IST), o, h, l, c, v)
+
+
+def flat_day(day, price=100.0, n=75):
+    start = datetime.combine(day, time(9, 15), tzinfo=svc.IST)
+    return [sg.Bar(start + timedelta(minutes=5 * i), price, price + 0.2, price - 0.2, price, 1000) for i in range(n)]
+
+
+class SignalEngineTests(TestCase):
+    def setUp(self):
+        self.d0 = datetime(2026, 1, 5).date()
+        self.d1 = datetime(2026, 1, 6).date()
+
+    def orb_day(self):
+        """Opening range 99.5-100.5, then a rising close above it at 09:30 and a run up to 104."""
+        day = [bar(self.d1, "09:15", 100, 100.5, 99.5, 100.2),
+               bar(self.d1, "09:20", 100.2, 100.4, 99.8, 100.0),
+               bar(self.d1, "09:25", 100.0, 100.3, 99.9, 100.1),
+               bar(self.d1, "09:30", 100.1, 101.2, 100.0, 101.0),     # closes above 100.5
+               bar(self.d1, "09:35", 101.0, 101.4, 100.9, 101.3)]     # entry at this open
+        price = 101.3
+        start = datetime.combine(self.d1, time(9, 40), tzinfo=svc.IST)
+        for i in range(60):
+            price += 0.05
+            day.append(sg.Bar(start + timedelta(minutes=5 * i), price - 0.05, price + 0.05, price - 0.08, price, 1000))
+        return day
+
+    def test_orb_long_signal_enters_next_open_with_stop_at_breakout_low(self):
+        F = sg.build_features([flat_day(self.d0), self.orb_day()])
+        sigs = [s for s in sg.find_signals(F, [1]) if s.strategy == "orb"]
+        self.assertEqual(len(sigs), 1)
+        s = sigs[0]
+        self.assertEqual(s.side, 1)
+        self.assertEqual(F.bars[s.k].ts.time(), time(9, 30))
+        self.assertEqual(s.entry, 101.0)                 # open of the 09:35 candle
+        self.assertEqual(s.stop, 100.0)                  # low of the breakout candle
+
+    def test_signal_uses_only_past_bars(self):
+        """Changing what happens after the signal must not change the signal itself."""
+        a = self.orb_day()
+        b = self.orb_day()[:6] + [bar(self.d1, "09:40", 101.3, 101.3, 90, 90)] * 1
+        sa = [s for s in sg.find_signals(sg.build_features([flat_day(self.d0), a]), [1]) if s.strategy == "orb"][0]
+        sb = [s for s in sg.find_signals(sg.build_features([flat_day(self.d0), b]), [1]) if s.strategy == "orb"][0]
+        self.assertEqual((sa.k, sa.entry, sa.stop), (sb.k, sb.entry, sb.stop))
+
+    def test_stop_assumed_first_when_both_levels_in_one_candle(self):
+        day = flat_day(self.d1, 100, 20)
+        day[5] = bar(self.d1, "09:40", 100, 103, 97, 100)          # touches both
+        F = sg.build_features([flat_day(self.d0), day])
+        s = sg.Signal("orb", F.day_start[1] + 3, 1, 100.0, 99.0, 1.0, "", True, None, None)
+        res = sg.simulate(F, s, 2.0)
+        self.assertEqual(res["reason"], "Stop loss")
+        self.assertLess(res["r_net"], -1.0)                         # -1 R plus charges
+
+    def test_live_trade_without_exit_stays_open(self):
+        day = flat_day(self.d1, 100, 20)
+        F = sg.build_features([flat_day(self.d0), day])
+        s = sg.Signal("orb", F.day_start[1] + 3, 1, 100.0, 99.0, 1.0, "", True, None, None)
+        self.assertTrue(sg.simulate(F, s, 2.0, open_ended=True)["open"])
+        self.assertEqual(sg.simulate(F, s, 2.0)["reason"], "Day end")
+
+    def test_strategy_needs_enough_trades_to_qualify(self):
+        F = sg.build_features([flat_day(self.d0), self.orb_day()])
+        rep = sg.backtest(F, [1])
+        self.assertFalse(rep["orb"]["qualified"])
+        self.assertIn("Fewer than", rep["orb"]["reason"])
+
+
+class SignalApiTests(BaseCase):
+    def test_replay_signals_endpoint(self):
+        url = reverse("paper_trading:signals", args=[self.company.code])
+        res = self.client.get(url, {"mode": "replay", "date": self.day.isoformat()})
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual([s["key"] for s in data["strategies"]], [k for k, _, _ in sg.STRATEGIES])
+        self.assertIn("signals", data)
+        self.assertEqual(data["date"], self.day.isoformat())
+
+    def test_unknown_company(self):
+        res = self.client.get(reverse("paper_trading:signals", args=["NOPE"]), {"mode": "replay", "date": self.day.isoformat()})
+        self.assertEqual(res.status_code, 400)

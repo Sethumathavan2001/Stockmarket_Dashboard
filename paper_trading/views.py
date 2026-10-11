@@ -12,6 +12,7 @@ from django.views.decorators.http import require_GET, require_POST, require_safe
 from market.models import Company, FiveMinuteData  # adjust if your app is named differently
 
 from . import services as svc
+from . import signals as sig
 from .models import PaperOrder
 
 
@@ -145,6 +146,19 @@ def candles(request, company_code):
     if mode == svc.LIVE:
         return JsonResponse(svc.live_snapshot(company))
     return JsonResponse(svc.replay_snapshot(company, replay_date))
+
+
+@require_GET
+@api
+def strategy_signals(request, company_code):
+    """
+    The six strategies' historical results for this stock, plus the session day's
+    entries / exits.  Old mode returns the whole day (the page reveals each signal
+    only when the replay reaches it); Live mode uses completed candles only.
+    """
+    company = _get_company(company_code)
+    mode, replay_date = _mode_and_date(request.GET)
+    return JsonResponse(sig.session_signals(company, mode, replay_date))
 
 
 @require_POST
