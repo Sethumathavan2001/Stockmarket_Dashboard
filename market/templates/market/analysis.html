@@ -101,7 +101,16 @@ tbody tr:hover {
             🔍 Filters
             {% if active_filter_count %}<span class="active-badge">{{ active_filter_count }} active</span>{% endif %}
         </button>
-        <button class="btn btn-success" onclick="refreshData()">🔄 Refresh</button>
+        <button class="btn btn-success" id="refreshBtn" onclick="refreshData()">🔄 Refresh</button>
+    </div>
+
+    <!-- refresh progress (the refresh runs on the server in the background) -->
+    <div id="refreshBox" class="mb-3" hidden>
+        <div class="progress" style="height: 22px;">
+            <div id="refreshBar" class="progress-bar progress-bar-striped progress-bar-animated bg-success"
+                 role="progressbar" style="width: 0%">0%</div>
+        </div>
+        <div id="refreshMsg" class="small text-muted mt-1"></div>
     </div>
 
     <!-- Filter Panel -->
@@ -244,14 +253,58 @@ tbody tr:hover {
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 <script>
+// The refresh runs in the background on the server; poll its progress and reload when it is done.
+const REFRESH_URL = "{% url 'market:refresh_analysis' %}";
+const REFRESH_PROGRESS_URL = "{% url 'market:refresh_analysis_progress' 'TASK_ID' %}";
+let refreshTimer = null;
+
+function setRefresh(percent, message, state) {
+    const bar = document.getElementById("refreshBar");
+    document.getElementById("refreshBox").hidden = false;
+    bar.style.width = percent + "%";
+    bar.textContent = Math.floor(percent) + "%";
+    bar.classList.toggle("bg-danger", state === "failed");
+    bar.classList.toggle("progress-bar-animated", state === "running");
+    const msg = document.getElementById("refreshMsg");
+    msg.textContent = message || "";
+    msg.classList.toggle("text-danger", state === "failed");
+}
+
 function refreshData() {
-    fetch("/analysis/refresh/")
+    const btn = document.getElementById("refreshBtn");
+    btn.disabled = true;
+    btn.textContent = "Refreshing…";
+    setRefresh(0, "Starting…", "running");
+    fetch(REFRESH_URL, { method: "POST", headers: { "X-CSRFToken": "{{ csrf_token }}" } })
+        .then(res => { if (!res.ok) throw new Error("Server returned " + res.status); return res.json(); })
+        .then(data => pollRefresh(data.task_id))
+        .catch(err => refreshDone("Could not start the refresh: " + err.message));
+}
+
+function pollRefresh(taskId) {
+    clearInterval(refreshTimer);
+    const tick = () => fetch(REFRESH_PROGRESS_URL.replace("TASK_ID", taskId))
         .then(res => res.json())
-        .then(data => {
-            if (data.status === "success") {
-                location.reload();
+        .then(d => {
+            if (d.status === "not_found") return refreshDone("Lost track of the refresh (was the server restarted?).");
+            if (d.status === "failed") return refreshDone(d.message);
+            setRefresh(d.percent || 0, d.message, d.status === "completed" ? "done" : "running");
+            if (d.status === "completed") {
+                clearInterval(refreshTimer);
+                setTimeout(() => location.reload(), 800);      // show the new numbers
             }
-        });
+        })
+        .catch(() => { /* try again on the next tick */ });
+    tick();
+    refreshTimer = setInterval(tick, 1000);
+}
+
+function refreshDone(message) {          // failure: show why and let the user try again
+    clearInterval(refreshTimer);
+    setRefresh(100, message, "failed");
+    const btn = document.getElementById("refreshBtn");
+    btn.disabled = false;
+    btn.textContent = "🔄 Refresh";
 }
 </script>
 

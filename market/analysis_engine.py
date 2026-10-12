@@ -28,8 +28,13 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Dict, Iterable, List, Optional, Tuple
 
+import threading
+import uuid
+
+from django.core.cache import cache
 from django.http import JsonResponse
-from django.db import transaction
+from django.db import connection, transaction
+from django.views.decorators.http import require_POST
 
 from .models import Company, DailyData  # noqa: adjust to your app path
 
@@ -127,7 +132,7 @@ def rise_from_open_percentage(open_price: Optional[float], high_price: Optional[
 # DATA LOADING (single query, grouped in memory)
 # =============================================================================
 
-def load_all_daily_data() -> Dict[int, List[Bar]]:
+def load_all_daily_data(progress=None) -> Dict[int, List[Bar]]:
     """
     Load ALL DailyData rows in a single query and group them by company_id.
 
@@ -144,7 +149,10 @@ def load_all_daily_data() -> Dict[int, List[Bar]]:
         .iterator(chunk_size=5000)
     )
 
-    for row in queryset:
+    total_rows = DailyData.objects.count() if progress else 0
+    for n, row in enumerate(queryset, 1):
+        if progress and n % 50000 == 0:
+            progress("load", n, total_rows)
         # DailyData's numeric columns are typically DecimalField. Cast to
         # float once, here, so every downstream calculation (which mixes
         # in plain float literals like 100.0) works without TypeErrors.
@@ -357,10 +365,13 @@ def analyze_company(company: Company, bars: List[Bar], latest_date: date) -> Non
 # ORCHESTRATION
 # =============================================================================
 
-def run_refresh() -> Dict[str, int]:
+def run_refresh(progress=None) -> Dict[str, int]:
     """
     Run the full refresh over every Company and persist results with a
     single bulk_update(). Returns a small summary dict.
+
+    `progress(phase, done, total)` - optional callback; phase is "load"
+    (DailyData rows read), "analyze" (companies done) or "save".
     """
     latest_date = get_latest_trading_date()
     if latest_date is None:
@@ -368,7 +379,7 @@ def run_refresh() -> Dict[str, int]:
         return {"total": 0, "succeeded": 0, "failed": 0}
 
     # One query for all historical data, grouped in memory by company_id.
-    daily_by_company = load_all_daily_data()
+    daily_by_company = load_all_daily_data(progress)
 
     companies = list(Company.objects.only("id", *ANALYSIS_FIELDS))
     total_len = len(companies)
@@ -376,7 +387,8 @@ def run_refresh() -> Dict[str, int]:
     failed = 0
     count = 1
     for company in companies:
-        print(company.id,count,total_len)
+        if progress and (count % 20 == 0 or count == total_len):
+            progress("analyze", count, total_len)
         count+=1
         bars = daily_by_company.get(company.id)
 
@@ -399,6 +411,8 @@ def run_refresh() -> Dict[str, int]:
             failed += 1
         
     # Single bulk_update for the entire batch.
+    if progress:
+        progress("save", 0, 1)
     with transaction.atomic():
         Company.objects.bulk_update(companies, ANALYSIS_FIELDS, batch_size=500)
 
@@ -409,10 +423,54 @@ def run_refresh() -> Dict[str, int]:
 # DJANGO VIEW ENTRY POINT
 # =============================================================================
 
+# The refresh reads every DailyData row, so it runs in a background thread and
+# the page polls its progress.  Only one refresh runs at a time.
+REFRESH_JOB_KEY = "analysis_refresh:current"
+_REFRESH_LOCK = threading.Lock()
+PHASE_SPAN = {"load": (0, 60), "analyze": (60, 97), "save": (97, 100)}   # % of the bar per phase
+PHASE_LABEL = {"load": "Loading daily data", "analyze": "Analysing companies", "save": "Saving results"}
+
+
+def _set_progress(task_id, **fields):
+    data = cache.get(task_id) or {"status": "running", "percent": 0, "phase": "start", "message": "Starting..."}
+    data.update(fields)
+    cache.set(task_id, data, 3600)
+
+
+def _refresh_worker(task_id):
+    def progress(phase, done, total):
+        lo, hi = PHASE_SPAN[phase]
+        frac = done / total if total else 0
+        msg = PHASE_LABEL[phase] + (f" - {done:,} of {total:,}" if phase != "save" else "...")
+        _set_progress(task_id, phase=phase, percent=round(lo + (hi - lo) * frac, 1), message=msg)
+
+    try:
+        summary = run_refresh(progress)
+        _set_progress(task_id, status="completed", percent=100, phase="done",
+                      message=f"Done - {summary['succeeded']:,} companies analysed, {summary['failed']} failed.",
+                      **summary)
+    except Exception as exc:
+        logger.exception("refresh_analysis failed")
+        _set_progress(task_id, status="failed", message=f"Refresh failed: {exc}")
+    finally:
+        cache.delete(REFRESH_JOB_KEY)
+        connection.close()
+
+
+@require_POST
 def refresh_analysis(request):
-    """
-    View wrapper: triggers the full analysis refresh and returns a JSON
-    summary. Wire this up in urls.py exactly as the old placeholder was.
-    """
-    summary = run_refresh()
-    return JsonResponse({"status": "ok", **summary})
+    """Start the analysis refresh in the background (or return the one already running)."""
+    with _REFRESH_LOCK:
+        running = cache.get(REFRESH_JOB_KEY)
+        if running and (cache.get(running) or {}).get("status") == "running":
+            return JsonResponse({"status": "running", "task_id": running, "already_running": True})
+        task_id = str(uuid.uuid4())
+        _set_progress(task_id)
+        cache.set(REFRESH_JOB_KEY, task_id, 3600)
+        threading.Thread(target=_refresh_worker, args=(task_id,), daemon=True).start()
+    return JsonResponse({"status": "started", "task_id": task_id})
+
+
+def refresh_analysis_progress(request, task_id):
+    data = cache.get(task_id)
+    return JsonResponse(data or {"status": "not_found"})

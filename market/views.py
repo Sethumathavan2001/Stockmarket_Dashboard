@@ -40,7 +40,7 @@ def home(request):
         .order_by('-total')
     )
 
-    TOP_N = 50
+    TOP_N = HOME_TOP_ALL
     top_industries = list(industries_qs[:TOP_N])
 
     other_total = sum(i['total'] for i in industries_qs[TOP_N:])
@@ -67,7 +67,7 @@ def industries_by_sector(request):
         .order_by('-total')
     )
 
-    TOP_N = 20
+    TOP_N = HOME_TOP_SECTOR
     qs_list = list(qs[:TOP_N])
 
     other_total = sum(i['total'] for i in qs[TOP_N:])
@@ -78,6 +78,32 @@ def industries_by_sector(request):
         })
 
     return JsonResponse(qs_list, safe=False)
+
+
+HOME_TOP_ALL = 50        # industries shown on the home chart before "Other" (all sectors)
+HOME_TOP_SECTOR = 20     # ... and inside one sector
+
+
+def companies_by_industry(request):
+    """
+    Companies behind one bar of the home page chart.
+    ?industry=<name>[&sector=<name>]   industry "Other" = every industry outside the chart's top N.
+    """
+    industry = request.GET.get("industry", "")
+    sector = request.GET.get("sector") or None
+    qs = Company.objects.all()
+    if sector:
+        qs = qs.filter(sector=sector)
+    if industry == "Other":
+        top_n = HOME_TOP_SECTOR if sector else HOME_TOP_ALL
+        shown = [r["industry"] for r in
+                 qs.values("industry").annotate(total=Count("id")).order_by("-total")[:top_n]]
+        qs = qs.exclude(industry__in=shown)
+    else:
+        qs = qs.filter(industry=industry)
+    rows = list(qs.order_by("code").values("code", "name", "sector", "industry", "latest_price"))
+    return JsonResponse({"industry": industry, "sector": sector, "count": len(rows), "companies": rows})
+
 
 def daily_data_view(request):
     company_code = request.GET.get('company')
@@ -910,7 +936,7 @@ def retrive_daily(request, code=None):
 
     return JsonResponse(list(records), safe=False)
 
-from .analysis_engine import refresh_analysis
+from .analysis_engine import refresh_analysis, refresh_analysis_progress
 
 import requests
 def fetch_live(request):

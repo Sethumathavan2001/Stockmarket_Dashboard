@@ -21,7 +21,23 @@
   <!-- RIGHT PANEL -->
   <div class="right-panel">
     <h3 id="industryTitle">Industries (Top 20)</h3>
+    <p class="chart-hint">Click a bar to list its companies.</p>
     <canvas id="industryChart" style="width: fit-content;"></canvas>
+
+    <!-- companies of the clicked bar -->
+    <div id="companyPanel" class="company-panel" hidden>
+      <div class="company-head">
+        <h3 id="companyTitle"></h3>
+        <input type="search" id="companyFilter" placeholder="Search symbol or name">
+        <button type="button" id="companyClose" title="Close">✕</button>
+      </div>
+      <div class="company-wrap">
+        <table class="company-table">
+          <thead><tr><th>Symbol</th><th>Name</th><th>Sector</th><th>Industry</th><th class="num">Latest price</th></tr></thead>
+          <tbody id="companyRows"></tbody>
+        </table>
+      </div>
+    </div>
   </div>
 
 </div>
@@ -30,6 +46,10 @@
 
 <script>
   let industryChart;
+  let currentSector = null;              // null = all sectors
+  const COMPANIES_URL = "{% url 'market:companies_by_industry' %}";
+  const PAPER_LIVE_URL = "{% url 'paper_trading:page_live' 'CODE_PLACEHOLDER' %}";
+  let companyList = [];
 
   function initChart(labels, data) {
     industryChart = new Chart(
@@ -50,7 +70,15 @@
             x: { beginAtZero: true }
           },
           plugins: {
-            legend: { display: false }
+            legend: { display: false },
+            tooltip: { callbacks: { footer: () => 'Click to see the companies' } }
+          },
+          onClick: (evt, elements) => {
+            if (!elements.length) return;
+            showCompanies(industryChart.data.labels[elements[0].index]);
+          },
+          onHover: (evt, elements) => {
+            evt.native.target.style.cursor = elements.length ? 'pointer' : 'default';
           }
         }
       }
@@ -67,6 +95,8 @@
     document.querySelectorAll('.sector-list li')
       .forEach(li => li.classList.remove('active'));
     el.classList.add('active');
+    currentSector = sector;
+    hideCompanies();
 
     fetch(`/industries-by-sector/?sector=${encodeURIComponent(sector)}`)
       .then(res => res.json())
@@ -79,9 +109,65 @@
           `Industries in ${sector} (Top 20)`;
       });
   }
+
+  // ---- companies of one bar ----
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+
+  function showCompanies(industry) {
+    const q = new URLSearchParams({ industry });
+    if (currentSector) q.set('sector', currentSector);
+    const panel = document.getElementById('companyPanel');
+    panel.hidden = false;
+    document.getElementById('companyTitle').textContent = `${industry} - loading…`;
+    document.getElementById('companyRows').innerHTML = '';
+    fetch(`${COMPANIES_URL}?${q}`)
+      .then(res => res.json())
+      .then(data => {
+        companyList = data.companies;
+        const where = currentSector ? ` in ${currentSector}` : '';
+        document.getElementById('companyTitle').textContent =
+          `${industry}${where} · ${data.count} compan${data.count === 1 ? 'y' : 'ies'}`;
+        document.getElementById('companyFilter').value = '';
+        renderCompanies();
+        panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      })
+      .catch(() => { document.getElementById('companyTitle').textContent = 'Could not load the companies.'; });
+  }
+
+  function renderCompanies() {
+    const f = document.getElementById('companyFilter').value.trim().toLowerCase();
+    const rows = companyList.filter(c => !f || c.code.toLowerCase().includes(f) || (c.name || '').toLowerCase().includes(f));
+    document.getElementById('companyRows').innerHTML = rows.map(c => `
+      <tr>
+        <td><a href="${PAPER_LIVE_URL.replace('CODE_PLACEHOLDER', encodeURIComponent(c.code))}" title="Open in Paper Trading (Live)">${esc(c.code)}</a></td>
+        <td>${esc(c.name)}</td>
+        <td>${esc(c.sector)}</td>
+        <td>${esc(c.industry)}</td>
+        <td class="num">${c.latest_price != null ? Number(c.latest_price).toFixed(2) : '—'}</td>
+      </tr>`).join('') || '<tr><td colspan="5" class="empty">No matching companies.</td></tr>';
+  }
+
+  function hideCompanies() { document.getElementById('companyPanel').hidden = true; }
+
+  document.getElementById('companyFilter').addEventListener('input', renderCompanies);
+  document.getElementById('companyClose').addEventListener('click', hideCompanies);
 </script>
 
 <style>
+  .chart-hint { margin: -6px 0 8px; font-size: 13px; color: #64748b; }
+  .company-panel { margin-top: 24px; border-top: 1px solid #e3e8f0; padding-top: 16px; }
+  .company-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+  .company-head h3 { margin: 0; flex: 1; font-size: 1.05rem; }
+  .company-head input { padding: 6px 10px; border: 1px solid #d5dce8; border-radius: 6px; min-width: 220px; }
+  .company-head button { border: none; background: #f1f5f9; border-radius: 6px; padding: 6px 10px; cursor: pointer; }
+  .company-wrap { max-height: 480px; overflow: auto; border: 1px solid #e3e8f0; border-radius: 8px; }
+  .company-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  .company-table th { position: sticky; top: 0; background: #f7f9fc; text-align: left; padding: 8px 10px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: #64748b; }
+  .company-table td { padding: 7px 10px; border-top: 1px solid #eef2f7; }
+  .company-table td.num, .company-table th.num { text-align: right; }
+  .company-table a { color: #2563eb; font-weight: 600; text-decoration: none; }
+  .company-table a:hover { text-decoration: underline; }
+  .company-table .empty { text-align: center; color: #64748b; padding: 20px; }
   .layout {
     display: grid;
     grid-template-columns: 280px 1fr;
