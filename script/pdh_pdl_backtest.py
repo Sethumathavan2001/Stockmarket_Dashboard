@@ -47,12 +47,12 @@ TIME COLUMN
   cannot say when inside the candle); end-of-day exits with the END of the last
   candle.
 
-USAGE  (run from your Django project folder, next to manage.py)
+USAGE  (from the project folder; the Excel file goes to script/output/)
 -----
     pip install openpyxl
-    python pdh_pdl_backtest.py                       # all stocks, all dates
-    python pdh_pdl_backtest.py --symbols TCS,INFY --from 2025-01-01 --to 2025-12-31
-    python pdh_pdl_backtest.py --settings myproject.settings --output research.xlsx
+    python script/pdh_pdl_backtest.py                       # all stocks, all dates
+    python script/pdh_pdl_backtest.py --symbols TCS,INFY --from 2025-01-01 --to 2025-12-31
+    python script/pdh_pdl_backtest.py --settings myproject.settings --output research.xlsx
 
   The settings module is found automatically from manage.py; use --settings if
   yours lives elsewhere.  Models are read from the app named by --app
@@ -84,6 +84,18 @@ from typing import List, Optional
 from zoneinfo import ZoneInfo
 
 IST = ZoneInfo("Asia/Kolkata")
+
+# This script lives in <project>/script/; Excel output goes to <project>/script/output/.
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
+OUTPUT_DIR = os.path.join(SCRIPT_DIR, "output")
+
+
+def output_path(name):
+    """A bare file name goes into script/output/; a path with a folder is used as given."""
+    path = name if os.path.dirname(name) else os.path.join(OUTPUT_DIR, name)
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    return path
 CANDLE = dt.timedelta(minutes=5)
 CENT = Decimal("0.01")
 BUY, SELL = "BUY", "SELL"
@@ -335,7 +347,7 @@ def find_settings_module(explicit):
         return explicit
     if os.environ.get("DJANGO_SETTINGS_MODULE"):
         return os.environ["DJANGO_SETTINGS_MODULE"]
-    manage = os.path.join(os.getcwd(), "manage.py")
+    manage = os.path.join(PROJECT_ROOT, "manage.py")
     if os.path.exists(manage):
         m = re.search(r"DJANGO_SETTINGS_MODULE['\"]\s*,\s*['\"]([\w.]+)['\"]", open(manage, encoding="utf-8").read())
         if m:
@@ -375,7 +387,7 @@ def load_and_run(args, P):
     settings_module = find_settings_module(args.settings)
     if not settings_module:
         sys.exit("Could not find your Django settings. Run this next to manage.py, or pass --settings myproject.settings")
-    sys.path.insert(0, os.getcwd())
+    sys.path.insert(0, PROJECT_ROOT)
     os.environ["DJANGO_SETTINGS_MODULE"] = settings_module
     django.setup()
     from django.apps import apps
@@ -710,7 +722,7 @@ def build_workbook(trades, stats, P, args):
 # ==========================================================================
 def parse_args(argv=None):
     p = argparse.ArgumentParser(description="Find the PDH / PDL pattern in all historical 5-minute data and write an Excel file.")
-    p.add_argument("--output", "-o", default="pdh_pdl_backtest.xlsx", help="Excel file to write (default: pdh_pdl_backtest.xlsx)")
+    p.add_argument("--output", "-o", default="pdh_pdl_backtest.xlsx", help="Excel file to write (default: script/output/pdh_pdl_backtest.xlsx)")
     p.add_argument("--symbols", help="comma-separated Company codes (default: all)")
     p.add_argument("--from", dest="date_from", type=lambda s: dt.date.fromisoformat(s), help="first day to trade, YYYY-MM-DD")
     p.add_argument("--to", dest="date_to", type=lambda s: dt.date.fromisoformat(s), help="last day to trade, YYYY-MM-DD")
@@ -748,6 +760,7 @@ def main(argv=None):
     print("PDH / PDL pattern scan")
     trades, stats = load_and_run(args, P)
     wb = build_workbook(trades, stats, P, args)
+    args.output = output_path(args.output)
     wb.save(args.output)
 
     s = summarize(trades)

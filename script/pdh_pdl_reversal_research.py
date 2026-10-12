@@ -58,11 +58,11 @@ THE FOUR RESEARCH FACTORS (each trade is tagged; each has its own sheet)
   filtered rules on the last 30 % (out-of-sample) - the honest check that a
   filter is real and not curve-fitting.
 
-USAGE  (run from your Django project folder, next to manage.py)
+USAGE  (from the project folder; the Excel file goes to script/output/)
 -----
-    python pdh_pdl_reversal_research.py
-    python pdh_pdl_reversal_research.py --symbols TCS.NS,INFY.NS --from 2026-01-01
-    python pdh_pdl_reversal_research.py --rr 1.5 --min-turnover 10 -o research.xlsx
+    python script/pdh_pdl_reversal_research.py
+    python script/pdh_pdl_reversal_research.py --symbols TCS.NS,INFY.NS --from 2026-01-01
+    python script/pdh_pdl_reversal_research.py --rr 1.5 --min-turnover 10 -o research.xlsx
 
   Reads the Company / FiveMinuteData models of --app (default "market").
   Nothing is written to the database.  Historical simulation only - not advice.
@@ -81,6 +81,18 @@ from typing import Optional
 from zoneinfo import ZoneInfo
 
 IST = ZoneInfo("Asia/Kolkata")
+
+# This script lives in <project>/script/; Excel output goes to <project>/script/output/.
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
+OUTPUT_DIR = os.path.join(SCRIPT_DIR, "output")
+
+
+def output_path(name):
+    """A bare file name goes into script/output/; a path with a folder is used as given."""
+    path = name if os.path.dirname(name) else os.path.join(OUTPUT_DIR, name)
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    return path
 UTC = dt.timezone.utc
 CANDLE = dt.timedelta(minutes=5)
 OPEN_MIN = 9 * 60 + 15            # 09:15, NSE open
@@ -544,7 +556,7 @@ def find_settings_module(explicit):
         return explicit
     if os.environ.get("DJANGO_SETTINGS_MODULE"):
         return os.environ["DJANGO_SETTINGS_MODULE"]
-    manage = os.path.join(os.getcwd(), "manage.py")
+    manage = os.path.join(PROJECT_ROOT, "manage.py")
     if os.path.exists(manage):
         m = re.search(r"DJANGO_SETTINGS_MODULE['\"]\s*,\s*['\"]([\w.]+)['\"]", open(manage, encoding="utf-8").read())
         if m:
@@ -610,7 +622,7 @@ def load_and_run(args, P):
     settings_module = find_settings_module(args.settings)
     if not settings_module:
         sys.exit("Could not find your Django settings. Run this next to manage.py, or pass --settings myproject.settings")
-    sys.path.insert(0, os.getcwd())
+    sys.path.insert(0, PROJECT_ROOT)
     os.environ["DJANGO_SETTINGS_MODULE"] = settings_module
     django.setup()
     from django.apps import apps
@@ -1310,6 +1322,7 @@ def main(argv=None):
     trades, stats, has_nifty = load_and_run(args, P)
     print("  writing Excel ...")
     wb = build_workbook(trades, stats, P, args, has_nifty)
+    args.output = output_path(args.output)
     wb.save(args.output)
 
     s = summarize(trades)
