@@ -984,7 +984,9 @@ class LiveYahooPreviousDayTests(BaseCase):
             svc.live_previous_day(self.company)
             svc.live_previous_day(self.company)
             svc.daily_close_on(self.company, yday)
-        self.assertEqual(m.call_count, 1)
+        # one daily and one 5-minute request, each cached - nothing repeated
+        intervals = sorted(c.kwargs.get("interval") for c in m.call_args_list)
+        self.assertEqual(intervals, ["1d", "5m"])
 
     def test_ticker_mapping_is_used(self):
         yday = svc.today_ist() - timedelta(days=1)
@@ -1288,3 +1290,65 @@ class SignalApiTests(BaseCase):
     def test_unknown_company(self):
         res = self.client.get(reverse("paper_trading:signals", args=["NOPE"]), {"mode": "replay", "date": self.day.isoformat()})
         self.assertEqual(res.status_code, 400)
+
+
+class LiveSignalGapTests(BaseCase):
+    """Live mode fills the days the database is missing from Yahoo; Old mode never calls Yahoo."""
+
+    def yahoo_frame(self, day):
+        idx = pd.date_range(datetime.combine(day, time(9, 15)), periods=75, freq="5min", tz=svc.IST)
+        return pd.DataFrame({"Open": 100.0, "High": 101.0, "Low": 99.0, "Close": 100.5, "Volume": 1000}, index=idx)
+
+    def test_live_history_includes_days_missing_from_database(self):
+        today = svc.today_ist()
+        missing = today - timedelta(days=1)            # the database stops at self.day (3 days ago)
+        with mock.patch.object(svc, "_yf_history", return_value=self.yahoo_frame(missing)) as yf_hist, \
+                mock.patch.object(svc, "fetch_live_today", return_value=pd.DataFrame(
+                    columns=["timestamp", "open", "high", "low", "close", "volume"])):
+            data = sg.session_signals(self.company, svc.LIVE, None)
+        self.assertTrue(yf_hist.called)
+        self.assertEqual(data["history"]["to"], missing.isoformat())
+        self.assertEqual(data["history"]["from_yahoo"], 1)
+        self.assertEqual(data["history"]["days"], 2)                 # database day + Yahoo day
+
+    def test_yahoo_gap_ignores_today_and_known_days(self):
+        today = svc.today_ist()
+        frame = pd.concat([self.yahoo_frame(self.day), self.yahoo_frame(today - timedelta(days=1)),
+                           self.yahoo_frame(today)])
+        with mock.patch.object(svc, "_yf_history", return_value=frame):
+            days = sg._yahoo_gap_bars(self.company, self.day, today)
+        self.assertEqual([d[0].ts.date() for d in days], [today - timedelta(days=1)])
+
+    def test_old_mode_does_not_call_yahoo(self):
+        with mock.patch.object(svc, "_yf_history") as yf_hist:
+            sg.session_signals(self.company, svc.REPLAY, self.day)
+        yf_hist.assert_not_called()
+
+
+class LivePreviousDayFrom5mTests(BaseCase):
+    """Yahoo's daily feed can lag a day; Live mode then builds the previous day from 5-minute candles."""
+
+    def test_uses_newer_day_from_5_minute_candles(self):
+        today = svc.today_ist()
+        older, newer = today - timedelta(days=3), today - timedelta(days=1)
+        daily = pd.DataFrame({"Open": [10.0], "High": [11.0], "Low": [9.0], "Close": [10.5]},
+                             index=pd.DatetimeIndex([datetime.combine(older, time())], tz=svc.IST))
+        idx = pd.date_range(datetime.combine(newer, time(9, 15)), periods=3, freq="5min", tz=svc.IST)
+        five = pd.DataFrame({"Open": [20.0, 21.0, 22.0], "High": [21.0, 25.0, 23.0],
+                             "Low": [19.0, 20.0, 18.0], "Close": [21.0, 22.0, 22.5]}, index=idx)
+
+        def fake(symbol, **kw):
+            return five if kw.get("interval") == "5m" else daily
+
+        with mock.patch.object(svc, "_yf_history", side_effect=fake):
+            prev = svc.live_previous_day(self.company)
+        self.assertEqual(prev, {"date": newer.isoformat(), "open": 20.0, "high": 25.0, "low": 18.0, "close": 22.5})
+
+    def test_keeps_daily_candle_when_it_is_current(self):
+        today = svc.today_ist()
+        newer = today - timedelta(days=1)
+        daily = pd.DataFrame({"Open": [10.0], "High": [11.0], "Low": [9.0], "Close": [10.5]},
+                             index=pd.DatetimeIndex([datetime.combine(newer, time())], tz=svc.IST))
+        with mock.patch.object(svc, "_yf_history", return_value=daily):
+            prev = svc.live_previous_day(self.company)
+        self.assertEqual((prev["date"], prev["close"]), (newer.isoformat(), 10.5))

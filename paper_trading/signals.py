@@ -27,6 +27,7 @@ the square-off at 15:15.  Historical win rates are not a promise about the
 next trade.
 """
 from collections import defaultdict, deque
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta
 from typing import List, Optional
@@ -34,8 +35,11 @@ from typing import List, Optional
 from django.core.cache import cache
 
 from market.models import FiveMinuteData
+from prediction.tickers import get_yahoo_ticker
 
 from . import services as svc
+
+logger = logging.getLogger(__name__)
 
 IST = svc.IST
 CANDLE = timedelta(minutes=5)
@@ -94,6 +98,51 @@ def _history_bars(company, before_day, days=HISTORY_DAYS):
         ts = svc.to_ist(ts)
         by_day[ts.date()].append(Bar(ts, float(o), float(h), float(l), float(c), float(v or 0)))
     return [by_day[d] for d in sorted(by_day)[-days:]]
+
+
+GAP_CACHE_OK_SECONDS = 3600        # finished days don't change
+GAP_CACHE_FAIL_SECONDS = 300       # retry a failed / empty Yahoo call after 5 minutes
+
+
+def _yahoo_gap_bars(company, after_day, before_day):
+    """
+    Live mode only: 5-minute candles from Yahoo for the trading days AFTER `after_day` (the last day
+    in the database) and BEFORE `before_day` (today) - the days the database is missing, so the
+    previous-day levels and the back-test history are current even when the database was not
+    updated.  In memory only, never saved.  Yahoo keeps about 60 days of 5-minute data.
+    """
+    import pandas as pd
+
+    start = max(after_day + timedelta(days=1), before_day - timedelta(days=58))
+    if start >= before_day:
+        return []
+    key = f"paper_trading:gap:{company.pk}:{start.isoformat()}:{before_day.isoformat()}"
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+
+    days = []
+    try:
+        raw = svc._yf_history(get_yahoo_ticker(company.code), start=start.isoformat(), end=before_day.isoformat(),
+                              interval="5m", prepost=False)
+    except Exception as exc:                       # network, rate limiting ...
+        logger.warning("yfinance 5m gap fetch failed for %s: %s", company.code, exc)
+        raw = None
+    if raw is not None and not raw.empty:
+        by_day = defaultdict(list)
+        for idx, r in raw.iterrows():
+            ts = pd.Timestamp(idx)
+            ts = (ts.tz_convert(IST) if ts.tzinfo is not None else ts.tz_localize(IST)).to_pydatetime()
+            if not (after_day < ts.date() < before_day):
+                continue
+            vals = [r.get("Open"), r.get("High"), r.get("Low"), r.get("Close")]
+            if any(v is None or pd.isna(v) for v in vals):
+                continue
+            vol = r.get("Volume")
+            by_day[ts.date()].append(Bar(ts, *(float(v) for v in vals), float(vol) if vol is not None and not pd.isna(vol) else 0.0))
+        days = [by_day[d] for d in sorted(by_day)]
+    cache.set(key, days, GAP_CACHE_OK_SECONDS if days else GAP_CACHE_FAIL_SECONDS)
+    return days
 
 
 def _replay_day_bars(company, day):
@@ -568,25 +617,37 @@ def backtest(F, day_numbers):
 # ==========================================================================
 # public entry point
 # ==========================================================================
-def _history_for(company, day, cache_key):
+def _history_for(company, day, live):
+    """
+    The trading days before `day` and their back-test (cached).  Old mode: the database only.
+    Live mode: the database, plus any later days it is missing fetched from Yahoo.
+    """
     hist = _history_bars(company, day)
-    report = cache.get(cache_key)
+    from_yahoo = 0
+    if live:
+        last = hist[-1][0].ts.date() if hist else day - timedelta(days=90)
+        gap = _yahoo_gap_bars(company, last, day)
+        if gap:
+            from_yahoo = min(len(gap), HISTORY_DAYS)
+            hist = (hist + gap)[-HISTORY_DAYS:]
+    last_day = hist[-1][0].ts.date().isoformat() if hist else "none"
+    key = f"paper_trading:strategy:{company.pk}:{day.isoformat()}:{last_day}:{len(hist)}"
+    report = cache.get(key)
     if report is None:
         F = build_features(hist)
         report = {"report": backtest(F, list(range(1, len(hist)))),
                   "days": len(hist),
                   "from": hist[0][0].ts.date().isoformat() if hist else None,
                   "to": hist[-1][0].ts.date().isoformat() if hist else None}
-        cache.set(cache_key, report, 6 * 3600)
-    return report, hist
+        cache.set(key, report, 6 * 3600)
+    return dict(report, from_yahoo=from_yahoo), hist
 
 
 def session_signals(company, mode, day, now=None):
     """Strategy report + the session day's signals (entries, exits so far)."""
     live = mode == svc.LIVE
     day = svc.today_ist() if live else day
-    key = f"paper_trading:strategy:{company.pk}:{day.isoformat()}"
-    hist_info, hist = _history_for(company, day, key)
+    hist_info, hist = _history_for(company, day, live)
     today = _live_day_bars(company, now) if live else _replay_day_bars(company, day)
 
     days = hist + ([today] if today else [])
@@ -636,7 +697,8 @@ def session_signals(company, mode, day, now=None):
         })
     return {
         "company": company.code, "mode": mode, "date": day.isoformat(),
-        "history": {"days": hist_info["days"], "from": hist_info["from"], "to": hist_info["to"]},
+        "history": {"days": hist_info["days"], "from": hist_info["from"], "to": hist_info["to"],
+                    "from_yahoo": hist_info["from_yahoo"]},   # latest days fetched from Yahoo (Live only)
         "rules": {"min_win_rate": MIN_WIN_RATE, "min_trades": MIN_TRADES, "flow_min": FLOW_MIN,
                   "last_signal": LAST_SIGNAL.strftime("%H:%M"), "squareoff": SQUAREOFF.strftime("%H:%M")},
         "strategies": strategies,

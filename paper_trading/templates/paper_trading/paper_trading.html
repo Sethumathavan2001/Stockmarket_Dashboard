@@ -1174,7 +1174,8 @@ function renderSignalsPanel() {
   if (!d) return;
   const h = d.history;
   els.sigMeta.textContent = h.days
-    ? `Back-tested on ${h.days} trading days before this day (${h.from} → ${h.to})`
+    ? `Back-tested on ${h.days} trading days before this day (${h.from} → ${h.to})` +
+      (h.from_yahoo ? ` · latest ${h.from_yahoo} day${h.from_yahoo === 1 ? '' : 's'} from Yahoo (not in your database)` : '')
     : 'No earlier days stored for this stock - nothing to back-test.';
 
   const fmtR = (r) => (r == null ? '—' : (r > 0 ? '+' : '') + r.toFixed(2) + ' R');

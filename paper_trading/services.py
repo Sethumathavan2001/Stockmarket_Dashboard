@@ -448,13 +448,59 @@ def live_daily_candles(company, use_cache=True):
     return rows
 
 
+def yahoo_5m_previous_day(company, use_cache=True):
+    """
+    OHLC of the last COMPLETE day before today built from Yahoo's 5-minute candles, as
+    {"date": date, "open", "high", "low", "close"} or None.  Yahoo's daily feed often publishes
+    a session's candle a day or more late, while the 5-minute data has it right after the close.
+    In memory only - never stored in the database.
+    """
+    key = f"paper_trading:prev5m:{company.pk}:{today_ist().isoformat()}"
+    if use_cache:
+        cached = cache.get(key)
+        if cached is not None:
+            return cached or None                   # {} = looked up, nothing found
+
+    found = {}
+    try:
+        raw = _yf_history(get_yahoo_ticker(company.code), period="5d", interval="5m", prepost=False)
+    except Exception as exc:  # network, rate limiting, delisted ticker ...
+        logger.warning("yfinance 5m previous-day fetch failed for %s: %s", company.code, exc)
+        raw = None
+    if raw is not None and not raw.empty:
+        today = today_ist()
+        by_day = {}
+        for idx, r in raw.iterrows():
+            ts = pd.Timestamp(idx)
+            day = ts.tz_convert(IST).date() if ts.tzinfo is not None else ts.date()
+            vals = [r.get("Open"), r.get("High"), r.get("Low"), r.get("Close")]
+            if day >= today or any(v is None or pd.isna(v) for v in vals):
+                continue
+            o, h, l, c = (float(v) for v in vals)
+            d = by_day.get(day)
+            by_day[day] = ({"date": day, "open": o, "high": h, "low": l, "close": c} if d is None else
+                           {**d, "high": max(d["high"], h), "low": min(d["low"], l), "close": c})
+        if by_day:
+            found = by_day[max(by_day)]
+    cache.set(key, found, DAILY_CACHE_OK_SECONDS if found else DAILY_CACHE_FAIL_SECONDS)
+    return found or None
+
+
 def live_previous_day(company):
-    """Previous trading day's OHLC for Live mode - from Yahoo, deliberately NOT the database."""
+    """
+    Previous trading day's OHLC for Live mode - from Yahoo, deliberately NOT the database.
+    Uses Yahoo's daily candles, or its 5-minute candles when they already have a later day
+    (the daily feed often lags a day).
+    """
     rows = [r for r in live_daily_candles(company) if r["date"] < today_ist()]
-    if not rows:
+    best = rows[-1] if rows else None
+    intraday = yahoo_5m_previous_day(company)
+    if intraday and (best is None or intraday["date"] > best["date"]):
+        best = intraday
+    if best is None:
         return None
-    r = rows[-1]
-    return {"date": r["date"].isoformat(), "open": r["open"], "high": r["high"], "low": r["low"], "close": r["close"]}
+    return {"date": best["date"].isoformat(), "open": best["open"], "high": best["high"], "low": best["low"],
+            "close": best["close"]}
 
 
 def daily_close_on(company, day):
