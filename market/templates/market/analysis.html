@@ -79,6 +79,9 @@ tbody tr:hover {
     padding: 1px 8px;
     margin-left: 6px;
 }
+/* company code -> Paper Trading (Live) */
+.pt-link { font-weight: 600; color: #2563eb; text-decoration: none; border-bottom: 1px dashed currentColor; }
+.pt-link:hover { border-bottom-style: solid; }
 </style>
 
 <div class="container-fluid mt-4">
@@ -200,7 +203,7 @@ tbody tr:hover {
                 {% for company in companies %}
                 <tr>
                     <td>{{ forloop.counter0|add:page_obj.start_index }}</td>
-                    <td>{{ company.code }}</td>
+                    <td><a class="pt-link" href="{% url 'paper_trading:page_live' company.code %}" title="Open {{ company.code }} in Paper Trading (Live)">{{ company.code }}</a></td>
                     <td>{{ company.latest_price }}</td>
 
                     {% if mode == "low" %}
