@@ -21,3 +21,6 @@ test.py
 
 # Fetch error logs
 logs/
+
+# Trained prediction models (regenerate with: python manage.py train_models)
+ml_models/

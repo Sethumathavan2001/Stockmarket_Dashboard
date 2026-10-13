@@ -6,84 +6,90 @@
 <title>Stock Prediction</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
 <style>
   :root{
-    --navy-900:#0B2545; --navy-800:#123B7A; --blue-600:#2F6FED;
+    --navy-900:#0B2545; --navy-800:#123B7A; --blue-600:#2F6FED; --blue-50:#EEF3FF;
     --bg:#FFFFFF; --panel:#F7F9FC; --border:#E3E8F0;
     --text:#101828; --text-muted:#64748B;
-    --green:#0EA968; --green-bg:#E7F8F0;
-    --red:#E5484D; --red-bg:#FDECEC;
-    --amber:#B45309; --amber-bg:#FEF3E0;
+    --green:#0EA968; --green-dark:#0A8A54; --green-bg:#E7F8F0;
+    --red:#E5484D; --red-dark:#C93A3F; --red-bg:#FDECEC;
+    --amber:#B45309; --amber-bg:#FEF3E0; --purple:#7C3AED;
     --radius:10px; --shadow:0 1px 2px rgba(16,24,40,.04),0 1px 3px rgba(16,24,40,.06);
   }
-  *{box-sizing:border-box;}
+  *{ box-sizing:border-box; }
+  [hidden]{ display:none !important; }
   body{ margin:0; font-family:'Inter',system-ui,sans-serif; background:var(--bg); color:var(--text); }
   .mono{ font-family:'JetBrains Mono',monospace; }
+  .wrap{ max-width:1320px; margin:0 auto; padding:0 24px 60px; }
 
-  /* ---------- page heading (below the shared navbar) ---------- */
+  /* page heading */
   .page-head{ display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px 16px; margin-top:20px; }
-  .page-head .title{ display:flex; flex-wrap:wrap; align-items:center; gap:4px 12px; font-size:18px; font-weight:700; color:var(--text); }
+  .page-head .title{ display:flex; flex-wrap:wrap; align-items:center; gap:4px 12px; font-size:18px; font-weight:700; }
   .page-head .tag{ font-size:12.5px; font-weight:500; color:var(--text-muted); border-left:1px solid var(--border); padding-left:12px; }
 
-  .wrap{ max-width:1180px; margin:0 auto; padding:0 24px; }
-
-  .filter-bar{
-    background:var(--panel); border:1px solid var(--border); border-radius:var(--radius);
-    padding:16px 18px; margin-top:22px; display:flex; flex-wrap:wrap; align-items:end; gap:16px;
-  }
-  .field{ display:flex; flex-direction:column; gap:6px; min-width:220px; }
-  .field label{ font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.06em; color:var(--text-muted); }
-  .field select{
-    appearance:none; background:#fff url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M0 0l5 6 5-6z' fill='%2364748B'/></svg>") no-repeat right 12px center;
-    border:1px solid var(--border); border-radius:8px; padding:9px 32px 9px 12px; font-size:14px; font-weight:500; min-width:220px;
-  }
-  .field select:focus{ outline:2px solid var(--blue-600); outline-offset:1px; }
-
-  .btn{ border:none; border-radius:8px; padding:10px 22px; font-size:14px; font-weight:600; cursor:pointer; transition:background .15s ease, opacity .15s ease; }
+  /* filter bar */
+  .filter-bar{ background:var(--panel); border:1px solid var(--border); border-radius:var(--radius);
+    padding:14px 18px; margin-top:16px; display:flex; flex-wrap:wrap; align-items:flex-end; gap:16px; }
+  .field{ display:flex; flex-direction:column; gap:6px; }
+  .field > label, .field > .lbl{ font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.06em; color:var(--text-muted); }
+  select{ border:1px solid var(--border); border-radius:8px; background:#fff; padding:9px 12px; font-size:14px; font-family:inherit; min-width:300px; }
+  .seg{ display:inline-flex; background:#fff; border:1px solid var(--border); border-radius:8px; padding:3px; }
+  .seg button{ border:none; background:transparent; padding:7px 16px; border-radius:6px; font-size:13.5px; font-weight:600; color:var(--text-muted); cursor:pointer; font-family:inherit; }
+  .seg button.active{ background:var(--navy-800); color:#fff; }
+  .btn{ border:none; border-radius:8px; padding:10px 18px; font-size:14px; font-weight:600; cursor:pointer; font-family:inherit; }
   .btn-primary{ background:var(--blue-600); color:#fff; }
-  .btn-primary:hover{ background:#255BC9; }
-  .btn-secondary{ background:var(--navy-900); color:#fff; }
-  .btn-secondary:hover{ background:#081A31; }
-  .btn:disabled{ opacity:.5; cursor:not-allowed; }
+  .btn-ghost{ background:#fff; color:var(--navy-800); border:1px solid var(--border); }
+  .btn:disabled{ opacity:.55; cursor:not-allowed; }
+  .train-box{ flex:1; min-width:240px; }
+  .progress{ height:8px; background:#E8EDF5; border-radius:99px; overflow:hidden; }
+  .progress > div{ height:100%; width:0; background:var(--blue-600); transition:width .4s ease; }
+  .train-msg{ font-size:12px; color:var(--text-muted); margin-top:5px; min-height:16px; }
 
-  .status-row{ display:flex; align-items:center; gap:10px; margin-top:14px; font-size:13px; color:var(--text-muted); }
-  .status-pill{ font-family:'JetBrains Mono',monospace; font-size:11.5px; font-weight:700; padding:4px 10px; border-radius:999px; }
-  .status-pill.idle{ color:var(--text-muted); background:var(--panel); }
-  .status-pill.training{ color:var(--amber); background:var(--amber-bg); }
-  .status-pill.completed{ color:var(--green); background:var(--green-bg); }
-  .status-pill.failed{ color:var(--red); background:var(--red-bg); }
+  .notice{ margin-top:14px; padding:10px 14px; border-radius:8px; font-size:13.5px; background:var(--blue-50); color:var(--navy-800); }
+  .notice.warn{ background:var(--amber-bg); color:var(--amber); }
+  .notice.error{ background:var(--red-bg); color:var(--red-dark); }
 
-  .results{ margin-top:26px; margin-bottom:60px; }
-  .state-msg{ text-align:center; color:var(--text-muted); font-size:14px; padding:60px 0; }
+  /* cards */
+  .card{ border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); background:#fff; margin-top:16px; }
+  .card-head{ display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px 16px; padding:12px 16px; border-bottom:1px solid var(--border); }
+  .card-title{ font-size:11.5px; font-weight:700; text-transform:uppercase; letter-spacing:.07em; color:var(--text-muted); }
+  .card-sub{ font-size:12.5px; color:var(--text-muted); }
 
-  .summary-card{
-    border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow);
-    padding:18px 20px; display:flex; flex-wrap:wrap; gap:24px; align-items:center; margin-bottom:18px;
-  }
-  .summary-card .price{ font-family:'JetBrains Mono',monospace; font-size:26px; font-weight:700; }
-  .summary-meta{ display:flex; flex-direction:column; gap:2px; font-size:12.5px; color:var(--text-muted); }
-  .badge{ font-size:11px; font-weight:700; padding:3px 9px; border-radius:999px; text-transform:uppercase; letter-spacing:.03em; }
-  .badge.open{ background:var(--green-bg); color:var(--green); }
-  .badge.closed, .badge.weekend, .badge.holiday{ background:var(--panel); color:var(--text-muted); }
-  .badge.pre_market, .badge.post_market{ background:var(--amber-bg); color:var(--amber); }
-  .badge.stale{ background:var(--red-bg); color:var(--red); }
+  /* chart */
+  .quote{ display:flex; flex-wrap:wrap; align-items:baseline; gap:6px 16px; }
+  .q-sym{ font-size:20px; font-weight:700; }
+  .q-name{ font-size:13px; color:var(--text-muted); }
+  .q-price{ font-family:'JetBrains Mono',monospace; font-size:20px; font-weight:700; }
+  .legend{ display:flex; flex-wrap:wrap; gap:14px; font-size:12px; color:var(--text-muted); }
+  .legend i{ display:inline-block; width:18px; height:3px; border-radius:2px; vertical-align:middle; margin-right:5px; }
+  #chart{ height:440px; width:100%; }
+  .chart-wrap{ position:relative; padding:6px; }
+  .chart-empty{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; text-align:center; padding:20px; color:var(--text-muted); font-size:14px; z-index:4; pointer-events:none; }
 
-  table{ width:100%; border-collapse:collapse; border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; }
-  thead th{
-    text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--text-muted);
-    background:var(--panel); padding:10px 14px; border-bottom:1px solid var(--border);
-  }
-  tbody td{ padding:12px 14px; border-bottom:1px solid var(--border); font-size:14px; }
-  tbody tr:last-child td{ border-bottom:none; }
-  td.num{ font-family:'JetBrains Mono',monospace; }
-  .dir-pill{ font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:700; padding:3px 9px; border-radius:999px; }
-  .dir-pill.up{ color:var(--green); background:var(--green-bg); }
-  .dir-pill.down{ color:var(--red); background:var(--red-bg); }
-  .dir-pill.flat{ color:var(--text-muted); background:var(--panel); }
-  .conf-bar{ position:relative; background:var(--panel); border-radius:6px; height:6px; width:90px; overflow:hidden; }
-  .conf-bar span{ position:absolute; left:0; top:0; bottom:0; background:var(--blue-600); border-radius:6px; }
-
-  .disclaimer{ font-size:12px; color:var(--text-muted); margin-top:14px; line-height:1.5; }
+  /* tables */
+  .table-wrap{ overflow-x:auto; }
+  table{ width:100%; border-collapse:collapse; font-size:13px; }
+  thead th{ text-align:left; font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--text-muted); padding:9px 12px; background:var(--panel); border-bottom:1px solid var(--border); white-space:nowrap; }
+  tbody td{ padding:9px 12px; border-bottom:1px solid var(--border); white-space:nowrap; }
+  td.num, th.num{ text-align:right; font-family:'JetBrains Mono',monospace; }
+  tr.best td{ background:#F3F7FF; }
+  tr.clickable{ cursor:pointer; }
+  tr.clickable:hover td{ background:var(--panel); }
+  .pill{ font-size:11px; font-weight:700; padding:2px 9px; border-radius:999px; font-family:'JetBrains Mono',monospace; }
+  .pill.up{ background:var(--green-bg); color:var(--green-dark); }
+  .pill.down{ background:var(--red-bg); color:var(--red-dark); }
+  .pill.yes{ background:var(--green-bg); color:var(--green-dark); font-family:inherit; }
+  .pill.no{ background:var(--panel); color:var(--text-muted); border:1px solid var(--border); font-family:inherit; }
+  .up{ color:var(--green-dark); } .down{ color:var(--red-dark); } .muted{ color:var(--text-muted); }
+  .note{ font-size:12px; color:var(--text-muted); line-height:1.55; padding:10px 16px 14px; }
+  .tabs{ display:flex; flex-wrap:wrap; gap:4px; }
+  .tabs button{ border:1px solid var(--border); background:#fff; border-radius:6px; padding:5px 12px; font-size:12.5px; font-weight:600; color:var(--text-muted); cursor:pointer; font-family:inherit; }
+  .tabs button.active{ background:var(--navy-800); border-color:var(--navy-800); color:#fff; }
+  .ic-cell{ font-family:'JetBrains Mono',monospace; font-size:12px; }
+  .ic-cell.edge{ font-weight:700; }
+  .disclaimer{ font-size:12px; color:var(--text-muted); margin-top:18px; line-height:1.55; }
+  .meta{ font-size:12px; color:var(--text-muted); }
 </style>
 </head>
 <body>
@@ -92,189 +98,378 @@
 
 <div class="wrap">
   <div class="page-head">
-    <div class="title">Stock Prediction <span class="tag">5-min candles · XGBoost · walk-forward validated</span></div>
+    <div class="title">Stock Prediction <span class="tag">7 machine-learning models + 2 ensembles per stock · walk-forward tested · best model chosen per horizon</span></div>
   </div>
+
   <div class="filter-bar">
     <div class="field">
       <label for="companySelect">Company</label>
       <select id="companySelect">
         <option value="">Select a company</option>
-        {% for company in companies %}
-          <option value="{{ company.code }}">{{ company.code }} — {{ company.name }}</option>
+        {% for c in companies %}
+          <option value="{{ c.code }}">{% if c.trained %}● {% endif %}{{ c.code }} — {{ c.name }}</option>
         {% endfor %}
       </select>
     </div>
-    <button class="btn btn-secondary" id="trainBtn">Train</button>
-    <button class="btn btn-primary" id="predictBtn">Predict</button>
-  </div>
-
-  <div class="status-row" id="statusRow" style="display:none;">
-    <span>Training status:</span>
-    <span class="status-pill idle" id="statusPill">idle</span>
-    <span id="statusDetail"></span>
-  </div>
-
-  <div class="results" id="results">
-    <div class="state-msg">Select a company, then Train (first time only) and Predict.</div>
-  </div>
-</div>
-
-<script>
-const API_PREDICT = (code) => `/api/predict/${encodeURIComponent(code)}/`;
-const API_TRAIN = (code) => `/api/train/${encodeURIComponent(code)}/`;
-
-const companySelect = document.getElementById('companySelect');
-const trainBtn = document.getElementById('trainBtn');
-const predictBtn = document.getElementById('predictBtn');
-const statusRow = document.getElementById('statusRow');
-const statusPill = document.getElementById('statusPill');
-const statusDetail = document.getElementById('statusDetail');
-const results = document.getElementById('results');
-
-let pollTimer = null;
-
-function getCookie(name){
-  const v = document.cookie.match('(^|;)\\s*' + name + '\\s*=\\s*([^;]+)');
-  return v ? v.pop() : '';
-}
-
-function setStatus(state, detail){
-  statusRow.style.display = 'flex';
-  statusPill.textContent = state;
-  statusPill.className = `status-pill ${state}`;
-  statusDetail.textContent = detail || '';
-}
-
-trainBtn.addEventListener('click', async () => {
-  const code = companySelect.value;
-  if (!code){ alert('Select a company first.'); return; }
-
-  trainBtn.disabled = true;
-  setStatus('training', 'starting…');
-
-  try {
-    await fetch(API_TRAIN(code), {
-      method: 'POST',
-      headers: { 'X-CSRFToken': getCookie('csrftoken') },
-    });
-  } catch (e){
-    setStatus('failed', 'Could not reach the server.');
-    trainBtn.disabled = false;
-    return;
-  }
-
-  pollTrainingStatus(code);
-});
-
-function pollTrainingStatus(code){
-  clearInterval(pollTimer);
-  pollTimer = setInterval(async () => {
-    try {
-      const res = await fetch(API_TRAIN(code));
-      const data = await res.json();
-      if (data.state === 'training'){
-        setStatus('training', 'this can take a while on first run…');
-      } else if (data.state === 'completed'){
-        setStatus('completed', `trained at ${data.trained_at || ''}`);
-        clearInterval(pollTimer);
-        trainBtn.disabled = false;
-      } else if (data.state === 'failed'){
-        setStatus('failed', data.error || 'Training failed.');
-        clearInterval(pollTimer);
-        trainBtn.disabled = false;
-      }
-    } catch (e){
-      clearInterval(pollTimer);
-      trainBtn.disabled = false;
-    }
-  }, 3000);
-}
-
-predictBtn.addEventListener('click', async () => {
-  const code = companySelect.value;
-  if (!code){ alert('Select a company first.'); return; }
-
-  predictBtn.disabled = true;
-  results.innerHTML = '<div class="state-msg">Fetching prediction…</div>';
-
-  let res, data;
-  try {
-    res = await fetch(API_PREDICT(code));
-    data = await res.json();
-  } catch (e){
-    results.innerHTML = '<div class="state-msg">Could not reach the server.</div>';
-    predictBtn.disabled = false;
-    return;
-  }
-
-  predictBtn.disabled = false;
-
-  if (!res.ok){
-    results.innerHTML = `<div class="state-msg">${data.error || 'Prediction failed.'}</div>`;
-    return;
-  }
-
-  renderResults(data);
-});
-
-function pctClass(v){
-  if (v > 0) return 'up';
-  if (v < 0) return 'down';
-  return 'flat';
-}
-
-function fmtPct(v){
-  const sign = v > 0 ? '+' : '';
-  return `${sign}${v.toFixed(2)}%`;
-}
-
-function renderResults(data){
-  const marketBadgeClass = data.market_status.toLowerCase();
-  const staleBadge = data.data_stale ? '<span class="badge stale">Stale data</span>' : '';
-
-  const rows = data.predictions.map(p => `
-    <tr>
-      <td class="num">${p.horizon_minutes} min</td>
-      <td class="num">${fmtPct(p.predicted_return_percent)}</td>
-      <td class="num">${p.predicted_open.toFixed(2)}</td>
-      <td class="num">${p.predicted_high.toFixed(2)}</td>
-      <td class="num">${p.predicted_low.toFixed(2)}</td>
-      <td class="num">${p.predicted_close.toFixed(2)}</td>
-      <td><span class="dir-pill ${p.direction.toLowerCase()}">${p.direction}</span></td>
-      <td>
-        <div class="conf-bar"><span style="width:${(p.confidence*100).toFixed(0)}%"></span></div>
-        <span class="mono" style="font-size:11.5px;color:var(--text-muted);">${(p.confidence*100).toFixed(0)}%</span>
-      </td>
-    </tr>
-  `).join('');
-
-  results.innerHTML = `
-    <div class="summary-card">
-      <div class="price">₹${data.current_price.toFixed(2)}</div>
-      <div class="summary-meta">
-        <div><strong>${data.company}</strong></div>
-        <div>Latest candle: ${data.latest_candle_timestamp}</div>
-        <div>Source: ${data.data_source} · ${data.historical_candles_used} candles used</div>
-        <div>Model v${data.model_version} · trained ${data.model_trained_at}</div>
-      </div>
-      <div style="margin-left:auto;display:flex;gap:8px;">
-        <span class="badge ${marketBadgeClass}">${data.market_status.replace('_',' ')}</span>
-        ${staleBadge}
+    <div class="field">
+      <span class="lbl">Timeframe</span>
+      <div class="seg" id="tfToggle">
+        <button type="button" data-tf="intraday" class="active">Intraday (5-min)</button>
+        <button type="button" data-tf="daily">Daily</button>
       </div>
     </div>
+    <button class="btn btn-primary" id="predictBtn" type="button">Predict</button>
+    <button class="btn btn-ghost" id="trainBtn" type="button" title="Train all models for this stock (about 3 minutes)">Train models</button>
+    <div class="train-box" id="trainBox" hidden>
+      <div class="progress"><div id="trainBar"></div></div>
+      <div class="train-msg" id="trainMsg"></div>
+    </div>
+  </div>
+  <div class="meta" style="margin-top:6px;">● = models already trained for this stock.</div>
 
-    <table>
-      <thead>
-        <tr>
-          <th>Horizon</th><th>Return</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Direction</th><th>Confidence</th>
-        </tr>
-      </thead>
-      <tbody>${rows}</tbody>
-    </table>
+  <div class="notice" id="notice" hidden></div>
 
-    <div class="disclaimer">${data.disclaimer}</div>
-  `;
+  <!-- 1. CHART -->
+  <div class="card">
+    <div class="card-head">
+      <div class="quote">
+        <span class="q-sym" id="qSym">—</span>
+        <span class="q-name" id="qName"></span>
+        <span class="q-price" id="qPrice"></span>
+        <span class="meta" id="qAsOf"></span>
+      </div>
+      <div class="legend">
+        <span><i style="background:var(--purple)"></i>Predicted path</span>
+        <span><i style="background:#A78BFA"></i>Likely range (80 %)</span>
+      </div>
+    </div>
+    <div class="chart-wrap">
+      <div id="chart"></div>
+      <div class="chart-empty" id="chartEmpty">Choose a company and press Predict.</div>
+    </div>
+  </div>
+
+  <!-- 2. PREDICTIONS -->
+  <div class="card" id="predCard" hidden>
+    <div class="card-head">
+      <span class="card-title">Prediction</span>
+      <span class="card-sub" id="modelInfo"></span>
+    </div>
+    <div class="table-wrap"><table id="predTable"></table></div>
+    <div class="note" id="predNote"></div>
+  </div>
+
+  <!-- 3. LEADERBOARD -->
+  <div class="card" id="boardCard" hidden>
+    <div class="card-head">
+      <span class="card-title">Model leaderboard - out-of-sample test</span>
+      <div class="tabs" id="boardTabs"></div>
+    </div>
+    <div class="table-wrap"><table id="boardTable"></table></div>
+    <div class="note">
+      Every model was trained only on the past and tested on the next, unseen period - four times (walk-forward).
+      <b>Accuracy</b> = how often it called the direction right; <b>Baseline</b> = always calling the direction that turned out more common (a hard bar, known only afterwards).
+      <b>IC</b> = correlation between predicted and actual move (above 0.03 and positive in most windows is a useful signal).
+      <b>Skill</b> &gt; 0 = smaller error than predicting "no move". <b>Top 10 %</b> = its most confident calls only.
+      <b>Avg net / trade</b> = trading every prediction bigger than the cost, after costs (<span id="costNote"></span>).
+      <b>Edge</b> = IC &ge; 0.03 and positive in 3+ windows, beats the baseline, 30+ trades and profitable after costs.
+    </div>
+  </div>
+
+  <!-- 4. ALL TRAINED STOCKS -->
+  <div class="card">
+    <div class="card-head">
+      <span class="card-title">Trained stocks</span>
+      <span class="card-sub" id="overviewSub">Click a row to load it. Cells show the best model's IC; ✓ = has an edge.</span>
+    </div>
+    <div class="table-wrap"><table id="overviewTable"></table></div>
+  </div>
+
+  <p class="disclaimer">
+    Research tool, not investment advice. Predictions come from patterns in past data; markets change and even the best
+    model here is right only somewhat more often than chance. Use the leaderboard and the Edge column to judge how much
+    to trust a prediction, and paper-trade before risking money. Train more stocks with
+    <span class="mono">python manage.py train_models --top 50</span>.
+  </p>
+</div>
+
+{{ initial|json_script:"initial-state" }}
+
+<script>
+(() => {
+'use strict';
+const URLS = {
+  predict: "{% url 'predict_company' 'CODE' %}",
+  train:   "{% url 'train_company' 'CODE' %}",
+  overview: "{% url 'predict_all' %}",
+};
+const forCode = (tpl, code) => tpl.replace('CODE', encodeURIComponent(code));
+const INITIAL = JSON.parse(document.getElementById('initial-state').textContent);
+const IST_SHIFT = 19800;
+const S = { code: '', tf: 'intraday', data: null, board: null, chart: null, candles: null, path: null, up: null, lo: null, poll: null };
+
+const $ = (id) => document.getElementById(id);
+const els = {
+  company: $('companySelect'), tf: $('tfToggle'), predict: $('predictBtn'), train: $('trainBtn'),
+  trainBox: $('trainBox'), trainBar: $('trainBar'), trainMsg: $('trainMsg'), notice: $('notice'),
+  qSym: $('qSym'), qName: $('qName'), qPrice: $('qPrice'), qAsOf: $('qAsOf'), chart: $('chart'), chartEmpty: $('chartEmpty'),
+  predCard: $('predCard'), predTable: $('predTable'), predNote: $('predNote'), modelInfo: $('modelInfo'),
+  boardCard: $('boardCard'), boardTabs: $('boardTabs'), boardTable: $('boardTable'), costNote: $('costNote'),
+  overviewTable: $('overviewTable'),
+};
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+const nf = new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const pct = (v, d = 1) => (v == null ? '—' : (v * 100).toFixed(d) + '%');
+const sgn = (v, d = 2) => (v == null ? '—' : (v > 0 ? '+' : '') + v.toFixed(d));
+const csrf = () => { const m = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/); return m ? decodeURIComponent(m[1]) : ''; };
+
+function notice(msg, kind = 'info') {
+  els.notice.hidden = !msg;
+  els.notice.textContent = msg || '';
+  els.notice.className = 'notice' + (kind === 'info' ? '' : ' ' + kind);
 }
+
+/* ---------------- chart ---------------- */
+function chartTime(x) {
+  if (S.tf === 'daily') return x.slice(0, 10);
+  return Math.floor(new Date(x).getTime() / 1000) + IST_SHIFT;
+}
+function initChart() {
+  S.chart = LightweightCharts.createChart(els.chart, {
+    width: els.chart.clientWidth, height: 440,
+    layout: { background: { type: 'solid', color: '#FFFFFF' }, textColor: '#64748B', fontFamily: 'JetBrains Mono, monospace', fontSize: 11 },
+    grid: { vertLines: { color: '#EEF2F7' }, horzLines: { color: '#EEF2F7' } },
+    rightPriceScale: { borderColor: '#E3E8F0' },
+    timeScale: { borderColor: '#E3E8F0', timeVisible: true, secondsVisible: false, rightOffset: 4 },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+  });
+  S.candles = S.chart.addCandlestickSeries({ upColor: '#0EA968', downColor: '#E5484D', borderVisible: false, wickUpColor: '#0EA968', wickDownColor: '#E5484D' });
+  const band = { color: '#A78BFA', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false };
+  S.up = S.chart.addLineSeries(band);
+  S.lo = S.chart.addLineSeries(band);
+  S.path = S.chart.addLineSeries({ color: '#7C3AED', lineWidth: 2, priceLineVisible: false, lastValueVisible: true });
+  new ResizeObserver(() => S.chart.applyOptions({ width: els.chart.clientWidth })).observe(els.chart);
+}
+
+function drawChart(d) {
+  S.chart.applyOptions({ timeScale: { timeVisible: d.timeframe === 'intraday' } });
+  const bars = d.candles.map((c) => ({ time: chartTime(c.x), open: c.o, high: c.h, low: c.l, close: c.c }));
+  S.candles.setData(bars);
+  const last = bars[bars.length - 1];
+  const fc = [...d.forecasts].sort((a, b) => a.horizon - b.horizon);
+  const pts = (fn) => [{ time: last.time, value: last.close }, ...fc.map((f) => ({ time: chartTime(f.target_time), value: fn(f) }))];
+  S.path.setData(pts((f) => f.predicted_price));
+  S.up.setData(pts((f) => f.range_80[1]));
+  S.lo.setData(pts((f) => f.range_80[0]));
+  S.path.setMarkers(fc.map((f) => ({
+    time: chartTime(f.target_time), position: f.direction === 'UP' ? 'aboveBar' : 'belowBar',
+    shape: f.direction === 'UP' ? 'arrowUp' : 'arrowDown', color: f.direction === 'UP' ? '#0A8A54' : '#C93A3F',
+    text: f.label.replace(' min', 'm').replace(' days', 'd').replace(' day', 'd'),
+  })));
+  // zoom on the recent candles and the forecast (the earlier candles stay a scroll away)
+  const show = d.timeframe === 'intraday' ? 90 : 80;
+  S.chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, bars.length - show), to: bars.length + fc.length + 6 });
+  els.chartEmpty.hidden = true;
+}
+
+/* ---------------- tables ---------------- */
+function drawPredictions(d) {
+  els.predCard.hidden = false;
+  els.modelInfo.textContent = `Trained ${new Date(d.trained_at).toLocaleString('en-IN')} on ${d.train_rows.toLocaleString('en-IN')} rows (${d.data_from.slice(0, 10)} → ${d.data_to.slice(0, 10)}), ${d.feature_count} features`;
+  const fc = [...d.forecasts].sort((a, b) => a.horizon - b.horizon);
+  const when = (t) => d.timeframe === 'intraday'
+    ? new Date(t).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' })
+    : t.slice(0, 10);
+  els.predTable.innerHTML =
+    `<thead><tr><th>Horizon</th><th>Target</th><th class="num">Predicted price</th><th class="num">Change</th><th>Direction</th>
+     <th class="num">P(up)</th><th class="num">Likely range (80 %)</th><th>Best model</th><th class="num">Test accuracy</th><th class="num">IC</th><th>Edge</th></tr></thead><tbody>` +
+    fc.map((f) => {
+      const cls = f.direction === 'UP' ? 'up' : 'down';
+      // the model's own direction vs how such calls did in testing
+      const against = f.p_up != null && ((f.direction === 'UP' && f.p_up < 0.5) || (f.direction === 'DOWN' && f.p_up > 0.5));
+      const pUp = f.p_up == null ? '—' : (against
+        ? `<span class="down" title="In testing, this model's calls of this size were more often wrong than right">⚠ ${pct(f.p_up, 0)}</span>`
+        : pct(f.p_up, 0));
+      return `<tr>
+        <td><b>${esc(f.label)}</b></td>
+        <td class="mono">${esc(when(f.target_time))}</td>
+        <td class="num">${nf.format(f.predicted_price)}</td>
+        <td class="num ${cls}">${sgn(f.predicted_return_pct, 3)}%</td>
+        <td><span class="pill ${cls}">${f.direction}</span></td>
+        <td class="num">${pUp}</td>
+        <td class="num">${nf.format(f.range_80[0])} – ${nf.format(f.range_80[1])}</td>
+        <td>${esc(f.model)}</td>
+        <td class="num">${pct(f.dir_acc)} <span class="muted">vs ${pct(f.baseline_acc)}</span></td>
+        <td class="num">${sgn(f.ic, 3)}</td>
+        <td>${f.edge ? '<span class="pill yes">Yes</span>' : '<span class="pill no">No</span>'}</td>
+      </tr>`;
+    }).join('') + '</tbody>';
+  const anyEdge = fc.some((f) => f.edge);
+  els.predNote.innerHTML = (anyEdge
+    ? '<b class="up">At least one horizon has a tested edge</b> - still a probability, not a certainty.'
+    : '<b>No horizon has a tested edge for this stock</b>: in testing, the best model did not beat the baseline and the trading cost. Treat these numbers as information only.') +
+    ` P(up) is calibrated on the test predictions: how often calls like this one were right. ⚠ = it sits on the other side of 50 % from the direction, i.e. such calls were more often wrong - do not follow them. The likely range comes from the model's real test errors (80 % of outcomes fell inside it). Costs assumed: ${d.cost_pct.toFixed(2)} % per round trip.`;
+}
+
+function drawBoard(d, label) {
+  els.boardCard.hidden = false;
+  els.costNote.textContent = `${d.cost_pct.toFixed(2)} % per round trip`;
+  const labels = Object.keys(d.leaderboards);
+  S.board = label && labels.includes(label) ? label : labels[0];
+  els.boardTabs.innerHTML = labels.map((l) => `<button type="button" data-h="${esc(l)}" class="${l === S.board ? 'active' : ''}">${esc(l)}</button>`).join('');
+  const best = (d.forecasts.find((f) => f.label === S.board) || {}).model;
+  const rows = d.leaderboards[S.board];
+  els.boardTable.innerHTML =
+    `<thead><tr><th>#</th><th>Model</th><th class="num">Accuracy</th><th class="num">Baseline</th><th class="num">IC</th><th class="num">Windows +</th>
+     <th class="num">Skill</th><th class="num">Top 10 % acc.</th><th class="num">Top 10 % net</th><th class="num">Trades</th><th class="num">Avg net / trade</th><th>Edge</th><th class="num">Train time</th></tr></thead><tbody>` +
+    rows.map((m, i) => `<tr class="${m.name === best ? 'best' : ''}">
+      <td class="num">${i + 1}</td>
+      <td>${m.name === best ? '<b>' + esc(m.name) + '</b> ★' : esc(m.name)}</td>
+      <td class="num">${pct(m.dir_acc)}</td>
+      <td class="num muted">${pct(m.baseline_acc)}</td>
+      <td class="num ${m.ic > 0 ? 'up' : 'down'}">${sgn(m.ic, 3)}</td>
+      <td class="num">${m.folds_positive}/4</td>
+      <td class="num">${sgn(m.skill * 100, 2)}%</td>
+      <td class="num">${pct(m.top10_dir_acc)}</td>
+      <td class="num ${(m.top10_avg_net_pct || 0) > 0 ? 'up' : 'down'}">${m.top10_avg_net_pct == null ? '—' : sgn(m.top10_avg_net_pct, 3) + '%'}</td>
+      <td class="num">${m.trades.toLocaleString('en-IN')}</td>
+      <td class="num ${(m.avg_net_pct || 0) > 0 ? 'up' : 'down'}">${m.avg_net_pct == null ? '—' : sgn(m.avg_net_pct, 3) + '%'}</td>
+      <td>${m.edge ? '<span class="pill yes">Yes</span>' : '<span class="pill no">No</span>'}</td>
+      <td class="num muted">${m.seconds == null ? '—' : m.seconds + 's'}</td>
+    </tr>`).join('') + '</tbody>';
+}
+
+async function loadOverview() {
+  try {
+    const r = await fetch(URLS.overview);
+    const d = await r.json();
+    const cols = ['15 min', '30 min', '60 min', '1 day', '5 days'];
+    const rows = d.stocks.map((s) => {
+      const cell = (label) => {
+        const h = s.horizons.find((x) => x.label === label);
+        if (!h) return '<td class="num muted">—</td>';
+        return `<td class="ic-cell num ${h.ic > 0 ? 'up' : 'down'} ${h.edge ? 'edge' : ''}" title="${esc(h.model)} · accuracy ${pct(h.dir_acc)} vs ${pct(h.baseline_acc)}">${sgn(h.ic, 3)}${h.edge ? ' ✓' : ''}</td>`;
+      };
+      return `<tr class="clickable" data-code="${esc(s.company)}">
+        <td><b>${esc(s.company)}</b></td><td>${esc(s.name)}</td><td class="muted">${esc(s.sector)}</td>
+        ${cols.map(cell).join('')}
+        <td class="num">${s.edges}</td>
+        <td class="muted">${s.trained_at ? new Date(s.trained_at).toLocaleDateString('en-IN') : '—'}</td></tr>`;
+    }).join('');
+    els.overviewTable.innerHTML =
+      `<thead><tr><th>Symbol</th><th>Name</th><th>Sector</th>${cols.map((c) => `<th class="num">IC ${c}</th>`).join('')}<th class="num">Edges</th><th>Trained</th></tr></thead>` +
+      `<tbody>${rows || '<tr><td colspan="10" class="muted" style="text-align:center;padding:20px">No stock trained yet - pick one and press Train models.</td></tr>'}</tbody>`;
+    $('overviewSub').textContent = `${d.stocks.length} stock(s) trained. Click a row to load it. Cells show the best model's IC; ✓ = has an edge.`;
+  } catch (e) { /* the page still works without the overview */ }
+}
+
+/* ---------------- actions ---------------- */
+async function predict() {
+  const code = els.company.value;
+  if (!code) { notice('Select a company first.', 'warn'); return; }
+  S.code = code;
+  notice('');
+  els.predict.disabled = true; els.predict.textContent = 'Predicting…';
+  try {
+    history.replaceState(null, '', `?company=${encodeURIComponent(code)}&timeframe=${S.tf}`);
+    const r = await fetch(forCode(URLS.predict, code) + '?timeframe=' + S.tf);
+    const d = await r.json();
+    if (!r.ok) {
+      els.predCard.hidden = true; els.boardCard.hidden = true;
+      S.candles.setData([]); S.path.setData([]); S.up.setData([]); S.lo.setData([]);
+      els.chartEmpty.hidden = false;
+      els.chartEmpty.textContent = d.not_trained ? 'No models for this stock yet - press "Train models" (about 3 minutes).' : 'Nothing to show.';
+      notice(d.error, d.not_trained ? 'warn' : 'error');
+      return;
+    }
+    S.data = d;
+    els.qSym.textContent = d.company; els.qName.textContent = d.name;
+    els.qPrice.textContent = '₹' + nf.format(d.price);
+    els.qAsOf.textContent = 'last candle ' + (d.timeframe === 'intraday'
+      ? new Date(d.as_of).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) : d.as_of);
+    drawChart(d); drawPredictions(d); drawBoard(d, S.board);
+  } catch (e) {
+    notice('Prediction failed: ' + e.message, 'error');
+  } finally {
+    els.predict.disabled = false; els.predict.textContent = 'Predict';
+  }
+}
+
+function showTrain(st) {
+  els.trainBox.hidden = false;
+  els.trainBar.style.width = (st.percent || 0) + '%';
+  els.trainMsg.textContent = st.message || '';
+  els.trainBar.style.background = st.state === 'failed' ? 'var(--red)' : 'var(--blue-600)';
+}
+
+async function train() {
+  const code = els.company.value;
+  if (!code) { notice('Select a company first.', 'warn'); return; }
+  els.train.disabled = true;
+  try {
+    const r = await fetch(forCode(URLS.train, code), { method: 'POST', headers: { 'X-CSRFToken': csrf() } });
+    const st = await r.json();
+    if (r.status === 409) { notice(st.message, 'warn'); els.train.disabled = false; return; }
+    showTrain(st);
+    pollTrain(code);
+  } catch (e) {
+    notice('Could not start training: ' + e.message, 'error');
+    els.train.disabled = false;
+  }
+}
+
+function pollTrain(code) {
+  clearInterval(S.poll);
+  S.poll = setInterval(async () => {
+    try {
+      const st = await (await fetch(forCode(URLS.train, code))).json();
+      showTrain(st);
+      if (st.state === 'completed' || st.state === 'failed' || st.state === 'idle') {
+        clearInterval(S.poll);
+        els.train.disabled = false;
+        if (st.state === 'completed') {
+          const errs = Object.entries(st.errors || {}).map(([tf, m]) => `${tf}: ${m}`).join(' · ');
+          notice('Training finished.' + (errs ? ' Skipped - ' + errs : ''), errs ? 'warn' : 'info');
+          const opt = [...els.company.options].find((o) => o.value === code);
+          if (opt && !opt.textContent.startsWith('●')) opt.textContent = '● ' + opt.textContent;
+          loadOverview();
+          if (els.company.value === code) predict();
+        } else if (st.state === 'failed') {
+          notice(st.message, 'error');
+        }
+      }
+    } catch (e) { /* keep polling */ }
+  }, 2000);
+}
+
+/* ---------------- events / boot ---------------- */
+els.tf.addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-tf]');
+  if (!b || b.dataset.tf === S.tf) return;
+  S.tf = b.dataset.tf;
+  els.tf.querySelectorAll('button').forEach((x) => x.classList.toggle('active', x === b));
+  S.board = null;
+  if (els.company.value) predict();
+});
+els.predict.addEventListener('click', predict);
+els.train.addEventListener('click', train);
+els.boardTabs.addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-h]');
+  if (b && S.data) drawBoard(S.data, b.dataset.h);
+});
+els.overviewTable.addEventListener('click', (e) => {
+  const tr = e.target.closest('tr[data-code]');
+  if (!tr) return;
+  els.company.value = tr.dataset.code;
+  predict();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+});
+
+initChart();
+loadOverview();
+if (INITIAL.timeframe === 'daily') els.tf.querySelector('[data-tf="daily"]').click();
+if (INITIAL.company) { els.company.value = INITIAL.company; if (els.company.value) predict(); }
+})();
 </script>
 </body>
 </html>
