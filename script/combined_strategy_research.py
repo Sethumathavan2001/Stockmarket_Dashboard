@@ -78,14 +78,16 @@ def _eligible_days(days, min_price, min_turnover):
     return ok
 
 
-def run_stock(company_id, code, opts):
+def run_stock(company_id, code, opts, days=None):
+    """All strategies on one stock. `days` (lists of signals.Bar per day) can be passed in if already loaded."""
     import pandas as pd
     import intraday_strategies_research as isr
     import pdh_pdl_backtest as bo
     import pdh_pdl_reversal_research as rv
     from paper_trading import signals as sg
 
-    days = isr._load_days(company_id)
+    if days is None:
+        days = isr._load_days(company_id)
     n_bars = sum(len(d) for d in days)
     if len(days) < 2:
         return code, None, n_bars
