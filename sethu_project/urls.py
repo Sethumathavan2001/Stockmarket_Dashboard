@@ -8,4 +8,5 @@ urlpatterns = [
     path("", include("patterns.urls")),
     path("", include("paper_trading.urls")),
     path("", include("ai_prediction.urls")),
+    path("", include("news.urls")),
 ]

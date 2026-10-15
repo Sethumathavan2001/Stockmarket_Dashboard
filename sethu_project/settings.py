@@ -33,6 +33,7 @@ INSTALLED_APPS = [
     "patterns",
     "paper_trading",
     "ai_prediction",
+    "news",
 ]
 # Local development settings note: update SECRET_KEY and DEBUG for production
 

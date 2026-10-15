@@ -449,9 +449,12 @@ def backtest_analogs(b, X, hist_mask):
         fut = b.c[np.minimum(nb + hz, b.n - 1)] / b.c[nb] - 1
         pred = np.median(fut, axis=1)
         p_up = (fut > 0).mean(axis=1)
+        # the call = more neighbours went up than down (the median is often exactly 0 with price ticks);
+        # a tie or an unchanged price is no call / no outcome, not a miss
+        call = np.sign(p_up - (fut < 0).mean(axis=1))
         actual = b.c[tests + hz] / b.c[tests] - 1
-        nz = actual != 0
-        acc = float((np.sign(pred[nz]) == np.sign(actual[nz])).mean()) if nz.any() else None
+        nz = (actual != 0) & (call != 0)
+        acc = float((call[nz] == np.sign(actual[nz])).mean()) if nz.any() else None
         up_rate = float((actual[nz] > 0).mean()) if nz.any() else 0.5
         conf = (p_up >= 0.6) | (p_up <= 0.4)
         conf_hit = (np.sign(p_up[conf & nz] - 0.5) == np.sign(actual[conf & nz]))
