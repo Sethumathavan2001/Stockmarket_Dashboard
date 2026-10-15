@@ -1,3 +1,4 @@
+anthropic==1.14.0
 asgiref==3.11.0
 beautifulsoup4==4.14.3
 certifi==2026.1.4

@@ -55,7 +55,7 @@ from prediction.data import load_today_intraday_yfinance
 from prediction.market_time import get_market_status, is_stale
 from prediction.tickers import get_yahoo_ticker
 
-from .models import PaperAccount, PaperOrder, PaperPosition
+from .models import PaperAccount, PaperLimitOrder, PaperOrder, PaperPosition
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +74,7 @@ SESSION_OPEN = time(9, 15)
 SESSION_CLOSE = time(15, 30)
 MAX_QUANTITY = 1_000_000
 MAX_WALLET_ADD = Decimal("100000000")  # ₹10 crore per top-up
+BOOKS = (1, 2)                         # Paper Trading = book 1, Paper Trading 2 = book 2
 
 
 class TradeError(Exception):
@@ -140,16 +141,23 @@ def _day_bounds_db(day):
 # --------------------------------------------------------------------------
 # accounts & context
 # --------------------------------------------------------------------------
-def get_account(request):
-    if getattr(settings, "PAPER_TRADING_SHARED_ACCOUNT", False):
-        key = "shared"
-    elif getattr(request, "user", None) is not None and request.user.is_authenticated:
-        key = f"user:{request.user.pk}"
-    else:
-        if not request.session.session_key:
-            request.session.create()
-        key = f"session:{request.session.session_key}"
-    account, _ = PaperAccount.objects.get_or_create(owner_key=key)
+def parse_book(raw):
+    """Which paper-trading book (page): 1 = Paper Trading, 2 = Paper Trading 2."""
+    try:
+        book = int(raw or 1)
+    except (TypeError, ValueError):
+        raise TradeError("Unknown paper-trading book.")
+    if book not in BOOKS:
+        raise TradeError("Unknown paper-trading book.")
+    return book
+
+
+def get_account(book=1):
+    """
+    The permanent account of a book.  It does not depend on the browser session, so the
+    wallet, orders and positions come back after a restart, in any browser.
+    """
+    account, _ = PaperAccount.objects.get_or_create(owner_key=f"book:{parse_book(book)}")
     return account
 
 
@@ -314,6 +322,24 @@ def add_to_wallet(account, raw_amount):
     with transaction.atomic():
         locked = PaperAccount.objects.select_for_update().get(pk=account.pk)
         locked.balance += amount
+        locked.save(update_fields=["balance"])
+    return locked
+
+
+def withdraw_from_wallet(account, raw_amount):
+    """Take money out of the wallet (only the available balance - not money blocked in positions)."""
+    try:
+        amount = Decimal(str(raw_amount)).quantize(TWO, rounding=ROUND_HALF_UP)
+    except (InvalidOperation, ValueError, TypeError):
+        raise TradeError("Enter a valid amount.")
+    if not amount.is_finite() or amount <= 0:
+        raise TradeError("Amount must be greater than zero.")
+    with transaction.atomic():
+        locked = PaperAccount.objects.select_for_update().get(pk=account.pk)
+        if amount > locked.balance:
+            raise TradeError(f"You can withdraw at most ₹{locked.balance:,.2f} (your available balance). "
+                             "Money blocked in open positions comes back when you close them.")
+        locked.balance -= amount
         locked.save(update_fields=["balance"])
     return locked
 
@@ -615,7 +641,7 @@ def resolve_replay_execution(company, replay_date, market_time_raw, price_raw):
 # --------------------------------------------------------------------------
 @transaction.atomic
 def execute_order(*, account, company, side, quantity, price, mode, replay_date, market_time,
-                  levels=None, reason="", product=INTRADAY):
+                  levels=None, reason="", product=INTRADAY, order_type=PaperOrder.ORDER_MARKET):
     account = PaperAccount.objects.select_for_update().get(pk=account.pk)
     context = make_context(mode, replay_date)                    # the order's day / "live"
     pos, _ = PaperPosition.objects.select_for_update().get_or_create(
@@ -731,6 +757,7 @@ def execute_order(*, account, company, side, quantity, price, mode, replay_date,
         realized_pnl=realized,
         balance_after=balance,
         reason=reason or "",
+        order_type=order_type,
     )
     return order, pos, account
 
@@ -861,6 +888,7 @@ def serialize_order(o):
         "realized_pnl": float(o.realized_pnl),
         "balance_after": float(o.balance_after),
         "reason": o.reason,
+        "order_type": o.order_type,
         "created_at": to_ist(o.created_at).isoformat(),
     }
 
@@ -910,11 +938,331 @@ def account_snapshot(account, mode, replay_date=None, company=None):
             if latest:
                 resume = to_ist(latest).isoformat()
 
+    limits = list(PaperLimitOrder.objects.filter(account=account, context=context).select_related("company")[:50])
     return {
         "balance": float(account.balance),
         "blocked": float(blocked),
         "realized_pnl": float(realized),
         "positions": [serialize_position(p) for p in positions],
         "orders": [serialize_order(o) for o in orders],
+        "limit_orders": [serialize_limit(lo) for lo in limits],
+        "trades": trade_log(account, mode, replay_date),
         "resume_market_time": resume,
     }
+
+
+# --------------------------------------------------------------------------
+# limit orders
+# --------------------------------------------------------------------------
+def serialize_limit(lo):
+    return {
+        "id": lo.id,
+        "company": lo.company.code,
+        "side": lo.side,
+        "product": lo.product,
+        "quantity": lo.quantity,
+        "limit_price": float(lo.limit_price),
+        "mode": lo.mode,
+        "context": lo.context,
+        "placed_at": to_ist(lo.placed_at).isoformat(),
+        "status": lo.status,
+        "status_note": lo.status_note,
+        "filled_price": float(lo.filled_order.price) if lo.filled_order_id else None,
+        "filled_at": (to_ist(lo.filled_order.market_time).isoformat()
+                      if lo.filled_order_id and lo.filled_order.market_time else None),
+    }
+
+
+def _limit_reached(side, limit, low, high):
+    """Can a BUY (SELL) limit fill within a price range? BUY needs the price at or below the limit."""
+    return low <= limit if side == PaperOrder.SIDE_BUY else high >= limit
+
+
+def _check_delivery_sell(account, company, side, quantity, mode, replay_date, product):
+    if product != DELIVERY or side != PaperOrder.SIDE_SELL:
+        return
+    pos = PaperPosition.objects.filter(account=account, company=company, product=DELIVERY,
+                                       context=position_context(mode, replay_date, DELIVERY)).first()
+    held = pos.quantity if pos else 0
+    if held < quantity:
+        raise TradeError(f"You hold {max(held, 0)} of {company.code} in Delivery, so a sell limit for {quantity} "
+                         "can't be placed. Delivery has no short selling.")
+
+
+def place_limit_order(*, account, company, side, quantity, limit_price, mode, replay_date, product,
+                      levels=None, current_price=None, market_time=None):
+    """
+    Place a limit order.  If the current price already satisfies the limit (a BUY limit at or above
+    the price, a SELL limit at or below it) it fills at once at the current price - the limit or
+    better.  Otherwise it rests as OPEN.  Returns (limit_order, filled PaperOrder or None).
+    Live: current price / time come from Yahoo.  Old: the caller passes the replay tick.
+    """
+    if limit_price is None or limit_price <= 0:
+        raise TradeError("Enter a limit price above zero.")
+    limit_price = limit_price.quantize(TWO)
+    _check_delivery_sell(account, company, side, quantity, mode, replay_date, product)
+    if mode == LIVE:
+        current_price, market_time = resolve_live_execution(company)
+    context = make_context(mode, replay_date)
+    marketable = (current_price <= limit_price) if side == PaperOrder.SIDE_BUY else (current_price >= limit_price)
+
+    lo = PaperLimitOrder.objects.create(
+        account=account, company=company, side=side, product=product, quantity=quantity,
+        limit_price=limit_price, mode=mode, context=context, placed_at=to_db_dt(market_time),
+        levels={k: (str(v) if v is not None else None) for k, v in (levels or {}).items()},
+    )
+    order = _fill(lo, current_price, market_time) if marketable else None
+    lo.refresh_from_db()
+    return lo, order
+
+
+@transaction.atomic
+def _fill(lo, price, market_time):
+    """Execute an OPEN limit order at `price`. A failure (e.g. not enough money) marks it REJECTED."""
+    lo = PaperLimitOrder.objects.select_for_update().select_related("company", "account").get(pk=lo.pk)
+    if lo.status != PaperLimitOrder.STATUS_OPEN:
+        return None
+    replay_date = None if lo.mode == LIVE else date_cls.fromisoformat(lo.context)
+    levels = {k: (Decimal(v) if v is not None else None) for k, v in (lo.levels or {}).items()}
+    try:
+        with transaction.atomic():
+            order, _, _ = execute_order(
+                account=lo.account, company=lo.company, side=lo.side, quantity=lo.quantity,
+                price=Decimal(str(price)).quantize(TWO), mode=lo.mode, replay_date=replay_date,
+                market_time=market_time, levels=levels, product=lo.product, order_type=PaperOrder.ORDER_LIMIT,
+            )
+    except TradeError as exc:
+        lo.status, lo.status_note = PaperLimitOrder.STATUS_REJECTED, str(exc)[:200]
+        lo.save(update_fields=["status", "status_note", "updated_at"])
+        return None
+    lo.status, lo.filled_order = PaperLimitOrder.STATUS_FILLED, order
+    lo.save(update_fields=["status", "filled_order", "updated_at"])
+    order.company = lo.company
+    return order
+
+
+def fill_replay_limit(account, limit_id, market_time_raw):
+    """
+    Old mode: the page reports that the replay price crossed an OPEN limit inside the candle at
+    `market_time`.  Checked against the stored candle: fills at the limit - or at the candle's
+    open if it opened through the limit (a gap), which is better for the order.
+    """
+    lo = PaperLimitOrder.objects.filter(account=account, pk=limit_id, mode=REPLAY).select_related("company").first()
+    if lo is None:
+        raise TradeError("Unknown limit order.")
+    if lo.status != PaperLimitOrder.STATUS_OPEN:
+        return lo, None
+    try:
+        mt = to_ist(datetime.fromisoformat(str(market_time_raw)))
+    except (TypeError, ValueError):
+        raise TradeError("Invalid replay time.")
+    if mt.date().isoformat() != lo.context:
+        raise TradeError("That replay time is not on this order's day.")
+    placed = to_ist(lo.placed_at)
+    if mt < placed:
+        raise TradeError("That replay time is before the order was placed.")
+    candle = FiveMinuteData.objects.filter(company=lo.company, timestamp=to_db_dt(mt)).first()
+    if candle is None or None in (candle.low, candle.high, candle.open):
+        raise TradeError("No candle exists at that replay time.")
+    if not _limit_reached(lo.side, lo.limit_price, candle.low, candle.high):
+        raise TradeError("The price did not reach the limit in that candle.")
+    price = lo.limit_price
+    if mt > placed and _limit_reached(lo.side, lo.limit_price, candle.open, candle.open):
+        price = candle.open                                      # opened through the limit: better price
+    order = _fill(lo, price, mt)
+    lo.refresh_from_db()
+    return lo, order
+
+
+def process_live_limits(account, now=None):
+    """
+    Live mode: fill OPEN limit orders whose price was reached since they were placed (checked
+    against today's 5-minute candles, so it also catches up after the page was closed), and
+    expire day orders once their session is over.  Returns the orders that filled.
+    """
+    now = to_ist(now or datetime.now(IST))
+    filled = []
+    open_orders = list(PaperLimitOrder.objects.filter(account=account, mode=LIVE, status=PaperLimitOrder.STATUS_OPEN)
+                       .select_related("company"))
+    for lo in open_orders:
+        placed = to_ist(lo.placed_at)
+        # its own day's candles: today's live data, or (page reopened later) Yahoo's last 5 days
+        df = fetch_live_today(lo.company) if placed.date() == now.date() else _yahoo_day_5m(lo.company, placed.date())
+        hit = None
+        if df is not None and not df.empty:
+            for r in df.itertuples(index=False):
+                ts = to_ist(r.timestamp.to_pydatetime())
+                if ts < placed:                       # only price action after the order was placed
+                    continue
+                if _limit_reached(lo.side, lo.limit_price, Decimal(str(r.low)), Decimal(str(r.high))):
+                    o = Decimal(str(round(float(r.open), 2)))
+                    gap = ts > placed and _limit_reached(lo.side, lo.limit_price, o, o)
+                    hit = (o if gap else lo.limit_price, ts)
+                    break
+            if hit is None:                           # the forming candle's latest price
+                last = df.iloc[-1]
+                px = Decimal(str(round(float(last["close"]), 2)))
+                if _limit_reached(lo.side, lo.limit_price, px, px):
+                    hit = (lo.limit_price, now)
+        if hit:
+            order = _fill(lo, hit[0], hit[1])
+            if order:
+                filled.append(order)
+            continue
+        if placed.date() < now.date() or now.time() >= SESSION_CLOSE:
+            lo.status, lo.status_note = PaperLimitOrder.STATUS_EXPIRED, "Day order expired at the close."
+            lo.save(update_fields=["status", "status_note", "updated_at"])
+    return filled
+
+
+def _yahoo_day_5m(company, day):
+    """5-minute candles of a recent past day from Yahoo (timestamp/open/high/low/close frame), cached."""
+    key = f"paper_trading:day5m:{company.pk}:{day.isoformat()}"
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+    try:
+        raw = _yf_history(get_yahoo_ticker(company.code), period="5d", interval="5m", prepost=False)
+    except Exception as exc:
+        logger.warning("yfinance 5m (5d) fetch failed for %s: %s", company.code, exc)
+        raw = None
+    rows = [{"timestamp": pd.Timestamp(c["x"]), "open": c["o"], "high": c["h"], "low": c["l"], "close": c["c"]}
+            for c in _minute_candles(raw, day)]
+    df = pd.DataFrame(rows, columns=["timestamp", "open", "high", "low", "close"])
+    cache.set(key, df, 3600 if rows else 300)
+    return df
+
+
+def cancel_limit_order(account, limit_id):
+    lo = PaperLimitOrder.objects.filter(account=account, pk=limit_id).first()
+    if lo is None:
+        raise TradeError("Unknown limit order.")
+    if lo.status != PaperLimitOrder.STATUS_OPEN:
+        raise TradeError(f"This order is already {lo.status.lower()}.")
+    lo.status, lo.status_note = PaperLimitOrder.STATUS_CANCELLED, "Cancelled by you."
+    lo.save(update_fields=["status", "status_note", "updated_at"])
+    return lo
+
+
+def expire_replay_limits(account, day):
+    """End of an Old-mode day: limit orders still open for that day expire."""
+    return PaperLimitOrder.objects.filter(account=account, mode=REPLAY, context=day.isoformat(),
+                                          status=PaperLimitOrder.STATUS_OPEN).update(
+        status=PaperLimitOrder.STATUS_EXPIRED, status_note="Day order expired at the close.")
+
+
+# --------------------------------------------------------------------------
+# trade log: one row per completed trade (entry -> exit), from the executed orders
+# --------------------------------------------------------------------------
+def trade_log(account, mode, replay_date=None, limit=200):
+    """
+    Pairs the executed orders into trades the same way the wallet does (average cost): every order
+    that reduces a position closes a trade - quantity closed, average entry price, exit price and
+    P&L.  A position still open is listed as OPEN.
+    Live: the live book.  Old: trades opened or closed on the replay date (plus Delivery still held).
+    """
+    orders = (PaperOrder.objects.filter(account=account, mode=mode).select_related("company")
+              .order_by("market_time", "id"))
+    book, rows = {}, []
+    for o in orders:
+        pos_ctx = LIVE if mode == LIVE else (o.context if o.product == INTRADAY else REPLAY_HOLDINGS)
+        st = book.setdefault((o.company_id, o.product, pos_ctx),
+                             {"q": 0, "basis": ZERO, "start": None, "company": o.company, "product": o.product})
+        when = to_ist(o.market_time or o.created_at)
+        direction = 1 if o.side == PaperOrder.SIDE_BUY else -1
+        q = st["q"]
+        closing = min(o.quantity, abs(q)) if q and (q > 0) != (direction > 0) else 0
+        if closing:
+            avg = st["basis"] / abs(q)
+            sign = 1 if q > 0 else -1
+            pnl = (o.price - avg) * closing * sign
+            rows.append({
+                "company": o.company.code, "product": o.product, "side": "LONG" if q > 0 else "SHORT",
+                "quantity": closing, "entry_time": st["start"].isoformat(), "entry_price": float(avg.quantize(FOUR)),
+                "exit_time": when.isoformat(), "exit_price": float(o.price), "pnl": float(pnl.quantize(FOUR)),
+                "pnl_pct": float(pnl / (avg * closing) * 100) if avg else 0.0,
+                "minutes": round((when - st["start"]).total_seconds() / 60),
+                "exit_reason": o.reason or "manual", "exit_type": o.order_type, "status": "CLOSED",
+            })
+            st["basis"] -= st["basis"] * closing / abs(q)
+            st["q"] = q - sign * closing
+        opening = o.quantity - closing
+        if opening:
+            if st["q"] == 0:
+                st["start"], st["basis"] = when, ZERO
+            st["basis"] += o.price * opening
+            st["q"] += direction * opening
+        if st["q"] == 0:
+            st["basis"] = ZERO
+    for st in book.values():
+        if st["q"]:
+            avg = st["basis"] / abs(st["q"])
+            rows.append({
+                "company": st["company"].code, "product": st["product"], "side": "LONG" if st["q"] > 0 else "SHORT",
+                "quantity": abs(st["q"]), "entry_time": st["start"].isoformat(), "entry_price": float(avg.quantize(FOUR)),
+                "exit_time": None, "exit_price": None, "pnl": None, "pnl_pct": None, "minutes": None,
+                "exit_reason": None, "exit_type": None, "status": "OPEN",
+            })
+    if mode == REPLAY and replay_date:
+        day = replay_date.isoformat()
+        rows = [r for r in rows if r["entry_time"][:10] == day or (r["exit_time"] or "")[:10] == day
+                or (r["status"] == "OPEN" and r["entry_time"][:10] <= day)]
+    open_rows = [r for r in rows if r["status"] == "OPEN"]
+    closed = sorted((r for r in rows if r["status"] == "CLOSED"), key=lambda r: r["exit_time"], reverse=True)
+    return (open_rows + closed)[:limit]
+
+
+# --------------------------------------------------------------------------
+# 1-minute candles (Yahoo only - the database stores 5-minute candles)
+# --------------------------------------------------------------------------
+ONE_MIN_DAYS = 29        # Yahoo keeps 1-minute history for about 30 days
+
+
+def _minute_candles(raw, day):
+    out = []
+    if raw is None or raw.empty:
+        return out
+    for idx, r in raw.iterrows():
+        ts = pd.Timestamp(idx)
+        ts = (ts.tz_convert(IST) if ts.tzinfo is not None else ts.tz_localize(IST)).to_pydatetime()
+        vals = [r.get("Open"), r.get("High"), r.get("Low"), r.get("Close")]
+        if ts.date() != day or any(v is None or pd.isna(v) for v in vals) or not (SESSION_OPEN <= ts.time() < SESSION_CLOSE):
+            continue
+        out.append(_candle(ts, *vals))
+    return out
+
+
+def live_candles_1m(company):
+    key = f"paper_trading:live1m:{company.pk}"
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+    try:
+        raw = _yf_history(get_yahoo_ticker(company.code), period="1d", interval="1m", prepost=False)
+    except Exception as exc:
+        logger.warning("yfinance 1m fetch failed for %s: %s", company.code, exc)
+        raw = None
+    out = _minute_candles(raw, today_ist())
+    cache.set(key, out, live_cache_seconds())
+    return out
+
+
+def replay_candles_1m(company, day):
+    if (today_ist() - day).days > ONE_MIN_DAYS:
+        raise TradeError(f"1-minute candles exist only for about the last {ONE_MIN_DAYS + 1} days (Yahoo keeps no "
+                         "older 1-minute history). Use 5m, 10m or 15m for this date.")
+    key = f"paper_trading:replay1m:{company.pk}:{day.isoformat()}"
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+    try:
+        raw = _yf_history(get_yahoo_ticker(company.code), start=day.isoformat(),
+                          end=(day + timedelta(days=1)).isoformat(), interval="1m", prepost=False)
+    except Exception as exc:
+        logger.warning("yfinance 1m history failed for %s %s: %s", company.code, day, exc)
+        raw = None
+    out = _minute_candles(raw, day)
+    if not out:
+        raise TradeError(f"Yahoo has no 1-minute candles for {company.code} on {day.isoformat()}.")
+    cache.set(key, out, 3600)
+    return out

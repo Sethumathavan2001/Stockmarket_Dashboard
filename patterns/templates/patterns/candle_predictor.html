@@ -3,81 +3,80 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Candle Pattern Predictor</title>
+<title>Candle Predictor</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/apexcharts@3.45.2/dist/apexcharts.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
 <style>
   :root{
-    --navy-900:#0B2545; --navy-800:#123B7A; --blue-600:#2F6FED;
-    --bg:#FFFFFF; --panel:#F7F9FC; --border:#E3E8F0;
-    --text:#101828; --text-muted:#64748B;
-    --green:#0EA968; --green-bg:#E7F8F0;
-    --red:#E5484D; --red-bg:#FDECEC;
-    --amber:#B45309; --amber-bg:#FEF3E0;
+    --navy-900:#0B2545; --navy-800:#123B7A; --blue-600:#2F6FED; --blue-50:#EEF3FF;
+    --bg:#FFFFFF; --panel:#F7F9FC; --border:#E3E8F0; --text:#101828; --text-muted:#64748B;
+    --green:#0EA968; --green-dark:#0A8A54; --green-bg:#E7F8F0; --red:#E5484D; --red-dark:#C93A3F; --red-bg:#FDECEC;
+    --amber:#B45309; --amber-bg:#FEF3E0; --purple:#7C3AED; --purple-bg:#F3EEFF;
     --radius:10px; --shadow:0 1px 2px rgba(16,24,40,.04),0 1px 3px rgba(16,24,40,.06);
   }
-  *{box-sizing:border-box;}
+  *{ box-sizing:border-box; }
+  [hidden]{ display:none !important; }
   body{ margin:0; font-family:'Inter',system-ui,sans-serif; background:var(--bg); color:var(--text); }
   .mono{ font-family:'JetBrains Mono',monospace; }
-
-  /* ---------- page heading (below the shared navbar) ---------- */
+  .wrap{ max-width:1320px; margin:0 auto; padding:0 24px 60px; }
   .page-head{ display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px 16px; margin-top:20px; }
-  .page-head .title{ display:flex; flex-wrap:wrap; align-items:center; gap:4px 12px; font-size:18px; font-weight:700; color:var(--text); }
+  .page-head .title{ display:flex; flex-wrap:wrap; align-items:center; gap:4px 12px; font-size:18px; font-weight:700; }
   .page-head .tag{ font-size:12.5px; font-weight:500; color:var(--text-muted); border-left:1px solid var(--border); padding-left:12px; }
 
-  .wrap{ max-width:1180px; margin:0 auto; padding:0 24px; }
+  .filter-bar{ background:var(--panel); border:1px solid var(--border); border-radius:var(--radius); padding:14px 18px; margin-top:16px;
+    display:flex; flex-wrap:wrap; align-items:flex-end; gap:14px; }
+  .field{ display:flex; flex-direction:column; gap:6px; }
+  .field > label, .field > .lbl{ font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.06em; color:var(--text-muted); }
+  select{ border:1px solid var(--border); border-radius:8px; background:#fff; padding:9px 12px; font-size:14px; font-family:inherit; }
+  #companySelect{ min-width:300px; }
+  .seg{ display:inline-flex; background:#fff; border:1px solid var(--border); border-radius:8px; padding:3px; }
+  .seg button{ border:none; background:transparent; padding:7px 16px; border-radius:6px; font-size:13.5px; font-weight:700; color:var(--text-muted); cursor:pointer; font-family:'JetBrains Mono',monospace; }
+  .seg button.active{ background:var(--navy-800); color:#fff; }
+  .btn{ border:none; border-radius:8px; padding:10px 18px; font-size:14px; font-weight:600; cursor:pointer; font-family:inherit; background:var(--blue-600); color:#fff; }
+  .btn:disabled{ opacity:.55; cursor:wait; }
+  .auto{ display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--text-muted); padding-bottom:10px; }
+  .notice{ margin-top:14px; padding:10px 14px; border-radius:8px; font-size:13.5px; background:var(--blue-50); color:var(--navy-800); }
+  .notice.error{ background:var(--red-bg); color:var(--red-dark); }
+  .notice.warn{ background:var(--amber-bg); color:var(--amber); }
 
-  .filter-bar{
-    background:var(--panel); border:1px solid var(--border); border-radius:var(--radius);
-    padding:16px 18px; margin-top:22px; display:flex; flex-wrap:wrap; align-items:end; gap:16px;
-  }
-  .field{ display:flex; flex-direction:column; gap:6px; min-width:240px; }
-  .field label{ font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.06em; color:var(--text-muted); }
-  .field select{
-    appearance:none; background:#fff url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M0 0l5 6 5-6z' fill='%2364748B'/></svg>") no-repeat right 12px center;
-    border:1px solid var(--border); border-radius:8px; padding:9px 32px 9px 12px; font-size:14px; font-weight:500; min-width:240px;
-  }
-  .field select:focus{ outline:2px solid var(--blue-600); outline-offset:1px; }
+  .card{ border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); background:#fff; margin-top:16px; }
+  .card-head{ display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px 16px; padding:12px 16px; border-bottom:1px solid var(--border); }
+  .card-title{ font-size:11.5px; font-weight:700; text-transform:uppercase; letter-spacing:.07em; color:var(--text-muted); }
+  .card-sub{ font-size:12.5px; color:var(--text-muted); }
 
-  .btn-primary{ background:var(--blue-600); color:#fff; border:none; border-radius:8px; padding:10px 22px; font-size:14px; font-weight:600; cursor:pointer; }
-  .btn-primary:hover{ background:#255BC9; }
-  .btn-primary:disabled{ opacity:.5; cursor:not-allowed; }
+  .quote{ display:flex; flex-wrap:wrap; align-items:baseline; gap:6px 14px; }
+  .q-sym{ font-size:20px; font-weight:700; } .q-name{ font-size:13px; color:var(--text-muted); }
+  .q-price{ font-family:'JetBrains Mono',monospace; font-size:20px; font-weight:700; }
+  .badge{ font-size:11px; font-weight:700; padding:3px 9px; border-radius:999px; background:var(--panel); color:var(--text-muted); border:1px solid var(--border); }
+  .badge.live{ background:var(--green-bg); color:var(--green-dark); border-color:transparent; }
+  .legend{ display:flex; flex-wrap:wrap; gap:12px; font-size:12px; color:var(--text-muted); align-items:center; }
+  .legend i{ display:inline-block; width:16px; height:3px; border-radius:2px; vertical-align:middle; margin-right:4px; }
+  .legend label{ display:flex; align-items:center; gap:4px; cursor:pointer; }
+  #chart{ height:480px; width:100%; }
+  .chart-wrap{ position:relative; padding:6px; }
+  .chart-empty{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; text-align:center; padding:20px; color:var(--text-muted); font-size:14px; z-index:4; pointer-events:none; }
 
-  .legend-row{ display:flex; flex-wrap:wrap; align-items:center; gap:18px; margin-top:16px; font-size:12.5px; color:var(--text-muted); }
-  .legend-chip{ display:flex; align-items:center; gap:6px; }
-  .legend-swatch{ width:14px; height:10px; border-radius:2px; }
-  .legend-swatch.actual-up{ background:var(--green); }
-  .legend-swatch.actual-down{ background:var(--red); }
-  .legend-swatch.predicted{ background:linear-gradient(90deg,var(--green),var(--red)); opacity:.35; border:1px dashed var(--text-muted); }
+  .cards{ display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:12px; margin-top:16px; }
+  .kpi{ border:1px solid var(--border); border-radius:var(--radius); padding:14px 16px; background:#fff; box-shadow:var(--shadow); }
+  .kpi .lbl{ font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--text-muted); }
+  .kpi .big{ font-size:22px; font-weight:700; margin-top:6px; }
+  .kpi .small{ font-size:12.5px; color:var(--text-muted); margin-top:4px; line-height:1.5; }
+  .up{ color:var(--green-dark); } .down{ color:var(--red-dark); } .muted{ color:var(--text-muted); } .flat{ color:var(--text-muted); }
 
-  .results{ margin-top:18px; margin-bottom:60px; }
-  .state-msg{ text-align:center; color:var(--text-muted); font-size:14px; padding:60px 0; }
-
-  .chart-card{ border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); padding:10px 10px 4px; margin-bottom:20px; }
-
-  .bias-card{
-    border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow);
-    padding:16px 20px; display:flex; flex-wrap:wrap; align-items:center; gap:16px; margin-bottom:20px;
-  }
-  .bias-pill{ font-family:'JetBrains Mono',monospace; font-size:12.5px; font-weight:700; padding:5px 12px; border-radius:999px; text-transform:uppercase; letter-spacing:.03em; }
-  .bias-pill.bullish{ color:var(--green); background:var(--green-bg); }
-  .bias-pill.bearish{ color:var(--red); background:var(--red-bg); }
-  .bias-pill.neutral{ color:var(--text-muted); background:var(--panel); }
-  .bias-meta{ font-size:12.5px; color:var(--text-muted); }
-
-  table{ width:100%; border-collapse:collapse; border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; }
-  thead th{ text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--text-muted); background:var(--panel); padding:10px 14px; border-bottom:1px solid var(--border); }
-  tbody td{ padding:10px 14px; border-bottom:1px solid var(--border); font-size:13.5px; }
-  tbody tr:last-child td{ border-bottom:none; }
-  td.num{ font-family:'JetBrains Mono',monospace; }
-  .dir-pill{ font-family:'JetBrains Mono',monospace; font-size:11.5px; font-weight:700; padding:3px 9px; border-radius:999px; }
-  .dir-pill.bullish{ color:var(--green); background:var(--green-bg); }
-  .dir-pill.bearish{ color:var(--red); background:var(--red-bg); }
-  .dir-pill.neutral{ color:var(--text-muted); background:var(--panel); }
-
-  .disclaimer{ font-size:12px; color:var(--text-muted); margin-top:14px; line-height:1.5; }
-  .section-title{ font-size:13px; font-weight:700; margin:0 0 10px; color:var(--navy-800); }
+  .table-wrap{ overflow-x:auto; }
+  table{ width:100%; border-collapse:collapse; font-size:13px; }
+  thead th{ text-align:left; font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--text-muted); padding:9px 12px; background:var(--panel); border-bottom:1px solid var(--border); white-space:nowrap; }
+  tbody td{ padding:8px 12px; border-bottom:1px solid var(--border); white-space:nowrap; }
+  td.num, th.num{ text-align:right; font-family:'JetBrains Mono',monospace; }
+  .pill{ font-size:11px; font-weight:700; padding:2px 9px; border-radius:999px; }
+  .pill.bull{ background:var(--green-bg); color:var(--green-dark); } .pill.bear{ background:var(--red-bg); color:var(--red-dark); }
+  .pill.rel{ background:var(--purple-bg); color:var(--purple); } .pill.no{ background:var(--panel); color:var(--text-muted); border:1px solid var(--border); }
+  .grid2{ display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:16px; }
+  @media (max-width:1000px){ .grid2{ grid-template-columns:1fr; } }
+  .note{ font-size:12px; color:var(--text-muted); line-height:1.55; padding:10px 16px 14px; }
+  .filter-inline{ display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--text-muted); }
+  .disclaimer{ font-size:12px; color:var(--text-muted); margin-top:18px; line-height:1.55; }
 </style>
 </head>
 <body>
@@ -86,223 +85,371 @@
 
 <div class="wrap">
   <div class="page-head">
-    <div class="title">Candle Pattern Predictor <span class="tag">Today's 5-min candles · pattern-based projection to 3:15 PM</span></div>
+    <div class="title">Candle Predictor <span class="tag">1m &amp; 5m · ~45 intraday patterns tested on this stock's own history · analog forecasting</span></div>
   </div>
+
   <div class="filter-bar">
     <div class="field">
       <label for="companySelect">Company</label>
       <select id="companySelect">
         <option value="">Select a company</option>
-        {% for company in companies %}
-          <option value="{{ company.code }}">{{ company.code }} — {{ company.name }}</option>
-        {% endfor %}
+        {% for c in companies %}<option value="{{ c.code }}">{{ c.code }} — {{ c.name }}</option>{% endfor %}
       </select>
     </div>
-    <button class="btn-primary" id="showBtn">Show</button>
+    <div class="field">
+      <span class="lbl">Interval</span>
+      <div class="seg" id="ivToggle">
+        <button type="button" data-iv="1m" title="1-minute candles from Yahoo (about the last 30 days)">1m</button>
+        <button type="button" data-iv="5m" class="active">5m</button>
+      </div>
+    </div>
+    <div class="field">
+      <label for="daySelect">Day</label>
+      <select id="daySelect"><option value="">Latest session</option></select>
+    </div>
+    <div class="field">
+      <label for="asofSelect">Predict from</label>
+      <select id="asofSelect"><option value="">Latest candle</option></select>
+    </div>
+    <button class="btn" id="goBtn" type="button">Predict</button>
+    <label class="auto"><input type="checkbox" id="autoRefresh" checked> Auto-refresh while the market is open</label>
   </div>
 
-  <div class="legend-row">
-    <span class="legend-chip"><span class="legend-swatch actual-up"></span>Actual (up)</span>
-    <span class="legend-chip"><span class="legend-swatch actual-down"></span>Actual (down)</span>
-    <span class="legend-chip"><span class="legend-swatch predicted"></span>Predicted (lightened / faded region)</span>
+  <div class="notice" id="notice" hidden></div>
+
+  <!-- CHART -->
+  <div class="card">
+    <div class="card-head">
+      <div class="quote">
+        <span class="q-sym" id="qSym">—</span><span class="q-name" id="qName"></span>
+        <span class="q-price" id="qPrice"></span><span class="badge" id="qBadge" hidden></span>
+        <span class="card-sub" id="qAsOf"></span>
+      </div>
+      <div class="legend">
+        <span><i style="background:#7C3AED"></i>Predicted candles</span>
+        <span><i style="background:#A78BFA"></i>80 % range</span>
+        <span><i style="background:#F59E0B"></i>VWAP</span>
+        <span><i style="background:#CBD5E1"></i>Actual later (past days)</span>
+        <label><input type="checkbox" id="allMarks"> all patterns</label>
+      </div>
+    </div>
+    <div class="chart-wrap">
+      <div id="chart"></div>
+      <div class="chart-empty" id="chartEmpty">Choose a company and press Predict.</div>
+    </div>
   </div>
 
-  <div class="results" id="results">
-    <div class="state-msg">Select a company and click "Show" to load today's candles.</div>
+  <!-- KPI CARDS -->
+  <div class="cards" id="kpis" hidden>
+    <div class="kpi"><div class="lbl" id="kForecastLbl">Forecast</div><div class="big" id="kForecast">—</div><div class="small" id="kForecastSub"></div></div>
+    <div class="kpi"><div class="lbl">How good is this forecast?</div><div class="big" id="kTested">—</div><div class="small" id="kTestedSub"></div></div>
+    <div class="kpi"><div class="lbl">Patterns right now</div><div class="big" id="kPatterns">—</div><div class="small" id="kPatternsSub"></div></div>
+    <div class="kpi"><div class="lbl">Day context</div><div class="big" id="kContext">—</div><div class="small" id="kContextSub"></div></div>
   </div>
+
+  <!-- FORECAST TABLE + ACTIVE PATTERNS -->
+  <div class="grid2" id="row2" hidden>
+    <div class="card">
+      <div class="card-head"><span class="card-title">Forecast by horizon</span><span class="card-sub" id="fcSub"></span></div>
+      <div class="table-wrap"><table id="fcTable"></table></div>
+      <div class="note">From the most similar past moments of this stock (recent candles, VWAP / day / previous-day position, volume, time of day): the median of what happened next. P(up) = share of those moments that ended higher. Tested accuracy comes from replaying recent unseen days; baseline = always calling the more common direction.</div>
+    </div>
+    <div class="card">
+      <div class="card-head"><span class="card-title">Active patterns (last 3 candles)</span><span class="card-sub" id="actSub"></span></div>
+      <div class="table-wrap"><table id="actTable"></table></div>
+      <div class="note"><b>Reliable</b> = at least 30 past cases in this stock, an edge over its normal drift with t ≥ 2, and positive in both halves of the history.</div>
+    </div>
+  </div>
+
+  <!-- DAY LOG -->
+  <div class="card" id="logCard" hidden>
+    <div class="card-head"><span class="card-title">Patterns on this day</span>
+      <label class="filter-inline"><input type="checkbox" id="logReliable"> only reliable</label></div>
+    <div class="table-wrap" style="max-height:420px;overflow:auto"><table id="logTable"></table></div>
+  </div>
+
+  <!-- LIBRARY -->
+  <div class="card" id="libCard" hidden>
+    <div class="card-head"><span class="card-title">Pattern library - this stock, this interval</span><span class="card-sub" id="libSub"></span></div>
+    <div class="table-wrap"><table id="libTable"></table></div>
+    <div class="note">Every past occurrence before the selected day was measured. <b>Avg move</b> is in the pattern's direction (positive = it worked on average). <b>Edge</b> = average move minus the stock's normal drift. Costs are not deducted - intraday round-trip costs are about 0.08 %, so a pattern needs an edge above that to pay.</div>
+  </div>
+
+  <!-- ANALOGS -->
+  <div class="card" id="anaCard" hidden>
+    <div class="card-head"><span class="card-title">Closest past analogs</span><span class="card-sub">the past moments that looked most like now</span></div>
+    <div class="table-wrap"><table id="anaTable"></table></div>
+  </div>
+
+  <p class="disclaimer">Research tool, not investment advice. Intraday price moves are mostly noise; even reliable patterns and the forecast are right only somewhat more often than chance - use the tested accuracy, the ranges and the pattern evidence to judge how much weight to give them, and paper-trade first.</p>
 </div>
 
+{{ initial|json_script:"initial-state" }}
+
 <script>
-const DATA_URL = (code) => `/api/candle-predictor/${encodeURIComponent(code)}/`;
+(() => {
+'use strict';
+const DATA_URL = "{% url 'candle_predictor_data' 'CODE' %}";
+const INITIAL = JSON.parse(document.getElementById('initial-state').textContent);
+const IST_SHIFT = 19800;
+const S = { iv: '5m', data: null, timer: null, chart: null, actual: null, later: null, pred: null, p10: null, p90: null, vwap: null, lines: [] };
+const $ = (id) => document.getElementById(id);
+const els = {
+  company: $('companySelect'), iv: $('ivToggle'), day: $('daySelect'), asof: $('asofSelect'), go: $('goBtn'),
+  auto: $('autoRefresh'), notice: $('notice'), chart: $('chart'), chartEmpty: $('chartEmpty'), allMarks: $('allMarks'),
+  qSym: $('qSym'), qName: $('qName'), qPrice: $('qPrice'), qBadge: $('qBadge'), qAsOf: $('qAsOf'),
+  kpis: $('kpis'), row2: $('row2'), logCard: $('logCard'), libCard: $('libCard'), anaCard: $('anaCard'),
+};
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+const nf = new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const pct = (v, d = 0) => (v == null ? '—' : (v * 100).toFixed(d) + '%');
+const sgn = (v, d = 3) => (v == null ? '—' : (v > 0 ? '+' : '') + v.toFixed(d));
+const tone = (v) => (v == null ? 'muted' : v > 0 ? 'up' : v < 0 ? 'down' : 'flat');
+const ct = (iso) => Math.floor(new Date(iso).getTime() / 1000) + IST_SHIFT;
+const hm = (iso) => { const d = new Date(ct(iso) * 1000); return String(d.getUTCHours()).padStart(2, '0') + ':' + String(d.getUTCMinutes()).padStart(2, '0'); };
 
-const companySelect = document.getElementById('companySelect');
-const showBtn = document.getElementById('showBtn');
-const results = document.getElementById('results');
-
-let activeChart = null;
-
-showBtn.addEventListener('click', loadData);
-
-function destroyChart(){
-  if (activeChart){ activeChart.destroy(); activeChart = null; }
+function notice(msg, kind = 'info') {
+  els.notice.hidden = !msg; els.notice.textContent = msg || '';
+  els.notice.className = 'notice' + (kind === 'info' ? '' : ' ' + kind);
 }
 
-function fmtTime(iso){
-  return new Date(iso).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+/* ---------------- chart ---------------- */
+function initChart() {
+  S.chart = LightweightCharts.createChart(els.chart, {
+    width: els.chart.clientWidth, height: 480,
+    layout: { background: { type: 'solid', color: '#FFFFFF' }, textColor: '#64748B', fontFamily: 'JetBrains Mono, monospace', fontSize: 11 },
+    grid: { vertLines: { color: '#EEF2F7' }, horzLines: { color: '#EEF2F7' } },
+    rightPriceScale: { borderColor: '#E3E8F0' },
+    timeScale: { borderColor: '#E3E8F0', timeVisible: true, secondsVisible: false, rightOffset: 4 },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+  });
+  S.actual = S.chart.addCandlestickSeries({ upColor: '#0EA968', downColor: '#E5484D', borderVisible: false, wickUpColor: '#0EA968', wickDownColor: '#E5484D' });
+  S.later = S.chart.addCandlestickSeries({ upColor: '#CBD5E1', downColor: '#94A3B8', borderVisible: false, wickUpColor: '#CBD5E1', wickDownColor: '#94A3B8', priceLineVisible: false, lastValueVisible: false });
+  S.pred = S.chart.addCandlestickSeries({ upColor: 'rgba(124,58,237,.55)', downColor: 'rgba(124,58,237,.25)', borderUpColor: '#7C3AED', borderDownColor: '#7C3AED', wickUpColor: '#7C3AED', wickDownColor: '#7C3AED', borderVisible: true, priceLineVisible: false, lastValueVisible: true });
+  const band = { color: '#A78BFA', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false };
+  S.p10 = S.chart.addLineSeries(band);
+  S.p90 = S.chart.addLineSeries(band);
+  S.vwap = S.chart.addLineSeries({ color: '#F59E0B', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+  new ResizeObserver(() => S.chart.applyOptions({ width: els.chart.clientWidth })).observe(els.chart);
 }
 
-async function loadData(){
-  const code = companySelect.value;
-  if (!code){ alert('Select a company first.'); return; }
+function drawChart(d) {
+  const past = d.candles.filter((c) => !c.future).map((c) => ({ time: ct(c.x), open: c.o, high: c.h, low: c.l, close: c.c }));
+  const later = d.candles.filter((c) => c.future).map((c) => ({ time: ct(c.x), open: c.o, high: c.h, low: c.l, close: c.c }));
+  S.actual.setData(past);
+  S.later.setData(later);
+  const f = d.forecast;
+  S.pred.setData(f ? f.candles.map((c) => ({ time: ct(c.x), open: c.o, high: c.h, low: c.l, close: c.c })) : []);
+  const last = past[past.length - 1];
+  const bandPts = (key) => (f ? [{ time: last.time, value: last.close }, ...f.band.map((p) => ({ time: ct(p.x), value: p[key] }))] : []);
+  S.p10.setData(bandPts('p10'));
+  S.p90.setData(bandPts('p90'));
+  S.vwap.setData(d.vwap.map((p) => ({ time: ct(p.x), value: p.v })));
 
-  showBtn.disabled = true;
-  results.innerHTML = '<div class="state-msg">Loading today\'s candles…</div>';
-  destroyChart();
+  S.lines.forEach((l) => S.actual.removePriceLine(l));
+  S.lines = [];
+  const LV = { pdh: ['Prev high', '#0EA968'], pdl: ['Prev low', '#E5484D'], pdc: ['Prev close', '#2F6FED'], or_high: ['OR high', '#64748B'], or_low: ['OR low', '#64748B'] };
+  Object.entries(LV).forEach(([k, [title, color]]) => {
+    if (d.levels[k] == null) return;
+    S.lines.push(S.actual.createPriceLine({ price: d.levels[k], color, lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: false, title }));
+  });
 
-  let res, data;
+  const all = els.allMarks.checked;
+  const marks = d.markers.filter((m) => all || m.reliable).map((m) => ({
+    time: ct(m.x), position: m.side > 0 ? 'belowBar' : 'aboveBar', shape: m.side > 0 ? 'arrowUp' : 'arrowDown',
+    color: m.reliable ? (m.side > 0 ? '#0A8A54' : '#C93A3F') : (m.side > 0 ? '#86EFAC' : '#FCA5A5'),
+    text: m.reliable ? m.name : '',
+  }));
+  // several patterns on one candle: one marker per side, names joined
+  const merged = {};
+  marks.forEach((m) => { const k = m.time + m.position; if (merged[k]) { merged[k].text = [merged[k].text, m.text].filter(Boolean).join(' · '); } else merged[k] = { ...m }; });
+  // labels only on the 4 most recent labelled candles (older ones keep their arrows) - avoids clutter
+  const sorted = Object.values(merged).sort((a, b) => a.time - b.time);
+  let labelled = 0;
+  for (let i = sorted.length - 1; i >= 0; i -= 1) {
+    if (!sorted[i].text) continue;
+    labelled += 1;
+    if (labelled > 4) sorted[i].text = '';
+  }
+  S.actual.setMarkers(sorted);
+  S.chart.timeScale().fitContent();
+  els.chartEmpty.hidden = true;
+}
+
+/* ---------------- cards & tables ---------------- */
+function drawCards(d) {
+  els.kpis.hidden = false;
+  const f = d.forecast, m = f && f.main;
+  $('kForecastLbl').textContent = `Forecast · next ${m ? m.label : d.main_label}`;
+  if (m) {
+    const lean = m.p_up >= 0.55 ? ['Bullish lean', 'up'] : m.p_up <= 0.45 ? ['Bearish lean', 'down'] : ['No clear lean', 'muted'];
+    $('kForecast').innerHTML = `<span class="${lean[1]}">${lean[0]}</span>`;
+    $('kForecastSub').innerHTML = `Median move <b class="${tone(m.ret_pct)}">${sgn(m.ret_pct)}%</b> to ₹${nf.format(m.price)} · P(up) <b>${pct(m.p_up)}</b><br>80 % range ₹${nf.format(m.low)} – ₹${nf.format(m.high)} · ${f.neighbors} analogs`;
+  } else {
+    $('kForecast').textContent = 'No forecast';
+    $('kForecastSub').textContent = 'The session is over for this candle (nothing left to predict).';
+  }
+  const bt = d.backtest && d.backtest.horizons[String(m ? m.bars : '')];
+  if (bt && bt.accuracy != null) {
+    const better = bt.accuracy > bt.baseline;
+    $('kTested').innerHTML = `<span class="${better ? 'up' : 'muted'}">${pct(bt.accuracy, 1)}</span> <span class="muted" style="font-size:14px">vs ${pct(bt.baseline, 1)} baseline</span>`;
+    $('kTestedSub').innerHTML = `Direction right on ${d.backtest.points} test points from the last ${d.backtest.test_days} unseen days · IC ${sgn(bt.ic)}`
+      + (bt.confident_acc != null ? `<br>When P(up) was ≥ 60 % or ≤ 40 %: right ${pct(bt.confident_acc, 1)} of ${bt.confident_n}` : '')
+      + `<br>${better ? 'It beat the baseline in testing.' : 'It did <b>not</b> beat the baseline in testing - treat the forecast lightly.'}`;
+  } else {
+    $('kTested').textContent = '—';
+    $('kTestedSub').textContent = 'Not enough history to test.';
+  }
+  const rel = d.active.filter((a) => a.reliable);
+  $('kPatterns').innerHTML = d.active.length
+    ? `${d.active.length} active · <span class="${rel.length ? 'up' : 'muted'}">${rel.length} reliable</span>` : 'None';
+  $('kPatternsSub').innerHTML = rel.length
+    ? `Reliable vote: <b class="${tone(d.pattern_vote)}">${d.pattern_vote > 0 ? 'Bullish' : d.pattern_vote < 0 ? 'Bearish' : 'Mixed'}</b> · ` + rel.map((a) => esc(a.name)).join(', ')
+    : (d.active.length ? 'None of them has a reliable record in this stock.' : 'No pattern on the last 3 candles.');
+  const vw = d.vwap.length ? d.vwap[d.vwap.length - 1].v : null;
+  const L = d.levels, p = d.price;
+  const pos = vw == null ? '' : p >= vw ? '<span class="up">Above VWAP</span>' : '<span class="down">Below VWAP</span>';
+  $('kContext').innerHTML = pos || '—';
+  const first = d.candles[0];
+  $('kContextSub').innerHTML = `Day ${sgn(((p / first.o) - 1) * 100, 2)}% from open`
+    + (L.pdh != null ? `<br>Prev high ₹${nf.format(L.pdh)} (${sgn(((p / L.pdh) - 1) * 100, 2)}%) · Prev low ₹${nf.format(L.pdl)} (${sgn(((p / L.pdl) - 1) * 100, 2)}%)` : '')
+    + (L.or_high != null ? `<br>Opening range ₹${nf.format(L.or_low)} – ₹${nf.format(L.or_high)}` : '');
+}
+
+function drawForecastTable(d) {
+  const f = d.forecast;
+  $('fcSub').textContent = f ? `${f.ahead} candles ahead · ${f.neighbors} analogs` : '';
+  $('fcTable').innerHTML = `<thead><tr><th>Horizon</th><th class="num">At</th><th class="num">Price</th><th class="num">Move</th><th class="num">P(up)</th><th class="num">80 % range</th><th class="num">Tested acc.</th><th class="num">IC</th></tr></thead><tbody>` +
+    (f ? f.horizons.map((h) => `<tr>
+      <td><b>${esc(h.label)}</b></td><td class="num">${hm(h.time)}</td><td class="num">${nf.format(h.price)}</td>
+      <td class="num ${tone(h.ret_pct)}">${sgn(h.ret_pct)}%</td><td class="num">${pct(h.p_up)}</td>
+      <td class="num">${nf.format(h.low)} – ${nf.format(h.high)}</td>
+      <td class="num">${h.accuracy == null ? '—' : `${pct(h.accuracy, 1)} <span class="muted">vs ${pct(h.baseline, 1)}</span>`}</td>
+      <td class="num ${tone(h.ic)}">${sgn(h.ic)}</td></tr>`).join('') : '<tr><td colspan="8" class="muted" style="text-align:center;padding:16px">No forecast for this candle.</td></tr>') + '</tbody>';
+}
+
+const mainOf = (s, d) => s.horizons[String(Object.keys(d.horizon_labels).find((k) => d.horizon_labels[k] === d.main_label))] || {};
+
+function drawActive(d) {
+  $('actSub').textContent = `evidence at ${d.main_label}`;
+  $('actTable').innerHTML = `<thead><tr><th>Candle</th><th>Pattern</th><th>Direction</th><th class="num">Past cases</th><th class="num">Win rate</th><th class="num">Edge</th><th>Status</th></tr></thead><tbody>` +
+    (d.active.length ? d.active.map((a) => { const m = mainOf(a, d); return `<tr>
+      <td class="num">${hm(a.x)}</td><td>${esc(a.name)}</td>
+      <td><span class="pill ${a.direction === 'Bullish' ? 'bull' : 'bear'}">${a.direction}</span></td>
+      <td class="num">${m.n || 0}</td><td class="num">${m.win_pct == null ? '—' : m.win_pct.toFixed(0) + '%'}</td>
+      <td class="num ${tone(m.edge_pct)}">${m.edge_pct == null ? '—' : sgn(m.edge_pct) + '%'}</td>
+      <td>${a.reliable ? '<span class="pill rel">Reliable</span>' : '<span class="pill no">Unproven</span>'}</td></tr>`; }).join('')
+      : '<tr><td colspan="7" class="muted" style="text-align:center;padding:16px">No pattern on the last 3 candles.</td></tr>') + '</tbody>';
+}
+
+function drawLog(d) {
+  els.logCard.hidden = false;
+  const only = $('logReliable').checked;
+  const rows = d.log.filter((r) => !only || r.reliable);
+  $('logTable').innerHTML = `<thead><tr><th class="num">Time</th><th>Pattern</th><th>Type</th><th>Direction</th><th class="num">Price</th><th class="num">History: win / edge / cases</th><th>Status</th><th class="num">Next ${esc(d.main_label)}</th></tr></thead><tbody>` +
+    (rows.map((r) => `<tr>
+      <td class="num">${hm(r.x)}</td><td>${esc(r.name)}</td><td class="muted">${esc(r.family)}</td>
+      <td><span class="pill ${r.direction === 'Bullish' ? 'bull' : 'bear'}">${r.direction}</span></td>
+      <td class="num">${nf.format(r.price)}</td>
+      <td class="num">${r.hist_win_pct == null ? '—' : r.hist_win_pct.toFixed(0) + '%'} / ${r.hist_edge_pct == null ? '—' : sgn(r.hist_edge_pct) + '%'} / ${r.samples}</td>
+      <td>${r.reliable ? '<span class="pill rel">Reliable</span>' : '<span class="pill no">Unproven</span>'}</td>
+      <td class="num ${tone(r.outcome_pct)}">${r.outcome_pct == null ? 'pending' : (r.outcome_pct > 0 ? '✓ ' : '✗ ') + sgn(r.outcome_pct) + '%'}</td></tr>`).join('')
+      || '<tr><td colspan="8" class="muted" style="text-align:center;padding:16px">No patterns.</td></tr>') + '</tbody>';
+}
+
+function drawLibrary(d) {
+  els.libCard.hidden = false;
+  const H = Object.entries(d.horizon_labels);
+  const rel = d.library.filter((s) => s.reliable).length;
+  $('libSub').textContent = `${rel} reliable of ${d.library.length} · ${d.history.days} days (${d.history.from} → ${d.history.to})`;
+  $('libTable').innerHTML = `<thead><tr><th>Pattern</th><th>Type</th><th>Direction</th><th class="num">Cases</th>` +
+    H.map(([, l]) => `<th class="num">Avg move ${esc(l)}</th>`).join('') +
+    `<th class="num">Win ${esc(d.main_label)}</th><th class="num">Edge ${esc(d.main_label)}</th><th class="num">t</th><th class="num">1st / 2nd half</th><th>Status</th></tr></thead><tbody>` +
+    d.library.map((s) => { const m = mainOf(s, d); return `<tr>
+      <td><b>${esc(s.name)}</b></td><td class="muted">${esc(s.family)}</td>
+      <td><span class="pill ${s.direction === 'Bullish' ? 'bull' : 'bear'}">${s.direction}</span></td>
+      <td class="num">${s.samples}</td>` +
+      H.map(([k]) => { const h = s.horizons[k]; return `<td class="num ${tone(h && h.avg_pct)}">${h ? sgn(h.avg_pct) + '%' : '—'}</td>`; }).join('') +
+      `<td class="num">${m.win_pct == null ? '—' : m.win_pct.toFixed(0) + '%'}</td>
+      <td class="num ${tone(m.edge_pct)}">${m.edge_pct == null ? '—' : sgn(m.edge_pct) + '%'}</td>
+      <td class="num">${m.t == null ? '—' : m.t.toFixed(1)}</td>
+      <td class="num">${m.h1_pct == null ? '—' : sgn(m.h1_pct, 2)} / ${m.h2_pct == null ? '—' : sgn(m.h2_pct, 2)}</td>
+      <td>${s.reliable ? '<span class="pill rel">Reliable</span>' : '<span class="pill no">—</span>'}</td></tr>`; }).join('') + '</tbody>';
+}
+
+function drawAnalogs(d) {
+  const f = d.forecast;
+  els.anaCard.hidden = !f;
+  if (!f) return;
+  $('anaTable').innerHTML = `<thead><tr><th>Day</th><th class="num">Time</th><th class="num">Move over the next ${esc(d.main_label)}</th></tr></thead><tbody>` +
+    f.analogs.map((a) => `<tr><td>${esc(a.day)}</td><td class="num">${esc(a.time)}</td><td class="num ${tone(a.move_pct)}">${sgn(a.move_pct)}%</td></tr>`).join('') + '</tbody>';
+}
+
+function fillSelectors(d) {
+  const keepDay = els.day.value;
+  els.day.innerHTML = '<option value="">Latest session</option>' + d.days_available.map((x) => `<option value="${x}">${x}</option>`).join('');
+  els.day.value = keepDay && d.days_available.includes(keepDay) ? keepDay : '';
+  const keepT = els.asof.value;
+  const times = d.candles.map((c) => hm(c.x));
+  els.asof.innerHTML = '<option value="">Latest candle</option>' + times.map((t) => `<option value="${t}">${t}</option>`).join('');
+  els.asof.value = keepT && times.includes(keepT) ? keepT : '';
+}
+
+/* ---------------- actions ---------------- */
+async function load(silent = false) {
+  const code = els.company.value;
+  if (!code) { notice('Select a company first.', 'warn'); return; }
+  if (!silent) { els.go.disabled = true; els.go.textContent = 'Analysing…'; notice(''); }
+  const q = new URLSearchParams({ interval: S.iv });
+  if (els.day.value) q.set('day', els.day.value);
+  if (els.asof.value) q.set('asof', els.asof.value);
   try {
-    res = await fetch(DATA_URL(code));
-    data = await res.json();
-  } catch (e){
-    results.innerHTML = '<div class="state-msg">Could not reach the server.</div>';
-    showBtn.disabled = false;
-    return;
+    history.replaceState(null, '', `?company=${encodeURIComponent(code)}&interval=${S.iv}`);
+    const r = await fetch(DATA_URL.replace('CODE', encodeURIComponent(code)) + '?' + q);
+    const d = await r.json();
+    if (!r.ok) { notice(d.error || 'Request failed.', 'error'); return; }
+    S.data = d;
+    els.qSym.textContent = d.company; els.qName.textContent = d.name; els.qPrice.textContent = '₹' + nf.format(d.price);
+    els.qBadge.hidden = false;
+    els.qBadge.className = 'badge' + (d.is_live ? ' live' : '');
+    els.qBadge.textContent = d.is_live ? 'LIVE' : d.interval + ' · ' + d.day;
+    els.qAsOf.textContent = 'predicting from ' + hm(d.asof) + (d.is_latest ? '' : ' (later candles shown faded)');
+    fillSelectors(d);
+    drawChart(d); drawCards(d); drawForecastTable(d); drawActive(d); drawLog(d); drawLibrary(d); drawAnalogs(d);
+    els.row2.hidden = false;
+    schedule(d);
+  } catch (e) {
+    if (!silent) notice('Prediction failed: ' + e.message, 'error');
+  } finally {
+    els.go.disabled = false; els.go.textContent = 'Predict';
   }
-
-  showBtn.disabled = false;
-
-  if (!res.ok){
-    results.innerHTML = `<div class="state-msg">${data.error || 'Something went wrong.'}</div>`;
-    return;
-  }
-
-  render(data);
 }
 
-function render(data){
-  results.innerHTML = `
-    <div class="bias-card" id="biasCard"></div>
-    <div class="chart-card"><div id="candleChart" style="min-height:380px;"></div></div>
-    <h3 class="section-title">Detected patterns today</h3>
-    <table id="patternsTable"></table>
-    <div class="disclaimer">${data.disclaimer}</div>
-  `;
-
-  renderBiasCard(data.bias_summary, data);
-  renderChart(data);
-  renderPatternsTable(data.actual_candles);
+function schedule(d) {
+  clearInterval(S.timer);
+  if (els.auto.checked && d.is_live) S.timer = setInterval(() => load(true), S.iv === '1m' ? 30000 : 60000);
 }
 
-function renderBiasCard(bias, data){
-  const card = document.getElementById('biasCard');
-  card.innerHTML = `
-    <span class="bias-pill ${bias.direction}">${bias.direction}</span>
-    <span class="bias-meta">Bias score: <strong class="mono">${bias.bias_score}</strong></span>
-    <span class="bias-meta">Company: <strong>${data.company}</strong></span>
-    <span class="bias-meta">Market: <strong>${data.market_status.replace('_',' ')}</strong></span>
-    <span class="bias-meta">As of: <strong class="mono">${fmtTime(data.as_of)}</strong></span>
-    <span class="bias-meta">Projection cutoff: <strong class="mono">${data.prediction_cutoff}</strong></span>
-  `;
-}
+els.go.addEventListener('click', () => load());
+els.iv.addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-iv]');
+  if (!b || b.dataset.iv === S.iv) return;
+  S.iv = b.dataset.iv;
+  els.iv.querySelectorAll('button').forEach((x) => x.classList.toggle('active', x === b));
+  els.day.value = ''; els.asof.value = '';
+  if (els.company.value) load();
+});
+els.company.addEventListener('change', () => { els.day.value = ''; els.asof.value = ''; });
+els.day.addEventListener('change', () => { els.asof.value = ''; if (els.company.value) load(); });
+els.asof.addEventListener('change', () => { if (els.company.value) load(); });
+els.auto.addEventListener('change', () => S.data && schedule(S.data));
+els.allMarks.addEventListener('change', () => S.data && drawChart(S.data));
+$('logReliable').addEventListener('change', () => S.data && drawLog(S.data));
 
-function renderChart(data){
-  const actual = data.actual_candles;
-  const predicted = data.predicted_candles;
-  const allCandles = actual.concat(predicted);
-
-  const seriesData = allCandles.map(c => ({ x: new Date(c.x), y: [c.o, c.h, c.l, c.c] }));
-
-  const annotations = { xaxis: [], points: [] };
-
-  if (predicted.length){
-    annotations.xaxis.push({
-      x: new Date(predicted[0].x).getTime(),
-      x2: new Date(predicted[predicted.length - 1].x).getTime(),
-      fillColor: '#FFFFFF',
-      opacity: 0.55,
-      label: {
-        text: 'Predicted (heuristic)',
-        orientation: 'horizontal',
-        style: { color: '#64748B', background: '#F7F9FC', fontSize: '10.5px', fontWeight: 700 },
-      },
-    });
-    annotations.xaxis.push({
-      x: new Date(predicted[0].x).getTime(),
-      borderColor: '#94A3B8',
-      strokeDashArray: 4,
-      label: {
-        text: 'Now →',
-        style: { color: '#fff', background: '#123B7A', fontSize: '10.5px', fontWeight: 700 },
-      },
-    });
-  }
-
-  // Mark the most recent few detected (non-neutral) patterns directly on the chart.
-  const patternHits = [];
-  actual.forEach(c => {
-    (c.patterns || []).forEach(p => {
-      if (p.direction !== 'neutral') patternHits.push({ candle: c, pattern: p });
-    });
-  });
-  patternHits.slice(-5).forEach(({ candle, pattern }) => {
-    const color = pattern.direction === 'bullish' ? '#0EA968' : '#E5484D';
-    annotations.points.push({
-      x: new Date(candle.x).getTime(),
-      y: pattern.direction === 'bullish' ? candle.l : candle.h,
-      marker: { size: 0 },
-      label: {
-        text: pattern.name,
-        borderColor: color,
-        style: { color: '#fff', background: color, fontSize: '9.5px', fontWeight: 700 },
-        offsetY: pattern.direction === 'bullish' ? 14 : -6,
-      },
-    });
-  });
-
-  activeChart = new ApexCharts(document.getElementById('candleChart'), {
-    chart:{
-      type:'candlestick',
-      height:380,
-      toolbar:{ show:true, tools:{ zoom:true, pan:true, reset:true } },
-      fontFamily:'JetBrains Mono, monospace',
-    },
-    series:[{ data: seriesData }],
-    xaxis:{ type:'datetime', labels:{ datetimeUTC:false } },
-    yaxis:{ tooltip:{ enabled:true }, labels:{ formatter:(v)=>v?.toFixed(2) } },
-    annotations,
-    plotOptions:{
-      candlestick:{ colors:{ upward:'#0EA968', downward:'#E5484D' }, wick:{ useFillColor:true } }
-    },
-    tooltip:{
-      custom: function({ dataPointIndex }){
-        const c = allCandles[dataPointIndex];
-        const time = new Date(c.x).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
-        const tag = c.is_predicted ? '<span style="color:#64748B;">(predicted)</span>' : '';
-        const pats = (c.patterns || []).map(p => p.name).join(', ');
-        return `
-          <div style="padding:8px 10px;font-size:12px;">
-            <div style="font-weight:700;margin-bottom:4px;">${time} ${tag}</div>
-            <div>O <b>${c.o.toFixed(2)}</b> &nbsp; H <b>${c.h.toFixed(2)}</b></div>
-            <div>L <b>${c.l.toFixed(2)}</b> &nbsp; C <b>${c.c.toFixed(2)}</b></div>
-            ${pats ? `<div style="margin-top:4px;color:#123B7A;font-weight:700;">${pats}</div>` : ''}
-          </div>
-        `;
-      }
-    },
-    grid:{ borderColor:'#E3E8F0' },
-  });
-
-  activeChart.render();
-}
-
-function renderPatternsTable(actualCandles){
-  const rows = [];
-  actualCandles.forEach(c => {
-    (c.patterns || []).forEach(p => {
-      if (p.direction === 'neutral' && p.name !== 'Doji') return;
-      rows.push({ time: fmtTime(c.x), name: p.name, direction: p.direction });
-    });
-  });
-
-  const table = document.getElementById('patternsTable');
-  if (!rows.length){
-    table.outerHTML = '<div class="state-msg" style="padding:30px 0;">No patterns detected yet today.</div>';
-    return;
-  }
-
-  table.innerHTML = `
-    <thead><tr><th>Time</th><th>Pattern</th><th>Direction</th></tr></thead>
-    <tbody>
-      ${rows.reverse().map(r => `
-        <tr>
-          <td class="num">${r.time}</td>
-          <td>${r.name}</td>
-          <td><span class="dir-pill ${r.direction}">${r.direction}</span></td>
-        </tr>
-      `).join('')}
-    </tbody>
-  `;
-}
+initChart();
+if (INITIAL.interval === '1m') els.iv.querySelector('[data-iv="1m"]').click();
+if (INITIAL.company) { els.company.value = INITIAL.company; if (els.company.value) load(); }
+})();
 </script>
 </body>
 </html>

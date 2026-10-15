@@ -6,6 +6,7 @@ from django.conf import settings
 from django.db.models import Max, Min
 from django.http import Http404, JsonResponse
 from django.shortcuts import render
+from django.urls import reverse
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST, require_safe
 
@@ -39,6 +40,16 @@ def _json_body(request):
     return body
 
 
+def _account_get(request):
+    """The account of the book named in the query string (?book=1|2)."""
+    return svc.get_account(svc.parse_book(request.GET.get("book")))
+
+
+def _account_post(body):
+    """The account of the book named in a JSON body ({"book": 1|2})."""
+    return svc.get_account(svc.parse_book(body.get("book")))
+
+
 def _get_company(code):
     company = Company.objects.filter(code=code).first() if code else None
     if company is None:
@@ -59,7 +70,7 @@ def _mode_and_date(source):
 # ---------------------------------------------------------------- page ----
 @require_safe
 @ensure_csrf_cookie
-def paper_trading_page(request, company_code=None, mode=None, date=None):
+def paper_trading_page(request, company_code=None, mode=None, date=None, book=1):
     """
     /paper-trading/                              the page, nothing selected
     /paper-trading/<code>/live/                  opens straight onto that stock, Live
@@ -97,6 +108,8 @@ def paper_trading_page(request, company_code=None, mode=None, date=None):
             "live_poll_seconds": getattr(settings, "PAPER_LIVE_POLL_SECONDS", 15),
             "squareoff_label": svc.intraday_squareoff_time().strftime("%I:%M %p").lstrip("0"),
             "initial": initial,
+            "book": book,
+            "page_url": reverse("paper_trading:page2" if book == 2 else "paper_trading:page"),
         },
         status=status,
     )
@@ -106,19 +119,32 @@ def paper_trading_page(request, company_code=None, mode=None, date=None):
 @require_GET
 @api
 def account_state(request):
-    account = svc.get_account(request)
+    account = _account_get(request)
     mode, replay_date = _mode_and_date(request.GET)
+    filled = svc.process_live_limits(account) if mode == svc.LIVE else []
+    if filled:
+        account.refresh_from_db()
     company = None
     if request.GET.get("company"):
         company = _get_company(request.GET["company"])
-    return JsonResponse(svc.account_snapshot(account, mode, replay_date, company))
+    snap = svc.account_snapshot(account, mode, replay_date, company)
+    snap["limit_fills"] = [svc.serialize_order(o) for o in filled]
+    return JsonResponse(snap)
 
 
 @require_POST
 @api
 def wallet_add(request):
     body = _json_body(request)
-    account = svc.add_to_wallet(svc.get_account(request), body.get("amount"))
+    account = svc.add_to_wallet(_account_post(body), body.get("amount"))
+    return JsonResponse({"balance": float(account.balance)})
+
+
+@require_POST
+@api
+def wallet_withdraw(request):
+    body = _json_body(request)
+    account = svc.withdraw_from_wallet(_account_post(body), body.get("amount"))
     return JsonResponse({"balance": float(account.balance)})
 
 
@@ -143,6 +169,9 @@ def date_range(request, company_code):
 def candles(request, company_code):
     company = _get_company(company_code)
     mode, replay_date = _mode_and_date(request.GET)
+    if request.GET.get("interval") == "1m":          # 1-minute candles: Yahoo only (for display)
+        rows = svc.live_candles_1m(company) if mode == svc.LIVE else svc.replay_candles_1m(company, replay_date)
+        return JsonResponse({"interval": "1m", "candles": rows})
     if mode == svc.LIVE:
         return JsonResponse(svc.live_snapshot(company))
     return JsonResponse(svc.replay_snapshot(company, replay_date))
@@ -178,6 +207,23 @@ def place_order(request):
     if reason not in ("", "stop_loss", "target", "session_end"):
         reason = ""
 
+    account = _account_post(body)
+    if str(body.get("order_type", "MARKET")).upper() == "LIMIT":
+        limit_price = svc.parse_optional_price(body.get("limit_price"), "Limit price")
+        current, market_time = (None, None) if mode == svc.LIVE else svc.resolve_replay_execution(
+            company, replay_date, body.get("market_time"), body.get("price"))
+        lo, order = svc.place_limit_order(
+            account=account, company=company, side=side, quantity=quantity, limit_price=limit_price,
+            mode=mode, replay_date=replay_date, product=product, levels=levels,
+            current_price=current, market_time=market_time,
+        )
+        account.refresh_from_db()
+        if order:
+            order.company = company
+        return JsonResponse({"ok": True, "limit_order": svc.serialize_limit(lo),
+                             "order": svc.serialize_order(order) if order else None,
+                             "balance": float(account.balance)})
+
     if mode == svc.LIVE:
         price, market_time = svc.resolve_live_execution(company)
     else:
@@ -185,7 +231,6 @@ def place_order(request):
             company, replay_date, body.get("market_time"), body.get("price")
         )
 
-    account = svc.get_account(request)
     order, position, account = svc.execute_order(
         account=account,
         company=company,
@@ -226,7 +271,7 @@ def bracket_update(request):
         raise svc.TradeError("Enter a stop loss and/or target first.")
 
     position = svc.update_bracket(
-        account=svc.get_account(request),
+        account=_account_post(body),
         company=company,
         mode=mode,
         replay_date=replay_date,
@@ -262,7 +307,7 @@ def quotes(request):
 @api
 def squareoff(request):
     """Close live INTRADAY positions that are due (older than today, or past the cutoff)."""
-    account = svc.get_account(request)
+    account = _account_post(_json_body(request))
     result = svc.squareoff_live_intraday(account)
     account.refresh_from_db()
     return JsonResponse(
@@ -272,3 +317,33 @@ def squareoff(request):
             "balance": float(account.balance),
         }
     )
+
+
+@require_POST
+@api
+def limit_cancel(request, limit_id):
+    body = _json_body(request)
+    lo = svc.cancel_limit_order(_account_post(body), limit_id)
+    return JsonResponse({"ok": True, "limit_order": {"id": lo.id, "status": lo.status}})
+
+
+@require_POST
+@api
+def limit_fill(request, limit_id):
+    """Old mode: the replay price crossed this limit order inside the candle at market_time."""
+    body = _json_body(request)
+    account = _account_post(body)
+    lo, order = svc.fill_replay_limit(account, limit_id, body.get("market_time"))
+    account.refresh_from_db()
+    return JsonResponse({"ok": True, "limit_order": svc.serialize_limit(lo),
+                         "order": svc.serialize_order(order) if order else None,
+                         "balance": float(account.balance)})
+
+
+@require_POST
+@api
+def limit_expire(request):
+    """Old mode: the replay day ended - its open limit orders expire."""
+    body = _json_body(request)
+    count = svc.expire_replay_limits(_account_post(body), svc.parse_replay_date(body.get("date")))
+    return JsonResponse({"ok": True, "expired": count})

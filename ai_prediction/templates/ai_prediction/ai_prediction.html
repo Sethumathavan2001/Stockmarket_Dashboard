@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Prediction</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  :root{
+    --navy-900:#0B2545; --navy-800:#123B7A; --blue-600:#2F6FED; --blue-50:#EEF3FF;
+    --bg:#FFFFFF; --panel:#F7F9FC; --border:#E3E8F0; --text:#101828; --text-muted:#64748B;
+    --green:#0EA968; --green-dark:#0A8A54; --green-bg:#E7F8F0; --red:#E5484D; --red-dark:#C93A3F; --red-bg:#FDECEC;
+    --amber:#B45309; --amber-bg:#FEF3E0; --purple:#7C3AED; --purple-bg:#F3EEFF;
+    --radius:10px; --shadow:0 1px 2px rgba(16,24,40,.04),0 1px 3px rgba(16,24,40,.06);
+  }
+  *{ box-sizing:border-box; }
+  [hidden]{ display:none !important; }
+  body{ margin:0; font-family:'Inter',system-ui,sans-serif; background:var(--bg); color:var(--text); }
+  .mono{ font-family:'JetBrains Mono',monospace; }
+  .wrap{ max-width:1440px; margin:0 auto; padding:0 24px 60px; }
+  .page-head{ display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px 16px; margin-top:20px; }
+  .page-head .title{ display:flex; flex-wrap:wrap; align-items:center; gap:4px 12px; font-size:18px; font-weight:700; }
+  .page-head .tag{ font-size:12.5px; font-weight:500; color:var(--text-muted); border-left:1px solid var(--border); padding-left:12px; }
+
+  .layout{ display:grid; grid-template-columns:minmax(0,1fr) 400px; gap:20px; align-items:start; }
+  .aside{ position:sticky; top:76px; max-height:calc(100vh - 90px); overflow-y:auto; padding-bottom:10px; }
+  @media (max-width:1150px){ .layout{ grid-template-columns:1fr; } .aside{ position:static; max-height:none; } }
+
+  .filter-bar{ background:var(--panel); border:1px solid var(--border); border-radius:var(--radius); padding:14px 18px; margin-top:16px;
+    display:flex; flex-wrap:wrap; align-items:flex-end; gap:14px; }
+  .field{ display:flex; flex-direction:column; gap:6px; }
+  .field.grow{ flex:1 1 260px; }
+  .field > label{ font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.06em; color:var(--text-muted); }
+  input[type=text], textarea{ border:1px solid var(--border); border-radius:8px; background:#fff; padding:9px 12px; font-size:14px; font-family:inherit; width:100%; }
+  #companyInput{ min-width:300px; }
+  textarea{ resize:vertical; min-height:40px; height:40px; }
+  .btn{ border:none; border-radius:8px; padding:10px 18px; font-size:14px; font-weight:600; cursor:pointer; font-family:inherit; background:var(--blue-600); color:#fff; white-space:nowrap; }
+  .btn.claude{ background:linear-gradient(135deg,#C2410C,#D97757); }
+  .btn.ghost{ background:#fff; color:var(--navy-800); border:1px solid var(--border); }
+  .btn.small{ padding:6px 11px; font-size:12.5px; }
+  .btn:disabled{ opacity:.55; cursor:wait; }
+  .hint{ font-size:12px; color:var(--text-muted); }
+  .notice{ margin-top:14px; padding:12px 14px; border-radius:8px; font-size:13.5px; background:var(--blue-50); color:var(--navy-800); line-height:1.55; }
+  .notice.error{ background:var(--red-bg); color:var(--red-dark); }
+  .notice.warn{ background:var(--amber-bg); color:var(--amber); }
+  .notice code{ background:rgba(255,255,255,.7); padding:1px 6px; border-radius:4px; font-family:'JetBrains Mono',monospace; font-size:12.5px; }
+
+  .card{ border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); background:#fff; margin-top:16px; }
+  .card-head{ display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px 16px; padding:12px 16px; border-bottom:1px solid var(--border); }
+  .card-title{ font-size:11.5px; font-weight:700; text-transform:uppercase; letter-spacing:.07em; color:var(--text-muted); }
+  .card-sub{ font-size:12.5px; color:var(--text-muted); }
+  .card-body{ padding:14px 16px; }
+
+  .up{ color:var(--green-dark); } .down{ color:var(--red-dark); } .muted{ color:var(--text-muted); }
+  .pill{ display:inline-block; font-size:11px; font-weight:700; padding:3px 10px; border-radius:999px; background:var(--panel); color:var(--text-muted); border:1px solid var(--border); white-space:nowrap; }
+  .pill.bull{ background:var(--green-bg); color:var(--green-dark); border-color:transparent; }
+  .pill.bear{ background:var(--red-bg); color:var(--red-dark); border-color:transparent; }
+  .pill.neutral{ background:var(--amber-bg); color:var(--amber); border-color:transparent; }
+  .pill.purple{ background:var(--purple-bg); color:var(--purple); border-color:transparent; }
+
+  /* progress feed */
+  .run-head{ display:flex; align-items:center; gap:10px; font-size:13.5px; font-weight:600; }
+  .spinner{ width:16px; height:16px; border:2px solid var(--border); border-top-color:#D97757; border-radius:50%; animation:spin .8s linear infinite; flex:none; }
+  @keyframes spin{ to{ transform:rotate(360deg); } }
+  .steps{ list-style:none; margin:0; padding:0; max-height:340px; overflow-y:auto; font-size:12.8px; }
+  .steps li{ display:grid; grid-template-columns:62px 92px minmax(0,1fr); gap:8px; padding:6px 16px; border-bottom:1px solid var(--panel); line-height:1.5; }
+  .steps li .t{ font-family:'JetBrains Mono',monospace; color:var(--text-muted); font-size:11.5px; padding-top:1px; }
+  .steps li .k{ font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; padding-top:2px; }
+  .steps li .x{ word-break:break-word; white-space:pre-wrap; }
+  .k.search{ color:var(--blue-600); } .k.result{ color:var(--text-muted); } .k.tool{ color:var(--purple); }
+  .k.think{ color:#C2410C; } .k.text{ color:var(--navy-800); } .k.error{ color:var(--red-dark); } .k.info, .k.done{ color:var(--green-dark); }
+  .steps li.think .x{ color:var(--text-muted); font-style:italic; }
+  .steps a{ color:var(--blue-600); text-decoration:none; } .steps a:hover{ text-decoration:underline; }
+  .steps .pages{ display:block; font-size:11.5px; color:var(--text-muted); }
+
+  /* verdict */
+  .verdict{ display:grid; grid-template-columns:minmax(0,1fr) auto; gap:12px 24px; align-items:center; }
+  .v-sym{ font-size:22px; font-weight:700; } .v-name{ font-size:13px; color:var(--text-muted); margin-left:8px; font-weight:500; }
+  .v-head{ font-size:16px; font-weight:600; line-height:1.5; margin-top:6px; }
+  .v-meta{ font-size:12px; color:var(--text-muted); margin-top:6px; }
+  .conf{ text-align:right; }
+  .conf .num{ font-size:30px; font-weight:700; font-family:'JetBrains Mono',monospace; }
+  .conf .bar{ width:160px; height:6px; background:var(--panel); border-radius:3px; overflow:hidden; margin:6px 0 0 auto; }
+  .conf .bar i{ display:block; height:100%; background:linear-gradient(90deg,#D97757,#C2410C); }
+  .kpis{ display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:10px; }
+  .kpi{ border:1px solid var(--border); border-radius:8px; padding:10px 12px; background:var(--panel); }
+  .kpi .lbl{ font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--text-muted); }
+  .kpi .big{ font-size:18px; font-weight:700; margin-top:4px; font-family:'JetBrains Mono',monospace; }
+  .kpi .small{ font-size:11.5px; color:var(--text-muted); margin-top:2px; }
+  .plan-notes{ display:grid; grid-template-columns:1fr 1fr; gap:10px 18px; margin-top:12px; font-size:13px; line-height:1.55; }
+  .plan-notes b{ font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--text-muted); display:block; }
+  @media (max-width:800px){ .plan-notes, .verdict{ grid-template-columns:1fr; } .conf{ text-align:left; } .conf .bar{ margin-left:0; } }
+
+  #chart{ height:420px; width:100%; }
+  .chart-wrap{ position:relative; padding:6px; }
+  .chart-empty{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:var(--text-muted); font-size:14px; pointer-events:none; }
+
+  .table-wrap{ overflow-x:auto; }
+  table{ width:100%; border-collapse:collapse; font-size:13px; }
+  thead th{ text-align:left; font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--text-muted); padding:9px 12px; background:var(--panel); border-bottom:1px solid var(--border); white-space:nowrap; }
+  tbody td{ padding:8px 12px; border-bottom:1px solid var(--border); vertical-align:top; }
+  td.num, th.num{ text-align:right; font-family:'JetBrains Mono',monospace; white-space:nowrap; }
+  tr.clickable{ cursor:pointer; } tr.clickable:hover td{ background:var(--panel); }
+
+  .grid2{ display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:16px; }
+  @media (max-width:900px){ .grid2{ grid-template-columns:1fr; } }
+  .prose{ font-size:13.5px; line-height:1.65; white-space:pre-wrap; }
+  ul.list{ margin:0; padding:0 0 0 18px; font-size:13.5px; line-height:1.65; }
+  .scen{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px; }
+  .scen > div{ border:1px solid var(--border); border-radius:8px; padding:10px 12px; font-size:13px; line-height:1.55; }
+  .scen .sn{ font-weight:700; display:flex; justify-content:space-between; gap:8px; }
+  .sources{ list-style:none; margin:0; padding:0; font-size:13px; }
+  .sources li{ padding:7px 16px; border-bottom:1px solid var(--panel); }
+  .sources a{ color:var(--blue-600); text-decoration:none; } .sources a:hover{ text-decoration:underline; }
+  .sources .host{ font-size:11.5px; color:var(--text-muted); margin-left:6px; }
+  details summary{ cursor:pointer; padding:12px 16px; font-size:11.5px; font-weight:700; text-transform:uppercase; letter-spacing:.07em; color:var(--text-muted); }
+
+  /* picks panel */
+  .picks-head{ background:linear-gradient(135deg,#0B2545,#123B7A); color:#fff; border-radius:var(--radius) var(--radius) 0 0; padding:14px 16px; }
+  .picks-head .ttl{ font-size:15px; font-weight:700; }
+  .picks-head .sub{ font-size:12px; opacity:.8; margin-top:2px; }
+  .picks-actions{ display:flex; gap:8px; padding:12px 16px; border-bottom:1px solid var(--border); flex-wrap:wrap; }
+  .picks-actions input{ flex:1 1 160px; font-size:13px; padding:7px 10px; }
+  .mkt{ padding:12px 16px; border-bottom:1px solid var(--border); font-size:13px; line-height:1.55; }
+  .pick{ padding:12px 16px; border-bottom:1px solid var(--border); }
+  .pick:hover{ background:var(--panel); }
+  .pick-top{ display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .pick-sym{ font-weight:700; font-size:14.5px; cursor:pointer; color:var(--navy-800); }
+  .pick-sym:hover{ text-decoration:underline; }
+  .pick-name{ font-size:11.5px; color:var(--text-muted); }
+  .pick-lv{ display:grid; grid-template-columns:repeat(3,1fr); gap:6px; margin:8px 0; }
+  .pick-lv div{ background:var(--panel); border-radius:6px; padding:5px 8px; }
+  .pick-lv b{ display:block; font-size:9.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--text-muted); }
+  .pick-lv span{ font-family:'JetBrains Mono',monospace; font-size:13px; font-weight:600; }
+  .pick-txt{ font-size:12.5px; line-height:1.55; }
+  .pick-txt .r{ color:var(--text-muted); }
+  .pick-btns{ display:flex; gap:6px; margin-top:8px; flex-wrap:wrap; align-items:center; }
+  .pick-btns a{ font-size:12px; color:var(--blue-600); text-decoration:none; font-weight:600; }
+  .outcome{ font-size:11px; font-weight:700; padding:2px 8px; border-radius:999px; background:var(--panel); color:var(--text-muted); }
+  .outcome.win{ background:var(--green-bg); color:var(--green-dark); } .outcome.loss{ background:var(--red-bg); color:var(--red-dark); }
+  .avoid{ padding:10px 16px; font-size:12.5px; line-height:1.55; }
+  .mini-steps .steps{ max-height:220px; }
+  .mini-steps .steps li{ grid-template-columns:56px minmax(0,1fr); padding:5px 12px; }
+  .mini-steps .steps li .k{ display:none; }
+  .disclaimer{ font-size:12px; color:var(--text-muted); margin-top:18px; line-height:1.55; }
+  .empty{ padding:24px 16px; text-align:center; color:var(--text-muted); font-size:13px; line-height:1.6; }
+</style>
+</head>
+<body>
+
+{% include 'market/_navbar.html' %}
+
+<div class="wrap">
+  <div class="page-head">
+    <div class="title">AI Prediction <span class="tag">Claude ({{ model }}) · live web search · your database, pattern engine &amp; ML models</span></div>
+  </div>
+
+  {% if not has_key %}
+  <div class="notice warn">
+    <b>Connect Claude:</b> create a file named <code>.env</code> next to <code>manage.py</code> containing
+    <code>ANTHROPIC_API_KEY=sk-ant-...</code> (get a key at console.anthropic.com), then restart the server.
+    The file is in <code>.gitignore</code>, so the key never goes to GitHub.
+  </div>
+  {% endif %}
+
+  <div class="layout">
+    <!-- ================= main: single stock ================= -->
+    <main>
+      <div class="filter-bar">
+        <div class="field">
+          <label for="companyInput">Company</label>
+          <input type="text" id="companyInput" list="companyList" placeholder="Type a code or name, e.g. RELIANCE" autocomplete="off">
+          <datalist id="companyList">
+            {% for c in companies %}<option value="{{ c.code }}">{{ c.name }}</option>{% endfor %}
+          </datalist>
+        </div>
+        <div class="field grow">
+          <label for="questionInput">Ask Claude (optional)</label>
+          <textarea id="questionInput" maxlength="1000" placeholder="e.g. I hold 100 shares from 1180 - exit or hold today?"></textarea>
+        </div>
+        <button class="btn claude" id="analyzeBtn" {% if not has_key %}disabled title="Add the API key first"{% endif %}>Analyse with Claude</button>
+      </div>
+      <div class="hint" style="margin-top:6px">One analysis takes about 1-3 minutes and typically costs about $0.20-$0.80 in API usage (shown after each run). Claude reads your data and searches the web; nothing is traded.</div>
+      <div id="mainNotice" class="notice" hidden></div>
+
+      <!-- progress -->
+      <div class="card" id="runCard" hidden>
+        <div class="card-head">
+          <div class="run-head"><span class="spinner" id="runSpin"></span><span id="runTitle">Claude is working...</span></div>
+          <div class="card-sub mono" id="runMeta"></div>
+        </div>
+        <ul class="steps" id="runSteps"></ul>
+      </div>
+
+      <!-- result -->
+      <div id="result" hidden>
+        <div class="card"><div class="card-body">
+          <div class="verdict">
+            <div>
+              <div><span class="v-sym" id="vSym"></span><span class="v-name" id="vName"></span> <span id="vBias"></span></div>
+              <div class="v-head" id="vHead"></div>
+              <div class="v-meta" id="vMeta"></div>
+            </div>
+            <div class="conf"><div class="hint">Confidence</div><div class="num" id="vConf"></div><div class="bar"><i id="vConfBar"></i></div></div>
+          </div>
+        </div></div>
+
+        <div class="card">
+          <div class="card-head"><div class="card-title">Trade plan</div><div class="card-sub" id="planLinks"></div></div>
+          <div class="card-body">
+            <div class="kpis" id="planKpis"></div>
+            <div class="plan-notes" id="planNotes"></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><div class="card-title">5-minute chart · last two sessions</div><div class="card-sub">Solid lines: entry / stop / targets · dashed: Claude's key levels</div></div>
+          <div class="chart-wrap"><div id="chart"></div><div class="chart-empty" id="chartEmpty" hidden>No candles.</div></div>
+        </div>
+
+        <div class="grid2">
+          <div class="card">
+            <div class="card-head"><div class="card-title">Price outlook</div></div>
+            <div class="table-wrap"><table><thead><tr><th>Horizon</th><th>Direction</th><th class="num">Expected</th><th class="num">Range</th><th class="num">Prob.</th></tr></thead><tbody id="outlookBody"></tbody></table></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><div class="card-title">Key levels</div></div>
+            <div class="table-wrap"><table><thead><tr><th>Level</th><th>Type</th><th class="num">Price</th><th class="num">From price</th></tr></thead><tbody id="levelsBody"></tbody></table></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><div class="card-title">Scenarios</div></div>
+          <div class="card-body"><div class="scen" id="scenarios"></div></div>
+        </div>
+
+        <div class="grid2">
+          <div class="card"><div class="card-head"><div class="card-title">Technical view</div></div><div class="card-body prose" id="techView"></div></div>
+          <div class="card"><div class="card-head"><div class="card-title">News &amp; catalysts</div></div><div class="card-body prose" id="newsView"></div></div>
+        </div>
+        <div class="card"><div class="card-head"><div class="card-title">Market backdrop</div></div><div class="card-body prose" id="marketView"></div></div>
+        <div class="grid2">
+          <div class="card"><div class="card-head"><div class="card-title">Catalysts</div></div><div class="card-body"><ul class="list" id="catalysts"></ul></div></div>
+          <div class="card"><div class="card-head"><div class="card-title">Risks</div></div><div class="card-body"><ul class="list" id="risks"></ul></div></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><div class="card-title">Sources</div><div class="card-sub">Pages Claude's web searches returned</div></div>
+          <ul class="sources" id="sources"></ul>
+        </div>
+
+        <div class="card"><details><summary>How Claude worked on this (run log)</summary><ul class="steps" id="logSteps"></ul></details></div>
+      </div>
+
+      <div class="card" id="historyCard" hidden>
+        <div class="card-head"><div class="card-title">Claude's track record on <span id="histSym"></span></div><div class="card-sub">Each saved call replayed on the 5-minute candles that came after it</div></div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Made at</th><th>Bias</th><th class="num">Conf.</th><th>Plan</th><th>Outcome</th><th class="num">P&amp;L %</th><th class="num">Move after</th><th>Bias right?</th><th class="num">Cost</th></tr></thead>
+          <tbody id="historyBody"></tbody>
+        </table></div>
+        <div class="hint" style="padding:8px 16px 12px" id="histSummary"></div>
+      </div>
+
+      <div class="disclaimer">
+        Claude's analysis combines your data with what it finds on the web. It can be wrong, news can be stale or misread,
+        and intraday moves are mostly noise; the track record above shows how its calls actually played out. Educational
+        use with paper trading only - not investment advice.
+      </div>
+    </main>
+
+    <!-- ================= right: intraday picks ================= -->
+    <aside class="aside">
+      <div class="card" style="margin-top:16px">
+        <div class="picks-head">
+          <div class="ttl">Intraday picks by Claude</div>
+          <div class="sub" id="picksWhen">Screens your whole database, reads the news, checks today's prices</div>
+        </div>
+        <div class="picks-actions">
+          <input type="text" id="picksNote" maxlength="300" placeholder="Optional: e.g. only banks, longs only">
+          <button class="btn claude small" id="picksBtn" {% if not has_key %}disabled{% endif %}>Find picks</button>
+        </div>
+        <div id="picksNotice" class="notice" style="margin:10px 16px" hidden></div>
+        <div class="mini-steps" id="picksRun" hidden>
+          <div class="run-head" style="padding:10px 12px"><span class="spinner"></span><span id="picksRunTitle">Claude is scanning the market...</span></div>
+          <ul class="steps" id="picksSteps"></ul>
+        </div>
+        <div id="picksBody"><div class="empty">No picks yet. Press <b>Find picks</b> - Claude will screen your database, check the market mood and news, and suggest 4-6 intraday trades.</div></div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+{{ companies|json_script:"companies-data" }}
+{{ latest_picks|json_script:"latest-picks" }}
+<script>
+const COMPANIES = JSON.parse(document.getElementById('companies-data').textContent);
+const BY_CODE = Object.fromEntries(COMPANIES.map(c => [c.code, c]));
+const INITIAL_COMPANY = "{{ initial_company|escapejs }}";
+const PAPER_LIVE_URL = "{% url 'paper_trading:page_live' 'CODE_PLACEHOLDER' %}";
+const $ = id => document.getElementById(id);
+
+// ---------------------------------------------------------------- helpers
+function esc(s){ return String(s ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch])); }
+function px(v){ return v == null || isNaN(v) ? '—' : Number(v).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2}); }
+function pct(v, d=2){ return v == null || isNaN(v) ? '—' : (v > 0 ? '+' : '') + Number(v).toFixed(d) + '%'; }
+function cls(v){ return v > 0 ? 'up' : v < 0 ? 'down' : 'muted'; }
+function biasPill(b){ const c = {BULLISH:'bull', LONG:'bull', BUY:'bull', BEARISH:'bear', SHORT:'bear', SELL:'bear'}[b] || 'neutral'; return `<span class="pill ${c}">${esc(b)}</span>`; }
+function when(iso){ const d = new Date(iso); return d.toLocaleString('en-IN', {day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit', hour12:false, timeZone:'Asia/Kolkata'}); }
+function host(u){ try { return new URL(u).hostname.replace(/^www\./, ''); } catch(e){ return ''; } }
+function safeUrl(u){ return /^https?:\/\//i.test(u || '') ? u : '#'; }
+function paperUrl(code){ return PAPER_LIVE_URL.replace('CODE_PLACEHOLDER', encodeURIComponent(code)); }
+function csrfToken(){ const m = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/); return m ? decodeURIComponent(m[1]) : ''; }
+async function getJson(url){ const r = await fetch(url); const d = await r.json().catch(() => ({})); if (!r.ok && r.status !== 409) throw new Error(d.error || `HTTP ${r.status}`); return d; }
+async function postJson(url, body){
+  const r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json', 'X-CSRFToken': csrfToken()}, body: JSON.stringify(body)});
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok && r.status !== 409) throw new Error(d.error || `HTTP ${r.status}`);
+  return d;
+}
+function notice(el, text, kind){ el.hidden = !text; el.className = 'notice' + (kind ? ' ' + kind : ''); el.textContent = text || ''; }
+
+function stepHtml(s){
+  let x = esc(s.text);
+  if (s.pages && s.pages.length) x += '<span class="pages">' + s.pages.map(p => `<a href="${esc(safeUrl(p.url))}" target="_blank" rel="noopener">${esc(host(p.url) || p.title)}</a>`).join(' · ') + '</span>';
+  const label = {search:'Search', result:'Results', tool:'Your data', think:'Thinking', text:'Claude', error:'Error', info:'Info', done:'Done'}[s.kind] || s.kind;
+  return `<li class="${esc(s.kind)}"><span class="t">${esc(s.t)}</span><span class="k ${esc(s.kind)}">${label}</span><span class="x">${x}</span></li>`;
+}
+function renderSteps(ul, steps){
+  const atBottom = ul.scrollHeight - ul.scrollTop - ul.clientHeight < 40;
+  ul.innerHTML = steps.map(stepHtml).join('');
+  if (atBottom) ul.scrollTop = ul.scrollHeight;
+}
+function usageText(job){
+  const u = job.usage || {};
+  const parts = [];
+  if (u.turns) parts.push(`${u.turns} rounds`);
+  if (u.web_search_requests) parts.push(`${u.web_search_requests} searches`);
+  if (job.cost_usd) parts.push(`$${Number(job.cost_usd).toFixed(3)}`);
+  return parts.join(' · ');
+}
+
+// ---------------------------------------------------------------- chart
+let chart, candleSeries, priceLines = [];
+function initChart(){
+  chart = LightweightCharts.createChart($('chart'), {
+    layout:{ background:{color:'#fff'}, textColor:'#64748B', fontFamily:'Inter' },
+    grid:{ vertLines:{color:'#F1F4F9'}, horzLines:{color:'#F1F4F9'} },
+    rightPriceScale:{ borderColor:'#E3E8F0' }, timeScale:{ borderColor:'#E3E8F0', timeVisible:true, secondsVisible:false },
+    crosshair:{ mode: LightweightCharts.CrosshairMode.Normal },
+  });
+  candleSeries = chart.addCandlestickSeries({ upColor:'#0EA968', downColor:'#E5484D', borderVisible:false, wickUpColor:'#0EA968', wickDownColor:'#E5484D' });
+  new ResizeObserver(() => chart.applyOptions({ width: $('chart').clientWidth })).observe($('chart'));
+}
+const IST_SHIFT = 19800;
+async function loadChart(code, result){
+  if (!chart) initChart();
+  priceLines.forEach(l => candleSeries.removePriceLine(l)); priceLines = [];
+  candleSeries.setData([]);
+  $('chartEmpty').hidden = true;
+  try {
+    const d = await getJson(`/api/ai-prediction/candles/${encodeURIComponent(code)}/`);
+    const rows = d.candles.map(c => ({ time: Math.floor(new Date(c.x).getTime() / 1000) + IST_SHIFT, open:c.o, high:c.h, low:c.l, close:c.c }));
+    candleSeries.setData(rows);
+    $('chartEmpty').hidden = rows.length > 0;
+    chart.timeScale().fitContent();
+  } catch (e) { $('chartEmpty').hidden = false; $('chartEmpty').textContent = 'Chart unavailable: ' + e.message; }
+  if (!result) return;
+  const plan = result.trade_plan || {};
+  const add = (price, title, color, style) => { if (price != null) priceLines.push(candleSeries.createPriceLine({ price, color, lineWidth: style ? 1 : 2, lineStyle: style || 0, axisLabelVisible: true, title })); };
+  add(plan.entry, 'Entry', '#2F6FED'); add(plan.stop_loss, 'Stop', '#E5484D'); add(plan.target_1, 'T1', '#0EA968'); add(plan.target_2, 'T2', '#0A8A54');
+  (result.key_levels || []).forEach(l => add(l.price, l.label, l.kind === 'support' ? '#0A8A54' : l.kind === 'resistance' ? '#C93A3F' : '#94A3B8', 2));
+}
+
+// ---------------------------------------------------------------- single-stock analysis
+let current = null;          // company code on screen
+let pollTimer = null;
+
+function setCompany(code){ $('companyInput').value = code; }
+function selectedCode(){
+  const v = $('companyInput').value.trim().toUpperCase();
+  if (BY_CODE[v]) return v;
+  if (BY_CODE[v + '.NS']) return v + '.NS';
+  const byName = COMPANIES.find(c => c.name.toUpperCase() === v);
+  return byName ? byName.code : null;
+}
+
+$('analyzeBtn').addEventListener('click', async () => {
+  const code = selectedCode();
+  if (!code) { notice($('mainNotice'), 'Pick a company from the list.', 'error'); return; }
+  notice($('mainNotice'), '');
+  $('analyzeBtn').disabled = true;
+  try {
+    const d = await postJson('/api/ai-prediction/analyze/', { company: code, question: $('questionInput').value });
+    if (!d.started) notice($('mainNotice'), `An analysis of ${d.job.company} is already running - showing it.`, 'warn');
+    current = d.job.company;
+    watchJob(d.job.id);
+  } catch (e) { notice($('mainNotice'), e.message, 'error'); $('analyzeBtn').disabled = false; }
+});
+
+function watchJob(id){
+  clearTimeout(pollTimer);
+  $('runCard').hidden = false; $('runSpin').hidden = false;
+  $('analyzeBtn').disabled = true;
+  const tick = async () => {
+    let job;
+    try { job = await getJson(`/api/ai-prediction/job/${id}/`); }
+    catch (e) { pollTimer = setTimeout(tick, 4000); return; }
+    $('runTitle').textContent = job.status === 'running' ? `Claude is analysing ${job.company}...` : job.status === 'done' ? `Analysis of ${job.company} finished` : 'Analysis failed';
+    $('runMeta').textContent = usageText(job);
+    renderSteps($('runSteps'), job.steps || []);
+    if (job.status === 'running') { pollTimer = setTimeout(tick, 2000); return; }
+    $('runSpin').hidden = true;
+    $('analyzeBtn').disabled = {{ has_key|yesno:"false,true" }};
+    if (job.status === 'error') { notice($('mainNotice'), job.error, 'error'); return; }
+    $('runCard').hidden = true;
+    showReport(job.report);
+    loadHistory(job.report.company);
+  };
+  tick();
+}
+
+function showReport(r){
+  const res = r.result || {}, plan = res.trade_plan || {};
+  current = r.company;
+  $('result').hidden = false;
+  $('vSym').textContent = r.company; $('vName').textContent = r.name || '';
+  $('vBias').innerHTML = biasPill(res.bias);
+  $('vHead').textContent = res.headline || '';
+  $('vMeta').textContent = `Made ${when(r.created_at)} IST at ₹${px(res.price_at_analysis)} · ${r.model} · $${Number(r.cost_usd || 0).toFixed(3)}` + (r.question ? ` · You asked: "${r.question}"` : '');
+  $('vConf').textContent = (res.confidence ?? '—') + '%';
+  $('vConfBar').style.width = Math.max(0, Math.min(100, res.confidence || 0)) + '%';
+
+  const risk = plan.entry != null && plan.stop_loss != null ? Math.abs(plan.entry - plan.stop_loss) : null;
+  const rr = risk && plan.target_1 != null ? Math.abs(plan.target_1 - plan.entry) / risk : null;
+  const ref = res.price_at_analysis;
+  const kp = (lbl, val, small, c='') => `<div class="kpi"><div class="lbl">${lbl}</div><div class="big ${c}">${val}</div><div class="small">${small || ''}</div></div>`;
+  const rel = v => v != null && ref ? pct((v / ref - 1) * 100) + ' from price' : '';
+  $('planKpis').innerHTML = plan.action === 'NO_TRADE'
+    ? kp('Action', 'NO TRADE', 'No clear edge right now', 'muted')
+    : kp('Action', esc(plan.action), esc(plan.entry_type), plan.action === 'BUY' ? 'up' : 'down')
+      + kp('Entry', px(plan.entry), rel(plan.entry)) + kp('Stop loss', px(plan.stop_loss), rel(plan.stop_loss), 'down')
+      + kp('Target 1', px(plan.target_1), rel(plan.target_1), 'up') + kp('Target 2', px(plan.target_2), rel(plan.target_2), 'up')
+      + kp('Reward : risk', rr ? '1 : ' + rr.toFixed(2) : '—', risk ? `Risk ₹${px(risk)} / share` : '')
+      + kp('Valid until', esc(plan.valid_until || '—'), 'IST');
+  $('planNotes').innerHTML = `<div><b>Invalidation</b>${esc(plan.invalidation)}</div><div><b>Position / risk</b>${esc(plan.position_note)}</div>`;
+  $('planLinks').innerHTML = `<a class="btn ghost small" href="${paperUrl(r.company)}">Paper trade ${esc(r.company)} →</a>`;
+
+  $('outlookBody').innerHTML = (res.price_outlook || []).map(o => `<tr><td>${esc(o.horizon)}</td><td>${biasPill(o.direction)}</td>
+      <td class="num ${cls(o.expected_price - ref)}">${px(o.expected_price)}</td><td class="num">${px(o.low)} – ${px(o.high)}</td><td class="num">${esc(o.probability)}%</td></tr>`).join('')
+      || '<tr><td colspan="5" class="muted">—</td></tr>';
+  $('levelsBody').innerHTML = (res.key_levels || []).slice().sort((a, b) => b.price - a.price).map(l => `<tr><td>${esc(l.label)}</td>
+      <td><span class="pill ${l.kind === 'support' ? 'bull' : l.kind === 'resistance' ? 'bear' : ''}">${esc(l.kind)}</span></td>
+      <td class="num">${px(l.price)}</td><td class="num ${cls(l.price - ref)}">${ref ? pct((l.price / ref - 1) * 100) : '—'}</td></tr>`).join('');
+  $('scenarios').innerHTML = (res.scenarios || []).map(s => `<div><div class="sn"><span>${esc(s.name)}</span><span class="pill purple">${esc(s.probability)}%</span></div>
+      <div style="margin-top:6px"><span class="muted">Trigger:</span> ${esc(s.trigger)}</div><div style="margin-top:4px">${esc(s.path)}</div></div>`).join('');
+  $('techView').textContent = res.technical_view || '';
+  $('newsView').textContent = res.news_view || '';
+  $('marketView').textContent = res.market_view || '';
+  $('catalysts').innerHTML = (res.catalysts || []).map(x => `<li>${esc(x)}</li>`).join('') || '<li class="muted">None noted</li>';
+  $('risks').innerHTML = (res.risks || []).map(x => `<li>${esc(x)}</li>`).join('') || '<li class="muted">None noted</li>';
+  $('sources').innerHTML = (r.sources || []).map(s => `<li><a href="${esc(safeUrl(s.url))}" target="_blank" rel="noopener">${esc(s.title || s.url)}</a><span class="host">${esc(host(s.url))}${s.page_age ? ' · ' + esc(s.page_age) : ''}</span></li>`).join('')
+      || '<li class="muted">No web sources.</li>';
+  renderSteps($('logSteps'), r.steps || []);
+  loadChart(r.company, res);
+}
+
+async function loadHistory(code){
+  $('historyCard').hidden = false; $('histSym').textContent = code;
+  $('historyBody').innerHTML = '<tr><td colspan="9" class="muted">Checking outcomes...</td></tr>';
+  $('histSummary').textContent = '';
+  try {
+    const d = await getJson(`/api/ai-prediction/reports/?kind=analysis&company=${encodeURIComponent(code)}&evaluate=1`);
+    if (!d.reports.length) { $('historyCard').hidden = true; return; }
+    $('historyBody').innerHTML = d.reports.map(r => {
+      const o = r.outcome || {}, p = r.plan || {};
+      const plan = p.action && p.action !== 'NO_TRADE' ? `${esc(p.action)} ${px(p.entry)} · SL ${px(p.stop_loss)} · T ${px(p.target_1)}` : 'No trade';
+      const oc = o.status === 'TARGET HIT' || (o.pnl_pct > 0 && o.status && o.status.startsWith('CLOSED')) ? 'win' : o.status === 'STOP HIT' || (o.pnl_pct < 0 && o.status && o.status.startsWith('CLOSED')) ? 'loss' : '';
+      return `<tr class="clickable" data-id="${r.id}"><td>${when(r.created_at)}</td><td>${biasPill(r.bias)}</td><td class="num">${esc(r.confidence)}%</td>
+        <td>${plan}</td><td><span class="outcome ${oc}">${esc(o.status || '—')}</span>${o.day ? ` <span class="hint">${esc(o.day)}</span>` : ''}</td>
+        <td class="num ${cls(o.pnl_pct)}">${pct(o.pnl_pct)}</td><td class="num ${cls(o.move_pct)}">${pct(o.move_pct)}</td>
+        <td>${o.bias_right == null ? '<span class="muted">—</span>' : o.bias_right ? '<span class="up">Yes</span>' : '<span class="down">No</span>'}</td>
+        <td class="num">$${Number(r.cost_usd || 0).toFixed(2)}</td></tr>`;
+    }).join('');
+    const judged = d.reports.filter(r => r.outcome && r.outcome.bias_right != null);
+    const trades = d.reports.filter(r => r.outcome && r.outcome.pnl_pct != null && r.outcome.status !== 'RUNNING');
+    const right = judged.filter(r => r.outcome.bias_right).length;
+    $('histSummary').textContent = judged.length
+      ? `Direction right ${right} of ${judged.length} calls` + (trades.length ? ` · ${trades.length} triggered trades, average ${pct(trades.reduce((s, r) => s + r.outcome.pnl_pct, 0) / trades.length, 3)} before charges.` : '.') + ' Small samples prove little either way.'
+      : 'Outcomes appear once the market has traded after a call.';
+    document.querySelectorAll('#historyBody tr.clickable').forEach(tr => tr.addEventListener('click', async () => {
+      const r = await getJson(`/api/ai-prediction/report/${tr.dataset.id}/?evaluate=0`);
+      showReport(r); window.scrollTo({top: 0, behavior: 'smooth'});
+    }));
+  } catch (e) { $('historyBody').innerHTML = `<tr><td colspan="9" class="muted">${esc(e.message)}</td></tr>`; }
+}
+
+async function openCompany(code){
+  setCompany(code);
+  notice($('mainNotice'), '');
+  $('result').hidden = true;
+  const d = await getJson(`/api/ai-prediction/reports/?kind=analysis&company=${encodeURIComponent(code)}`).catch(() => ({reports: []}));
+  if (d.reports && d.reports.length) {
+    const r = await getJson(`/api/ai-prediction/report/${d.reports[0].id}/?evaluate=0`);
+    showReport(r);
+    notice($('mainNotice'), `Showing Claude's last analysis of ${code} (${when(r.created_at)} IST). Press "Analyse with Claude" for a fresh one.`);
+    loadHistory(code);
+  } else {
+    $('historyCard').hidden = true;
+    notice($('mainNotice'), `No analysis of ${code} yet - press "Analyse with Claude".`);
+  }
+}
+$('companyInput').addEventListener('change', () => { const c = selectedCode(); if (c && c !== current) { current = c; openCompany(c); } });
+
+// ---------------------------------------------------------------- intraday picks
+let picksTimer = null, picksReport = null;
+
+$('picksBtn').addEventListener('click', async () => {
+  notice($('picksNotice'), '');
+  $('picksBtn').disabled = true;
+  try {
+    const d = await postJson('/api/ai-prediction/picks/', { question: $('picksNote').value });
+    watchPicks(d.job.id);
+  } catch (e) { notice($('picksNotice'), e.message, 'error'); $('picksBtn').disabled = false; }
+});
+
+function watchPicks(id){
+  clearTimeout(picksTimer);
+  $('picksRun').hidden = false; $('picksBtn').disabled = true;
+  const tick = async () => {
+    let job;
+    try { job = await getJson(`/api/ai-prediction/job/${id}/`); }
+    catch (e) { picksTimer = setTimeout(tick, 4000); return; }
+    $('picksRunTitle').textContent = job.status === 'running' ? `Claude is scanning the market... ${usageText(job)}` : '';
+    renderSteps($('picksSteps'), job.steps || []);
+    if (job.status === 'running') { picksTimer = setTimeout(tick, 2500); return; }
+    $('picksRun').hidden = true;
+    $('picksBtn').disabled = {{ has_key|yesno:"false,true" }};
+    if (job.status === 'error') { notice($('picksNotice'), job.error, 'error'); return; }
+    showPicks(job.report);
+  };
+  tick();
+}
+
+function showPicks(r, outcome){
+  picksReport = r;
+  const res = r.result || {};
+  $('picksWhen').textContent = `Generated ${when(r.created_at)} IST · ${r.model} · $${Number(r.cost_usd || 0).toFixed(3)}`;
+  const oc = Object.fromEntries(((outcome || {}).picks || []).map(p => [p.company_code, p]));
+  const picks = (res.picks || []).map(p => {
+    const name = (BY_CODE[p.company_code] || {}).name || '';
+    const o = oc[p.company_code];
+    const ocls = o && o.pnl_pct != null ? (o.pnl_pct > 0 ? 'win' : 'loss') : '';
+    const rr = Math.abs(p.target - p.entry) / Math.abs(p.entry - p.stop_loss);
+    return `<div class="pick">
+      <div class="pick-top"><div><span class="pick-sym" data-code="${esc(p.company_code)}">${esc(p.company_code)}</span> <span class="pick-name">${esc(name)}</span></div>${biasPill(p.direction)}</div>
+      <div class="pick-txt" style="margin-top:4px"><b>${esc(p.setup)}</b> · confidence ${esc(p.confidence)}% · R:R 1:${isFinite(rr) ? rr.toFixed(1) : '—'}</div>
+      <div class="pick-lv"><div><b>Entry</b><span>${px(p.entry)}</span></div><div><b>Stop</b><span class="down">${px(p.stop_loss)}</span></div><div><b>Target</b><span class="up">${px(p.target)}</span></div></div>
+      <div class="pick-txt">${esc(p.reason)}${p.catalyst ? `<br><span class="r">Catalyst:</span> ${esc(p.catalyst)}` : ''}<br><span class="r">Risk:</span> ${esc(p.risk)}</div>
+      <div class="pick-btns"><button class="btn ghost small" data-analyse="${esc(p.company_code)}">Deep analysis</button><a href="${paperUrl(p.company_code)}">Paper trade →</a>
+        ${o ? `<span class="outcome ${ocls}">${esc(o.status)}${o.pnl_pct != null ? ' ' + pct(o.pnl_pct) : ''}</span>` : ''}</div>
+    </div>`;
+  }).join('');
+  const avoid = (res.avoid || []).length ? `<div class="avoid"><b>Avoid today:</b><ul class="list">${res.avoid.map(a => `<li><b>${esc(a.company_code)}</b> – ${esc(a.reason)}</li>`).join('')}</ul></div>` : '';
+  const summary = outcome && outcome.closed ? `<div class="hint" style="margin-top:6px">Result so far: ${outcome.wins} of ${outcome.closed} closed picks won, average ${pct(outcome.avg_pnl_pct, 3)} before charges.</div>` : '';
+  $('picksBody').innerHTML = `<div class="mkt"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><b>Market</b>${biasPill(res.market_bias)}</div>
+      <div style="margin-top:6px">${esc(res.market_summary)}</div>${summary}
+      <div style="margin-top:8px"><button class="btn ghost small" id="checkPicks">Check how these picks did</button></div></div>${picks}${avoid}`;
+  $('picksBody').querySelectorAll('.pick-sym').forEach(el => el.addEventListener('click', () => { current = el.dataset.code; openCompany(el.dataset.code); }));
+  $('picksBody').querySelectorAll('[data-analyse]').forEach(el => el.addEventListener('click', () => {
+    setCompany(el.dataset.analyse); current = el.dataset.analyse; $('analyzeBtn').click(); window.scrollTo({top: 0, behavior: 'smooth'});
+  }));
+  $('checkPicks').addEventListener('click', async ev => {
+    ev.target.disabled = true; ev.target.textContent = 'Checking...';
+    try { const d = await getJson(`/api/ai-prediction/report/${r.id}/?evaluate=1`); showPicks(d, d.outcome); }
+    catch (e) { ev.target.textContent = e.message; }
+  });
+}
+
+// ---------------------------------------------------------------- start-up
+(async function init(){
+  const latest = JSON.parse(document.getElementById('latest-picks').textContent);
+  if (latest) showPicks(latest);
+  try {
+    const run = await getJson('/api/ai-prediction/running/');
+    if (run.picks) watchPicks(run.picks.id);
+    if (run.analysis) { setCompany(run.analysis.company); current = run.analysis.company; watchJob(run.analysis.id); return; }
+  } catch (e) {}
+  if (INITIAL_COMPANY && BY_CODE[INITIAL_COMPANY]) { current = INITIAL_COMPANY; openCompany(INITIAL_COMPANY); }
+})();
+</script>
+</body>
+</html>

@@ -1,94 +1,62 @@
 """
-Views for the candlestick-pattern + next-candle projection page.
+Intraday Candle Predictor page and API.
 
-Reuses the existing `prediction` app's data loader (`get_live_dataframe`:
-historical DB candles + today's in-memory yfinance candles, never written
-back to the database) so this page follows the exact same data-handling
-rules as the trained-model prediction system built earlier.
+  GET /candle-predictor/                                       the page
+  GET /api/candle-predictor/<code>/?interval=5m|1m&day=YYYY-MM-DD&asof=HH:MM
+        candles of the day, detected patterns (with this stock's history for each), the
+        analog forecast from "asof" (default: the latest candle) and its tested accuracy.
 """
-import datetime
+import logging
+import math
+from datetime import date, datetime
 
 from django.http import JsonResponse
-from django.shortcuts import render, get_object_or_404
+from django.shortcuts import get_object_or_404, render
+from django.views.decorators.http import require_GET
 
-from market.models import Company  # adjust if your app is named differently
-from prediction.data import get_live_dataframe
-from prediction.market_time import get_market_status, IST
+from market.models import Company
 
-from .forecast import generate_forecast, DEFAULT_CUTOFF_TIME
+from . import engine
+
+logger = logging.getLogger(__name__)
 
 
+def _clean(obj):
+    """JSON-safe: NaN / inf -> None, numpy numbers -> Python numbers."""
+    if isinstance(obj, float):
+        return None if math.isnan(obj) or math.isinf(obj) else obj
+    if isinstance(obj, dict):
+        return {str(k): _clean(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_clean(v) for v in obj]
+    if hasattr(obj, "item"):                      # numpy scalar
+        return _clean(obj.item())
+    return obj
+
+
+@require_GET
 def candle_predictor_view(request):
-    """Renders the page: company select + Show button."""
-    companies = Company.objects.all().order_by("name")
-    return render(request, "patterns/candle_predictor.html", {"companies": companies})
+    companies = Company.objects.exclude(sector="ETF").order_by("code").values("code", "name")
+    return render(request, "patterns/candle_predictor.html", {
+        "companies": list(companies),
+        "initial": {"company": request.GET.get("company", ""), "interval": request.GET.get("interval", "5m")},
+    })
 
 
-def _row_to_candle(row):
-    return {
-        "timestamp": row["timestamp"],
-        "open": float(row["open"]),
-        "high": float(row["high"]),
-        "low": float(row["low"]),
-        "close": float(row["close"]),
-    }
-
-
+@require_GET
 def candle_prediction_data(request, company_code):
-    """
-    GET /api/candle-predictor/<company_code>/
-
-    Returns today's actual 5-minute candles (9:15 -> now) with detected
-    patterns, plus heuristic predicted candles from now through the
-    prediction cutoff (default 3:15 PM IST).
-    """
     company = get_object_or_404(Company, code=company_code)
-
-    live_df = get_live_dataframe(company, lookback_days=5)
-    if live_df.empty:
-        return JsonResponse({"error": f"No candle data available for {company.code}."}, status=400)
-
-    today = datetime.datetime.now(IST).date()
-    today_df = live_df[live_df["timestamp"].dt.date == today].sort_values("timestamp")
-
-    if today_df.empty:
-        return JsonResponse(
-            {
-                "error": (
-                    f"No candles for {company.code} yet today (market status: "
-                    f"{get_market_status()}). Try again once the market opens at 9:15."
-                )
-            },
-            status=400,
-        )
-
-    actual_candles = [_row_to_candle(row) for _, row in today_df.iterrows()]
-    annotated_actual, predicted, bias_summary = generate_forecast(actual_candles)
-
-    def serialize(c, is_predicted=False):
-        return {
-            "x": c["timestamp"].isoformat(),
-            "o": c["open"],
-            "h": c["high"],
-            "l": c["low"],
-            "c": c["close"],
-            "is_predicted": is_predicted,
-            "patterns": c.get("patterns", []),
-        }
-
-    return JsonResponse(
-        {
-            "company": company.code,
-            "market_status": get_market_status(),
-            "as_of": datetime.datetime.now(IST).isoformat(),
-            "prediction_cutoff": DEFAULT_CUTOFF_TIME.strftime("%H:%M"),
-            "actual_candles": [serialize(c) for c in annotated_actual],
-            "predicted_candles": [serialize(c, is_predicted=True) for c in predicted],
-            "bias_summary": bias_summary,
-            "disclaimer": (
-                "Predicted candles are a simple rule-based extrapolation from "
-                "recent candlestick patterns and recent volatility — not a "
-                "statistical or machine-learning forecast, and not trading advice."
-            ),
-        }
-    )
+    interval = request.GET.get("interval", "5m")
+    try:
+        day = date.fromisoformat(request.GET["day"]) if request.GET.get("day") else None
+        asof = datetime.strptime(request.GET["asof"], "%H:%M").time() if request.GET.get("asof") else None
+    except ValueError:
+        return JsonResponse({"error": "Invalid day or time."}, status=400)
+    try:
+        data = engine.predict(company, interval=interval, day=day, asof=asof)
+    except engine.PredictorError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except Exception as exc:
+        logger.exception("Candle predictor failed for %s", company_code)
+        return JsonResponse({"error": f"Prediction failed: {exc}"}, status=500)
+    return JsonResponse(_clean(data))

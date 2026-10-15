@@ -307,9 +307,12 @@ class ReplayApiTests(BaseCase):
         self.assertIsNone(data["resume_market_time"])
         self.assertEqual(data["realized_pnl"], 12.0)
 
-    def test_accounts_are_isolated_per_session(self):
-        other = self.client_class()
-        self.assertEqual(other.get(reverse("paper_trading:account"), {"mode": "live"}).json()["balance"], 0.0)
+    def test_account_is_the_same_in_every_browser_but_books_are_separate(self):
+        other = self.client_class()                        # a new browser / session sees the same book 1
+        self.assertEqual(other.get(reverse("paper_trading:account"), {"mode": "live"}).json()["balance"], 10000.0)
+        book2 = other.get(reverse("paper_trading:account"), {"mode": "live", "book": 2}).json()
+        self.assertEqual(book2["balance"], 0.0)            # Paper Trading 2 has its own account
+        self.assertEqual(other.get(reverse("paper_trading:account"), {"mode": "live", "book": 3}).status_code, 400)
 
 
 def live_frame(minutes_ago, close=250.0):
@@ -1352,3 +1355,195 @@ class LivePreviousDayFrom5mTests(BaseCase):
         with mock.patch.object(svc, "_yf_history", return_value=daily):
             prev = svc.live_previous_day(self.company)
         self.assertEqual((prev["date"], prev["close"]), (newer.isoformat(), 10.5))
+
+
+# --------------------------------------------------------------------------
+# wallet withdraw, limit orders, trade log, 1-minute candles
+# --------------------------------------------------------------------------
+from .models import PaperLimitOrder  # noqa: E402
+
+
+class WithdrawTests(BaseCase):
+    def test_withdraw_reduces_balance(self):
+        acct = svc.withdraw_from_wallet(self.account, "2500")
+        self.assertEqual(acct.balance, D("7500"))
+
+    def test_cannot_withdraw_more_than_available(self):
+        for bad in ["10000.01", "0", "-1", "abc"]:
+            with self.assertRaises(svc.TradeError, msg=bad):
+                svc.withdraw_from_wallet(self.account, bad)
+
+    def test_withdraw_api(self):
+        self.post(reverse("paper_trading:wallet_add"), {"amount": 500})
+        r = self.post(reverse("paper_trading:wallet_withdraw"), {"amount": 200})
+        self.assertEqual(r.json()["balance"], 300.0)
+        self.assertEqual(self.post(reverse("paper_trading:wallet_withdraw"), {"amount": 301}).status_code, 400)
+
+
+class ReplayLimitTests(BaseCase):
+    """Old mode: candles 100, 102, 101, 105, 103, 99 (each with a 1-point range around open/close)."""
+
+    def setUp(self):
+        super().setUp()
+        self.post(reverse("paper_trading:wallet_add"), {"amount": 10000})
+        self.c = svc.load_replay_candles(self.company, self.day)
+
+    def place(self, side, qty, limit, i, price=None, product="INTRADAY"):
+        return self.post(reverse("paper_trading:order"), {
+            "company": "TST", "side": side, "quantity": qty, "mode": "replay", "date": self.day.isoformat(),
+            "market_time": self.c[i]["x"], "price": price if price is not None else self.c[i]["c"],
+            "order_type": "LIMIT", "limit_price": limit, "product": product,
+        }).json()
+
+    def snap(self):
+        return self.client.get(reverse("paper_trading:account"), {"mode": "replay", "date": self.day.isoformat()}).json()
+
+    def test_marketable_limit_fills_at_once_at_the_current_price(self):
+        res = self.place("BUY", 2, "103", 1, price="102")          # price 102 <= limit 103
+        self.assertEqual(res["limit_order"]["status"], "FILLED")
+        self.assertEqual((res["order"]["price"], res["order"]["order_type"]), (102.0, "LIMIT"))
+
+    def test_resting_limit_waits_then_fills_at_the_limit(self):
+        res = self.place("BUY", 2, "100.50", 1, price="102")
+        self.assertIsNone(res["order"])
+        lo = res["limit_order"]
+        self.assertEqual(lo["status"], "OPEN")
+        self.assertEqual(self.snap()["limit_orders"][0]["status"], "OPEN")
+        # candle 2 (open 102, close 101, low 100) reaches 100.50
+        r = self.post(reverse("paper_trading:limit_fill", args=[lo["id"]]), {"market_time": self.c[2]["x"]}).json()
+        self.assertEqual((r["limit_order"]["status"], r["order"]["price"]), ("FILLED", 100.5))
+        self.assertEqual(self.snap()["positions"][0]["quantity"], 2)
+
+    def test_fill_is_checked_against_the_candle(self):
+        lo = self.place("BUY", 1, "95", 1, price="102")["limit_order"]
+        r = self.post(reverse("paper_trading:limit_fill", args=[lo["id"]]), {"market_time": self.c[3]["x"]})
+        self.assertEqual(r.status_code, 400)                        # candle 3 never traded at 95
+        self.assertIn("did not reach", r.json()["error"])
+
+    def test_sell_limit_fills_at_the_limit_or_a_better_gap_open(self):
+        # SELL limit 102.5 placed in candle 2 (price 101). Candle 3 opens 101 and trades up to 106: fills at 102.5.
+        lo = self.place("SELL", 1, "102.5", 2, price="101")["limit_order"]
+        r = self.post(reverse("paper_trading:limit_fill", args=[lo["id"]]), {"market_time": self.c[3]["x"]}).json()
+        self.assertEqual(r["order"]["price"], 102.5)
+        # another one, reported in candle 4 which OPENS at 105 - above the limit: fills at the better open
+        lo2 = self.place("SELL", 1, "102.5", 2, price="101")["limit_order"]
+        r2 = self.post(reverse("paper_trading:limit_fill", args=[lo2["id"]]), {"market_time": self.c[4]["x"]}).json()
+        self.assertEqual(r2["order"]["price"], 105.0)
+
+    def test_cancel_and_expire(self):
+        a = self.place("BUY", 1, "90", 1, price="102")["limit_order"]
+        b = self.place("BUY", 1, "91", 1, price="102")["limit_order"]
+        self.assertEqual(self.post(reverse("paper_trading:limit_cancel", args=[a["id"]]), {}).json()["limit_order"]["status"], "CANCELLED")
+        self.assertEqual(self.post(reverse("paper_trading:limit_cancel", args=[a["id"]]), {}).status_code, 400)
+        self.post(reverse("paper_trading:limit_expire"), {"date": self.day.isoformat()})
+        self.assertEqual(PaperLimitOrder.objects.get(pk=b["id"]).status, "EXPIRED")
+
+    def test_unaffordable_fill_is_rejected_not_executed(self):
+        lo = self.place("BUY", 500, "100.50", 1, price="102")["limit_order"]    # needs 50,250 > 10,000
+        r = self.post(reverse("paper_trading:limit_fill", args=[lo["id"]]), {"market_time": self.c[2]["x"]}).json()
+        self.assertEqual(r["limit_order"]["status"], "REJECTED")
+        self.assertIsNone(r["order"])
+        self.assertEqual(self.snap()["positions"], [])
+
+    def test_books_do_not_see_each_others_orders(self):
+        lo = self.place("BUY", 1, "90", 1, price="102")["limit_order"]
+        r = self.post(reverse("paper_trading:limit_cancel", args=[lo["id"]]), {"book": 2})
+        self.assertEqual(r.status_code, 400)                       # book 2 can't touch book 1's order
+
+
+class LiveLimitTests(BaseCase):
+    def setUp(self):
+        super().setUp()
+        self.account = svc.get_account(1)
+        self.account.balance = D("10000")
+        self.account.save()
+
+    def frame(self, rows):
+        return pd.DataFrame([{"timestamp": pd.Timestamp(ts), "open": o, "high": h, "low": l, "close": c, "volume": 10.0,
+                              "source": "yfinance"} for ts, o, h, l, c in rows])
+
+    def test_open_live_limit_fills_from_later_candles(self):
+        now = datetime.now(svc.IST).replace(second=0, microsecond=0)
+        placed = now - timedelta(minutes=20)
+        lo = PaperLimitOrder.objects.create(account=self.account, company=self.company, side="BUY", quantity=3,
+                                            limit_price=D("99"), mode="live", context="live", placed_at=placed)
+        rows = [(placed - timedelta(minutes=5), 100, 101, 95, 100),     # before the order: ignored
+                (placed + timedelta(minutes=5), 100, 101, 99.5, 100),
+                (placed + timedelta(minutes=10), 100, 100, 98.5, 99)]   # reaches 99
+        with mock.patch.object(svc, "fetch_live_today", return_value=self.frame(rows)):
+            filled = svc.process_live_limits(self.account, now=now)
+        lo.refresh_from_db()
+        self.assertEqual((lo.status, len(filled), filled[0].price), ("FILLED", 1, D("99.0000")))
+
+    def test_old_live_limit_expires(self):
+        lo = PaperLimitOrder.objects.create(account=self.account, company=self.company, side="BUY", quantity=1,
+                                            limit_price=D("50"), mode="live", context="live",
+                                            placed_at=datetime.now(svc.IST) - timedelta(days=1))
+        with mock.patch.object(svc, "_yahoo_day_5m", return_value=pd.DataFrame()):
+            svc.process_live_limits(self.account)
+        lo.refresh_from_db()
+        self.assertEqual(lo.status, "EXPIRED")
+
+    def test_reopened_next_day_still_fills_from_its_own_day(self):
+        placed = datetime.combine(svc.today_ist() - timedelta(days=1), time(10, 0), tzinfo=svc.IST)
+        lo = PaperLimitOrder.objects.create(account=self.account, company=self.company, side="SELL", quantity=2,
+                                            limit_price=D("110"), mode="live", context="live", placed_at=placed)
+        day = self.frame([(placed + timedelta(minutes=30), 108, 111, 107, 110.5)])
+        with mock.patch.object(svc, "_yahoo_day_5m", return_value=day):
+            svc.process_live_limits(self.account)
+        lo.refresh_from_db()
+        self.assertEqual((lo.status, lo.filled_order.price), ("FILLED", D("110.0000")))
+
+
+class TradeLogTests(BaseCase):
+    def trade(self, side, qty, price, minute, reason=""):
+        t = datetime.combine(self.day, time(9, 15), tzinfo=svc.IST) + timedelta(minutes=minute)
+        return svc.execute_order(account=self.account, company=self.company, side=side, quantity=qty,
+                                 price=D(str(price)), mode=svc.REPLAY, replay_date=self.day, market_time=t,
+                                 reason=reason)
+
+    def test_buy_then_sell_is_one_trade(self):
+        self.trade("BUY", 10, 100, 0)
+        self.trade("SELL", 10, 104, 25, reason="target")
+        rows = svc.trade_log(self.account, svc.REPLAY, self.day)
+        self.assertEqual(len(rows), 1)
+        r = rows[0]
+        self.assertEqual((r["side"], r["quantity"], r["entry_price"], r["exit_price"], r["pnl"], r["minutes"], r["exit_reason"]),
+                         ("LONG", 10, 100.0, 104.0, 40.0, 25, "target"))
+
+    def test_partial_exits_and_open_remainder(self):
+        self.trade("BUY", 10, 100, 0)
+        self.trade("BUY", 10, 102, 5)                  # average 101
+        self.trade("SELL", 5, 105, 10)
+        rows = svc.trade_log(self.account, svc.REPLAY, self.day)
+        open_row, closed = rows[0], rows[1]
+        self.assertEqual((open_row["status"], open_row["quantity"], open_row["entry_price"]), ("OPEN", 15, 101.0))
+        self.assertEqual((closed["quantity"], closed["entry_price"], closed["pnl"]), (5, 101.0, 20.0))
+
+    def test_short_trade(self):
+        self.trade("SELL", 4, 100, 0)
+        self.trade("BUY", 4, 97, 10)
+        r = svc.trade_log(self.account, svc.REPLAY, self.day)[0]
+        self.assertEqual((r["side"], r["pnl"]), ("SHORT", 12.0))
+
+
+class OneMinuteCandleTests(BaseCase):
+    def test_old_dates_beyond_yahoo_history_are_refused(self):
+        with self.assertRaises(svc.TradeError):
+            svc.replay_candles_1m(self.company, svc.today_ist() - timedelta(days=60))
+
+    def test_minute_candles_from_yahoo(self):
+        idx = pd.date_range(datetime.combine(self.day, time(9, 15)), periods=3, freq="1min", tz=svc.IST)
+        raw = pd.DataFrame({"Open": [1.0, 2, 3], "High": [2.0, 3, 4], "Low": [0.5, 1, 2], "Close": [1.5, 2.5, 3.5]}, index=idx)
+        with mock.patch.object(svc, "_yf_history", return_value=raw):
+            r = self.client.get(reverse("paper_trading:candles", args=["TST"]),
+                                {"mode": "replay", "date": self.day.isoformat(), "interval": "1m"}).json()
+        self.assertEqual([c["c"] for c in r["candles"]], [1.5, 2.5, 3.5])
+
+
+class PaperTrading2PageTests(BaseCase):
+    def test_page2_uses_book_2(self):
+        r = self.client.get(reverse("paper_trading:page2"))
+        self.assertContains(r, "const BOOK = 2;")
+        self.assertContains(r, "Paper Trading 2")
+        self.assertContains(self.client.get(reverse("paper_trading:page")), "const BOOK = 1;")

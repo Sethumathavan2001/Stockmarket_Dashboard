@@ -1,7 +1,21 @@
 import os
 from pathlib import Path
 
+# joblib (used by scikit-learn) probes the CPU with "wmic", which newer Windows lacks, and prints a
+# traceback. A limit below the core count skips that probe. Used by the ML pages (prediction, patterns).
+os.environ.setdefault("LOKY_MAX_CPU_COUNT", str(max(1, (os.cpu_count() or 2) - 1)))
+
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Secrets such as ANTHROPIC_API_KEY live in a local .env file next to manage.py (gitignored):
+#   ANTHROPIC_API_KEY=sk-ant-...
+# Real environment variables win over the file.
+_env_file = BASE_DIR / ".env"
+if _env_file.exists():
+    for _line in _env_file.read_text(encoding="utf-8").splitlines():
+        _name, _sep, _value = _line.strip().partition("=")
+        if _sep and _name and not _name.startswith("#"):
+            os.environ.setdefault(_name.strip(), _value.strip().strip('"').strip("'"))
 
 SECRET_KEY = 'replace-this-with-a-secure-key'
 DEBUG = True
@@ -17,7 +31,8 @@ INSTALLED_APPS = [
     'market',
     "prediction",
     "patterns",
-    "paper_trading"
+    "paper_trading",
+    "ai_prediction",
 ]
 # Local development settings note: update SECRET_KEY and DEBUG for production
 
@@ -50,6 +65,10 @@ MARKET_HOLIDAYS = [
 ENABLE_MARKET_CONTEXT = False
 YFINANCE_DEFAULT_SUFFIX = ".NS"
 ML_MODELS_DIR = BASE_DIR / "ml_models"
+
+# AI Prediction page (Claude). Key: ANTHROPIC_API_KEY in the environment or .env
+AI_PREDICTION_MODEL = os.environ.get("AI_PREDICTION_MODEL", "claude-opus-5-5")
+AI_PREDICTION_EFFORT = os.environ.get("AI_PREDICTION_EFFORT", "high")   # low | medium | high | xhigh | max
 ROOT_URLCONF = 'sethu_project.urls'
 
 TEMPLATES = [

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Paper Trading</title>
+<title>{% if book == 2 %}Paper Trading 2{% else %}Paper Trading{% endif %}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
@@ -237,6 +237,32 @@
   .use-btn:disabled{ opacity:.4; cursor:not-allowed; }
   .sig-note{ font-size:11.5px; color:var(--text-muted); margin-top:10px; line-height:1.5; }
   .sig-why{ font-size:11px; color:var(--text-muted); }
+
+  /* ---------- chart toolbar: timeframe + price marks ---------- */
+  .chart-toolbar{ display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px 14px; padding:8px 10px 4px; }
+  .tf-seg{ display:inline-flex; border:1px solid var(--border); border-radius:8px; padding:2px; background:#fff; }
+  .tf-seg button{ border:none; background:none; font-size:12.5px; font-weight:700; padding:5px 12px; border-radius:6px; cursor:pointer; color:var(--text-muted); font-family:'JetBrains Mono',monospace; }
+  .tf-seg button.active{ background:var(--navy-800); color:#fff; }
+  .mark-tools{ display:flex; flex-wrap:wrap; align-items:center; gap:6px; }
+  .tool-btn{ border:1px solid var(--border); background:#fff; border-radius:6px; padding:5px 10px; font-size:12px; font-weight:600; color:var(--navy-800); cursor:pointer; font-family:inherit; }
+  .tool-btn.active{ background:#FEF3C7; border-color:#F59E0B; color:#92400E; }
+  #markInput{ width:96px; border:1px solid var(--border); border-radius:6px; padding:5px 8px; font-size:12px; font-family:'JetBrains Mono',monospace; }
+  .mark-chips{ display:flex; flex-wrap:wrap; gap:4px; }
+  .mark-chip{ display:inline-flex; align-items:center; gap:4px; background:#FEF3C7; color:#92400E; border-radius:999px; padding:2px 4px 2px 9px; font-size:11.5px; font-family:'JetBrains Mono',monospace; }
+  .mark-chip button, .mark-clear{ border:none; background:none; cursor:pointer; color:#92400E; font-size:11px; padding:0 4px; }
+  .chart-box{ position:relative; }
+  /* ---------- order type / limit ---------- */
+  .ot-seg button.active{ background:var(--navy-800); color:#fff; }
+  .limit-note{ font-size:11.5px; color:var(--text-muted); margin-top:4px; }
+  .btn-cancel{ border:1px solid var(--red); background:#fff; color:var(--red); border-radius:6px; padding:2px 9px; font-size:11.5px; font-weight:600; cursor:pointer; font-family:inherit; }
+  .st-pill{ font-size:10.5px; font-weight:700; padding:2px 8px; border-radius:999px; text-transform:uppercase; letter-spacing:.03em; }
+  .st-pill.open{ background:var(--blue-50); color:var(--blue-600); }
+  .st-pill.filled{ background:var(--green-bg); color:var(--green); }
+  .st-pill.cancelled, .st-pill.expired{ background:var(--panel); color:var(--text-muted); border:1px solid var(--border); }
+  .st-pill.rejected{ background:var(--red-bg); color:var(--red); }
+  .type-tag{ font-size:10px; font-weight:700; padding:1px 6px; border-radius:4px; background:var(--blue-50); color:var(--blue-600); margin-left:6px; }
+  .table-caption{ font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--text-muted); padding:10px 12px 4px; }
+  .wallet-add .btn-ghost{ padding:8px 12px; }
 </style>
 </head>
 <body>
@@ -245,7 +271,7 @@
 
 <div class="wrap">
   <div class="page-head">
-    <div class="title">Paper Trading <span class="tag">Practice with live &amp; replayed markets · virtual money</span></div>
+    <div class="title">{% if book == 2 %}Paper Trading 2 <span class="tag">A separate account · its own wallet, orders and positions</span>{% else %}Paper Trading <span class="tag">Practice with live &amp; replayed markets · virtual money</span>{% endif %}</div>
     <div class="nav-wallet">Wallet<strong id="navBalance">₹0.00</strong></div>
   </div>
   <div class="filter-bar">
@@ -297,9 +323,25 @@
       </div>
 
       <div class="card chart-card">
+        <div class="chart-toolbar">
+          <div class="tf-seg" id="tfToggle" role="group" aria-label="Candle timeframe">
+            <button type="button" data-tf="1m" title="1-minute candles (from Yahoo; Old mode: last ~30 days only)">1m</button>
+            <button type="button" data-tf="5m" class="active">5m</button>
+            <button type="button" data-tf="10m">10m</button>
+            <button type="button" data-tf="15m">15m</button>
+          </div>
+          <div class="mark-tools">
+            <button class="tool-btn" id="markBtn" type="button" title="Then click the chart where you want a horizontal line">― Mark price</button>
+            <input type="number" id="markInput" step="0.05" min="0" inputmode="decimal" placeholder="Price" aria-label="Price to mark">
+            <button class="tool-btn" id="markAddBtn" type="button">Add line</button>
+            <div class="mark-chips" id="markChips"></div>
+          </div>
+        </div>
         <div class="prev-legend" id="prevLegend"></div>
-        <div class="ohlc-legend" id="ohlcLegend"></div>
-        <div id="chart"></div>
+        <div class="chart-box">
+          <div class="ohlc-legend" id="ohlcLegend"></div>
+          <div id="chart"></div>
+        </div>
         <div class="chart-empty" id="chartEmpty">Select a company, choose Live or Old, then press Show.</div>
       </div>
 
@@ -334,10 +376,13 @@
       <div class="tabs">
         <button class="tab active" data-tab="positions" type="button">Positions</button>
         <button class="tab" data-tab="orders" type="button">Orders</button>
+        <button class="tab" data-tab="trades" type="button" title="One row per completed trade: entry, exit, P&amp;L">Trades</button>
       </div>
       <div class="card table-wrap" style="border-top:none; border-radius:0 0 10px 10px;">
         <table id="positionsTable"></table>
+        <table id="limitTable" hidden></table>
         <table id="ordersTable" hidden></table>
+        <table id="tradesTable" hidden></table>
       </div>
     </section>
 
@@ -352,13 +397,19 @@
           <div class="wide">Open P&amp;L (all positions)<strong id="walletUnrealized">₹0.00</strong></div>
         </div>
         <div class="wallet-add">
-          <input type="number" id="walletInput" min="1" step="0.01" inputmode="decimal" placeholder="Amount to add">
+          <input type="number" id="walletInput" min="1" step="0.01" inputmode="decimal" placeholder="Amount">
           <button class="btn-primary" id="walletAddBtn" type="button">Add</button>
+          <button class="btn-ghost" id="walletWithdrawBtn" type="button" title="Take money out of the available balance">Withdraw</button>
         </div>
       </div>
 
       <div class="card order-card">
-        <div class="card-title"><span>Place order</span><span>Market</span></div>
+        <div class="card-title"><span>Place order</span>
+          <div class="mini-seg ot-seg" id="orderTypeToggle" role="group" aria-label="Order type">
+            <button type="button" data-ot="MARKET" class="active">Market</button>
+            <button type="button" data-ot="LIMIT">Limit</button>
+          </div>
+        </div>
         <div class="order-head">
           <span class="order-symbol" id="orderSymbol">—</span>
           <span class="order-ltp" id="orderLtp">—</span>
@@ -382,6 +433,14 @@
             <input type="number" id="qtyInput" min="1" step="1" value="1" inputmode="numeric">
             <button class="chip" id="maxBtn" type="button" title="Largest quantity your wallet can open">Max</button>
           </div>
+        </div>
+        <div class="field" id="limitField" hidden>
+          <label for="limitPrice">Limit price</label>
+          <div class="qty-row">
+            <input type="number" id="limitPrice" min="0" step="0.05" inputmode="decimal" placeholder="Your price">
+            <button class="chip" id="limitLtpBtn" type="button" title="Start from the last price">LTP</button>
+          </div>
+          <div class="limit-note" id="limitNote"></div>
         </div>
         <div class="order-meta"><span>Approx. value</span><strong id="orderValue">—</strong></div>
         <div class="order-meta"><span>Max you can open</span><strong id="orderMax">—</strong></div>
@@ -448,8 +507,13 @@
 /* ======================================================================
    config
    ====================================================================== */
+const BOOK = {{ book }};                 // 1 = Paper Trading, 2 = Paper Trading 2 (separate account)
 const URLS = {
-  page:      "{% url 'paper_trading:page' %}",
+  page:      "{{ page_url }}",
+  walletWithdraw: "{% url 'paper_trading:wallet_withdraw' %}",
+  limitCancel: "{% url 'paper_trading:limit_cancel' 0 %}",
+  limitFill:   "{% url 'paper_trading:limit_fill' 0 %}",
+  limitExpire: "{% url 'paper_trading:limit_expire' %}",
   account:   "{% url 'paper_trading:account' %}",
   walletAdd: "{% url 'paper_trading:wallet_add' %}",
   order:     "{% url 'paper_trading:order' %}",
@@ -461,6 +525,7 @@ const URLS = {
   signals:   "{% url 'paper_trading:signals' 'CODE_PLACEHOLDER' %}",
 };
 const forCompany = (tpl, code) => tpl.replace('CODE_PLACEHOLDER', encodeURIComponent(code));
+const forId = (tpl, id) => tpl.replace('/0/', `/${id}/`);
 
 const INITIAL = JSON.parse(document.getElementById('initial-state').textContent);
 const SQUAREOFF_LABEL = "{{ squareoff_label }}";
@@ -495,6 +560,10 @@ const S = {
   cooldown: {},                                         // position key -> time before which we won't retry an auto exit
   lastSkipMsg: '',
   pollTimer: null, gen: 0, busy: false,
+  orderType: 'MARKET',                                  // order ticket: MARKET or LIMIT
+  tf: '5m', min1: null, min1Shown: 0,                   // chart timeframe; 1-minute candles (Yahoo)
+  marks: [], markLines: [], markMode: false,            // horizontal price marks on the chart
+  idleTimer: null, limitBusy: false, limitRetry: {}, tab: 'positions',
 };
 // Strategy signals: data from the server, which strategies are shown, and what is drawn on the chart.
 const SG = { data: null, show: {}, onlyQualified: true, idx: new Map(), drawnKey: '', lines: [], openLevels: [] };
@@ -520,6 +589,10 @@ const els = {
   prevLegend: $('prevLegend'), dirToggle: $('dirToggle'), bracketNote: $('bracketNote'), updateBracket: $('updateBracketBtn'),
   sigCard: $('sigCard'), sigMeta: $('sigMeta'), sigOnly: $('sigOnly'), sigStrategies: $('sigStrategies'),
   sigList: $('sigList'), sigNote: $('sigNote'),
+  walletWithdraw: $('walletWithdrawBtn'), orderTypeToggle: $('orderTypeToggle'), limitField: $('limitField'),
+  limitPrice: $('limitPrice'), limitLtp: $('limitLtpBtn'), limitNote: $('limitNote'),
+  limitTable: $('limitTable'), tradesTable: $('tradesTable'), tfToggle: $('tfToggle'),
+  markBtn: $('markBtn'), markInput: $('markInput'), markAdd: $('markAddBtn'), markChips: $('markChips'),
 };
 // Stop loss / target inputs. `src` remembers which box the user typed in last
 // ('pct' or 'price'); the other box is always derived from it.
@@ -550,6 +623,7 @@ function csrfToken() {
 }
 
 async function apiFetch(url, options = {}) {
+  if (!options.method || options.method === 'GET') url += (url.includes('?') ? '&' : '?') + 'book=' + BOOK;
   const res = await fetch(url, options);
   let data = {};
   try { data = await res.json(); } catch (e) { /* non-JSON error page */ }
@@ -559,7 +633,7 @@ async function apiFetch(url, options = {}) {
 const postJson = (url, body) => apiFetch(url, {
   method: 'POST',
   headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken() },
-  body: JSON.stringify(body),
+  body: JSON.stringify(Object.assign({ book: BOOK }, body)),
 });
 
 function toast(message, kind = 'info') {
@@ -584,7 +658,8 @@ const positionFor = (code, product = S.product) =>
   S.account.positions.find((p) => p.company === code && p.product === product) || null;
 const selPos = () => (S.company ? positionFor(S.company, S.product) : null);
 const posKey = (p) => `${p.company}|${p.product}`;
-const heldCodes = () => [...new Set(S.account.positions.map((p) => p.company))];
+const openLimits = () => (S.account.limit_orders || []).filter((o) => o.status === 'OPEN');
+const heldCodes = () => [...new Set(S.account.positions.map((p) => p.company).concat(openLimits().map((o) => o.company)))];
 // anything that would be lost / confused by rewinding the replay day
 const hasDayPositions = () => S.account.positions.some(
   (p) => p.product === 'INTRADAY' || (p.last_entry_at && p.last_entry_at.slice(0, 10) === S.date));
@@ -647,6 +722,12 @@ function initChart() {
       return { priceRange: { minValue: lo, maxValue: hi }, margins: res.margins };
     },
   });
+  S.chart.subscribeClick((param) => {          // "Mark price": a click on the chart drops a line there
+    if (!S.markMode || !param || !param.point) return;
+    const price = S.series.coordinateToPrice(param.point.y);
+    setMarkMode(false);
+    if (price != null) addMark(price);
+  });
   S.chart.subscribeCrosshairMove((param) => {
     const bar = param && param.time && param.seriesData ? param.seriesData.get(S.series) : null;
     showLegend(bar || S.lastBar);
@@ -667,7 +748,7 @@ function refreshScale() {
 }
 
 function extraScalePrices() {
-  const out = [];
+  const out = [...S.marks];
   if (S.fitPrev && S.prev) out.push(S.prev.open, S.prev.high, S.prev.low, S.prev.close);
   const pos = selPos();
   if (pos) {
@@ -825,7 +906,14 @@ function renderOrderPanel() {
   els.orderPosition.innerHTML = html;
 
   const qty = parseInt(els.qty.value, 10);
-  els.orderValue.textContent = ltp != null && qty > 0 ? money(qty * ltp) : '—';
+  const isLimit = S.orderType === 'LIMIT';
+  els.orderTypeToggle.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.ot === S.orderType));
+  els.limitField.hidden = !isLimit;
+  const lp = parseFloat(els.limitPrice.value);
+  const px = isLimit && lp > 0 ? lp : ltp;
+  els.orderValue.textContent = px != null && qty > 0 ? money(qty * px) : '—';
+  els.limitNote.textContent = isLimit && lp > 0
+    ? `BUY fills when the price is ₹${nf.format(lp)} or lower · SELL when ₹${nf.format(lp)} or higher.` : '';
   els.orderMax.textContent = ltp != null ? String(Math.floor(S.account.balance / ltp)) : '—';
 
   const reason = tradeBlockReason();
@@ -836,7 +924,9 @@ function renderOrderPanel() {
   els.hint.className = 'order-hint' + (reason ? ' blocked' : '');
   els.hint.textContent = reason
     || (noHolding ? 'You hold nothing in Delivery, so there is nothing to sell. Choose Intraday to short sell.'
-      : 'Market order · fills instantly at the last price. Buying or selling needs the order value in your wallet.');
+      : isLimit
+        ? 'Limit order · fills only at your price or better. If the price is already there it fills now; otherwise it waits (Orders tab) and expires at the day\'s close.'
+        : 'Market order · fills instantly at the last price. Buying or selling needs the order value in your wallet.');
   renderLevels();
 }
 
@@ -849,7 +939,12 @@ const levelSign = () => {
 };
 // With an open position, % is measured from its average price (same as the server);
 // otherwise from the current price, which is where a market order will fill.
-const levelAnchor = () => { const pos = selPos(); return pos ? pos.avg_price : currentLtp(); };
+const levelAnchor = () => {
+  const pos = selPos();
+  if (pos) return pos.avg_price;
+  const lp = parseFloat(els.limitPrice.value);
+  return S.orderType === 'LIMIT' && lp > 0 ? lp : currentLtp();
+};
 const priceFromPct = (kind, pct, sign, a) => (kind === 'sl' ? a * (1 - (sign * pct) / 100) : a * (1 + (sign * pct) / 100));
 const pctFromPrice = (kind, price, sign, a) => (kind === 'sl' ? ((a - price) * sign * 100) / a : ((price - a) * sign * 100) / a);
 
@@ -952,7 +1047,7 @@ function renderOrders() {
       <td class="num">${when}</td>
       <td><strong>${esc(o.company)}</strong></td>
       <td><span class="prod-pill ${esc(o.product.toLowerCase())}">${esc(PRODUCT_LABEL[o.product] || o.product)}</span></td>
-      <td><span class="side-pill ${o.side.toLowerCase()}">${o.side}</span>${o.reason ? `<span class="reason-tag ${esc(o.reason)}">${esc(REASON_LABEL[o.reason] || o.reason)}</span>` : ''}</td>
+      <td><span class="side-pill ${o.side.toLowerCase()}">${o.side}</span>${o.order_type === 'LIMIT' ? '<span class="type-tag">LIMIT</span>' : ''}${o.reason ? `<span class="reason-tag ${esc(o.reason)}">${esc(REASON_LABEL[o.reason] || o.reason)}</span>` : ''}</td>
       <td class="num">${o.quantity}</td>
       <td class="num">${nf.format(o.price)}</td>
       <td class="num">${realized}</td>
@@ -962,6 +1057,78 @@ function renderOrders() {
   els.ordTable.innerHTML =
     `<thead><tr><th class="num">Time (IST)</th><th>Symbol</th><th>Product</th><th>Side</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Realized P&amp;L</th><th class="num">Wallet after</th></tr></thead>` +
     `<tbody>${rows || '<tr><td colspan="8" class="empty-row">No orders in this session yet.</td></tr>'}</tbody>`;
+}
+
+const dtText = (iso) => {           // "10:35" today, "09 Oct 10:35" otherwise (IST)
+  if (!iso) return '—';
+  const d = new Date(iso);
+  const day = d.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  return day === today && S.mode === 'live' ? hm(iso)
+    : d.toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' });
+};
+
+function renderLimitOrders() {
+  const list = S.account.limit_orders || [];
+  els.limitTable.hidden = S.tab !== 'orders' || !list.length;
+  if (!list.length) { els.limitTable.innerHTML = ''; return; }
+  const rows = list.map((o) => {
+    let status;
+    if (o.status === 'OPEN') status = `<span class="st-pill open">Open</span> <button class="btn-cancel" data-cancel="${o.id}" type="button">Cancel</button>`;
+    else if (o.status === 'FILLED') status = `<span class="st-pill filled">Filled</span> <small>@ ${nf.format(o.filled_price)}${o.filled_at ? ' · ' + hm(o.filled_at) : ''}</small>`;
+    else status = `<span class="st-pill ${o.status.toLowerCase()}" title="${esc(o.status_note)}">${esc(o.status)}</span>`;
+    return `<tr>
+      <td class="num">${hm(o.placed_at)}</td>
+      <td><strong>${esc(o.company)}</strong></td>
+      <td><span class="prod-pill ${esc(o.product.toLowerCase())}">${esc(PRODUCT_LABEL[o.product] || o.product)}</span></td>
+      <td><span class="side-pill ${o.side.toLowerCase()}">${o.side}</span><span class="type-tag">LIMIT</span></td>
+      <td class="num">${o.quantity}</td>
+      <td class="num">${nf.format(o.limit_price)}</td>
+      <td>${status}</td>
+    </tr>`;
+  }).join('');
+  els.limitTable.innerHTML =
+    `<caption class="table-caption" style="caption-side:top;text-align:left">Limit orders</caption>` +
+    `<thead><tr><th class="num">Placed (IST)</th><th>Symbol</th><th>Product</th><th>Side</th><th class="num">Qty</th><th class="num">Limit price</th><th>Status</th></tr></thead><tbody>${rows}</tbody>`;
+}
+
+const heldText = (m) => (m == null ? '—' : m < 60 ? `${m} min` : m < 1440 ? `${Math.floor(m / 60)} h ${m % 60} m` : `${Math.floor(m / 1440)} d`);
+const EXIT_LABEL = { manual: 'Manual', stop_loss: 'SL hit', target: 'Target hit', session_end: 'Auto close' };
+
+function renderTrades() {
+  const list = S.account.trades || [];
+  let total = 0, wins = 0, closed = 0;
+  const rows = list.map((t) => {
+    const sign = t.side === 'LONG' ? 1 : -1;
+    let pnl = t.pnl, pct = t.pnl_pct, open = t.status === 'OPEN';
+    if (open) {
+      const l = ltpFor(t.company);
+      pnl = l != null ? (l - t.entry_price) * t.quantity * sign : null;
+      pct = pnl != null ? (pnl / (t.entry_price * t.quantity)) * 100 : null;
+    } else { total += pnl; closed += 1; if (pnl > 0) wins += 1; }
+    const exitBy = open ? '<span class="st-pill open">Open</span>'
+      : esc(EXIT_LABEL[t.exit_reason] || t.exit_reason) + (t.exit_type === 'LIMIT' ? '<span class="type-tag">LIMIT</span>' : '');
+    return `<tr>
+      <td><strong>${esc(t.company)}</strong></td>
+      <td><span class="prod-pill ${esc(t.product.toLowerCase())}">${esc(PRODUCT_LABEL[t.product] || t.product)}</span></td>
+      <td><span class="side-pill ${t.side.toLowerCase()}">${t.side}</span></td>
+      <td class="num">${t.quantity}</td>
+      <td class="num">${dtText(t.entry_time)}</td>
+      <td class="num">${nf.format(t.entry_price)}</td>
+      <td class="num">${dtText(t.exit_time)}</td>
+      <td class="num">${t.exit_price != null ? nf.format(t.exit_price) : '—'}</td>
+      <td class="num ${pnl != null ? tone(pnl) : 'flat'}">${pnl != null ? pnlText(pnl) : '—'}${open && pnl != null ? '<br><small>unrealized</small>' : ''}</td>
+      <td class="num ${pct != null ? tone(pct) : 'flat'}">${pct != null ? (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%' : '—'}</td>
+      <td class="num">${heldText(t.minutes)}</td>
+      <td>${exitBy}</td>
+    </tr>`;
+  }).join('');
+  const foot = closed
+    ? `<tfoot><tr><td colspan="8">${closed} closed trade${closed === 1 ? '' : 's'} · ${wins} won (${Math.round((wins / closed) * 100)}%)</td>
+       <td class="num ${tone(total)}">${pnlText(total)}</td><td colspan="3"></td></tr></tfoot>` : '';
+  els.tradesTable.innerHTML =
+    `<thead><tr><th>Symbol</th><th>Product</th><th>Side</th><th class="num">Qty</th><th class="num">Entry</th><th class="num">Entry price</th><th class="num">Exit</th><th class="num">Exit price</th><th class="num">P&amp;L</th><th class="num">P&amp;L %</th><th class="num">Held</th><th>Exit by</th></tr></thead>` +
+    `<tbody>${rows || '<tr><td colspan="12" class="empty-row">No trades yet.</td></tr>'}</tbody>${foot}`;
 }
 
 function renderReplayControls() {
@@ -977,7 +1144,8 @@ function renderReplayControls() {
 }
 
 function renderAll() {
-  renderWallet(); renderQuote(); renderOrderPanel(); renderPositions(); renderOrders(); renderReplayControls();
+  renderWallet(); renderQuote(); renderOrderPanel(); renderPositions(); renderOrders(); renderLimitOrders(); renderTrades();
+  renderReplayControls();
 }
 
 /* ======================================================================
@@ -988,9 +1156,150 @@ async function refreshAccount() {
   if (S.mode === 'replay' && S.date) q.set('date', S.date);
   if (S.company) q.set('company', S.company);
   S.account = await apiFetch(URLS.account + '?' + q);
+  (S.account.limit_fills || []).forEach((o) => toast(`Limit filled: ${o.side} ${o.quantity} ${o.company} @ ${nf.format(o.price)}`, 'success'));
   updateAvgLine();
   renderAll();
   if (S.mode === 'replay' && S.date) ensureBooks(S.gen);     // price the other stocks we hold
+}
+
+/* ======================================================================
+   chart timeframe: 1m (Yahoo), 5m (the data), 10m / 15m (5-minute candles merged)
+   ====================================================================== */
+const TF_SEC = { '1m': 60, '5m': 300, '10m': 600, '15m': 900 };
+function bucketOf(t, tf = S.tf) {          // start of the candle `t` falls in; candles start at 09:15
+  const sec = TF_SEC[tf];
+  const anchor = t - (t % 86400) + 9 * 3600 + 15 * 60;
+  return t < anchor ? t - (t % sec) : anchor + Math.floor((t - anchor) / sec) * sec;
+}
+const tfTime = (iso) => bucketOf(chartTime(iso));
+function aggregate(bars) {
+  const out = [];
+  for (const b of bars) {
+    const k = bucketOf(b.time), last = out[out.length - 1];
+    if (last && last.time === k) { last.high = Math.max(last.high, b.high); last.low = Math.min(last.low, b.low); last.close = b.close; }
+    else out.push({ time: k, open: b.open, high: b.high, low: b.low, close: b.close });
+  }
+  return out;
+}
+const fromFive = (bars) => (S.tf === '5m' ? bars : aggregate(bars));
+const min1Bars = () => (S.min1 || []).map(toBar);
+async function loadMin1() {
+  const q = new URLSearchParams({ mode: S.mode, interval: '1m' });
+  if (S.mode === 'replay') q.set('date', S.date);
+  S.min1 = (await apiFetch(forCompany(URLS.candles, S.company) + '?' + q)).candles;
+}
+
+// Old mode: show the current replay frame in the chosen timeframe; returns the last bar shown
+function showReplayBar(bar) {
+  if (S.tf === '5m') { S.series.update(bar); return bar; }
+  if (S.tf === '1m') {                       // reveal the completed real 1-minute candles up to the replay clock
+    const clock = bar.time + Math.floor((R.tick * 300) / TICKS);
+    const all = min1Bars();
+    let n = 0;
+    while (n < all.length && all[n].time + 60 <= clock) n += 1;
+    if (n !== S.min1Shown) { S.series.setData(all.slice(0, n)); S.min1Shown = n; }
+    return n ? all[n - 1] : null;
+  }
+  const k = bucketOf(bar.time);              // 10m / 15m: sealed 5-minute candles of this bucket + the forming one
+  const agg = { time: k, open: bar.open, high: bar.high, low: bar.low, close: bar.close };
+  for (let i = R.idx - 1; i >= 0; i -= 1) {
+    const c = S.candles[i];
+    if (bucketOf(chartTime(c.x)) !== k) break;
+    agg.open = c.o; agg.high = Math.max(agg.high, c.h); agg.low = Math.min(agg.low, c.l);
+  }
+  S.series.update(agg);
+  return agg;
+}
+function showWholeReplayDay() {
+  S.series.setData(S.tf === '1m' ? min1Bars() : fromFive(S.candles.map(toBar)));
+}
+
+async function setTf(tf) {
+  if (tf === S.tf) return;
+  const prev = S.tf;
+  const mark = (t) => els.tfToggle.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.tf === t));
+  S.tf = tf; mark(tf);
+  if (!S.company || !S.candles.length) return;
+  if (tf === '1m') {
+    try { await loadMin1(); } catch (e) { toast(e.message, 'error'); S.tf = prev; mark(prev); return; }
+  }
+  SG.drawnKey = '';
+  if (S.mode === 'live') {
+    await pollLive(S.gen, true);
+  } else if (R.finished) {
+    showWholeReplayDay(); drawSignals();
+  } else {
+    S.min1Shown = -1;
+    S.series.setData(tf === '1m' ? [] : fromFive(S.candles.slice(0, R.idx).map(toBar)));
+    applyReplayFrame();
+  }
+  S.chart.timeScale().scrollToRealTime();
+}
+
+/* ---------------- horizontal price marks (kept per stock in this browser) ---------------- */
+const markKey = () => `paper:marks:${BOOK}:${S.company}`;
+function loadMarks() {
+  let m = [];
+  try { m = JSON.parse(localStorage.getItem(markKey()) || '[]'); } catch (e) { m = []; }
+  S.marks = Array.isArray(m) ? m.filter((v) => Number.isFinite(v)) : [];
+  drawMarks();
+}
+function saveMarks() { try { localStorage.setItem(markKey(), JSON.stringify(S.marks)); } catch (e) { /* storage off */ } }
+function drawMarks() {
+  S.markLines.forEach((l) => S.series.removePriceLine(l));
+  S.markLines = S.marks.map((p) => S.series.createPriceLine({
+    price: p, color: '#F59E0B', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'Mark',
+  }));
+  els.markChips.innerHTML = S.marks.map((p, i) => `<span class="mark-chip">${nf.format(p)}<button type="button" data-mark="${i}" title="Remove this line">✕</button></span>`).join('')
+    + (S.marks.length > 1 ? '<button type="button" class="mark-clear" data-mark="all">Clear all</button>' : '');
+  refreshScale();
+}
+function addMark(price) {
+  if (!S.company) { toast('Show a stock first, then mark a price on its chart.', 'error'); return; }
+  if (!(price > 0)) { toast('Enter a price above zero.', 'error'); return; }
+  S.marks.push(round2(price));
+  S.marks.sort((a, b) => b - a);
+  saveMarks(); drawMarks();
+}
+function setMarkMode(on) {
+  S.markMode = on;
+  els.markBtn.classList.toggle('active', on);
+  els.markBtn.textContent = on ? 'Click the chart…' : '― Mark price';
+  els.chart.style.cursor = on ? 'crosshair' : '';
+}
+
+/* ---------------- Old mode: limit orders fill when the replay price reaches them ---------------- */
+function checkReplayLimits() {
+  if (S.mode !== 'replay' || S.limitBusy) return;
+  const now = Date.now();
+  for (const lo of openLimits()) {
+    if (lo.mode !== 'replay' || lo.context !== S.date || now < (S.limitRetry[lo.id] || 0)) continue;
+    const q = R.q[lo.company];
+    if (!q || q.price == null || new Date(q.x).getTime() < new Date(lo.placed_at).getTime()) continue;
+    if (lo.side === 'BUY' ? q.price > lo.limit_price : q.price < lo.limit_price) continue;
+    fillReplayLimit(lo, q.x);
+    return;
+  }
+}
+async function fillReplayLimit(lo, x) {
+  S.limitBusy = true;
+  try {
+    const res = await postJson(forId(URLS.limitFill, lo.id), { market_time: x });
+    if (res.order) toast(`Limit filled: ${res.order.side} ${res.order.quantity} ${res.order.company} @ ${nf.format(res.order.price)}`, 'success');
+    else if (res.limit_order.status === 'REJECTED') toast(`Limit order rejected: ${res.limit_order.status_note}`, 'error');
+    await refreshAccount();
+  } catch (e) {
+    S.limitRetry[lo.id] = Date.now() + 10000;
+  } finally {
+    S.limitBusy = false;
+  }
+}
+async function cancelLimit(id) {
+  try {
+    await postJson(forId(URLS.limitCancel, id), {});
+    toast('Limit order cancelled.', 'info');
+    await refreshAccount();
+  } catch (e) { toast(e.message, 'error'); }
 }
 
 /* ======================================================================
@@ -1031,14 +1340,26 @@ async function pollLive(gen, first) {
     if (first || (data.previous_day && (!S.prev || data.previous_day.date !== S.prev.date))) applyPrevDay(data.previous_day);
 
     const bars = data.candles.map(toBar);
-    if (first || bars.length < S.barCount) {
-      S.series.setData(bars);
-      S.chart.timeScale().scrollToRealTime();
+    if (S.tf === '5m') {
+      if (first || bars.length < S.barCount) {
+        S.series.setData(bars);
+        S.chart.timeScale().scrollToRealTime();
+      } else {
+        bars.slice(Math.max(0, S.barCount - 1)).forEach((b) => S.series.update(b));
+      }
+      S.barCount = bars.length;
+      S.lastBar = bars.length ? bars[bars.length - 1] : null;
     } else {
-      bars.slice(Math.max(0, S.barCount - 1)).forEach((b) => S.series.update(b));
+      if (S.tf === '1m') {
+        try { await loadMin1(); } catch (e) { /* keep the last 1-minute data */ }
+        if (gen !== S.gen) return;
+      }
+      const shown = S.tf === '1m' ? min1Bars() : aggregate(bars);
+      S.series.setData(shown);
+      if (first) S.chart.timeScale().scrollToRealTime();
+      S.barCount = -1;                       // a full redraw when 5m is picked again
+      S.lastBar = shown.length ? shown[shown.length - 1] : null;
     }
-    S.barCount = bars.length;
-    S.lastBar = bars.length ? bars[bars.length - 1] : null;
     showLegend(S.lastBar);
 
     els.chartEmpty.hidden = bars.length > 0;
@@ -1056,7 +1377,11 @@ async function pollLive(gen, first) {
 
     await refreshOtherQuotes(gen);                    // every other stock we hold
     if (gen !== S.gen) return;
-    renderOrderPanel(); renderPositions(); renderWallet();
+    if (openLimits().some((o) => o.mode === 'live')) {   // the server fills / expires live limit orders
+      await refreshAccount();
+      if (gen !== S.gen) return;
+    }
+    renderOrderPanel(); renderPositions(); renderWallet(); renderTrades();
     await maybeSquareoff(gen);
     if (gen !== S.gen) return;
     checkLevelTriggers();
@@ -1125,7 +1450,7 @@ function drawSignals() {
   if (!S.series) return;
   const list = SG.data ? SG.data.signals.filter((sg) => signalVisible(sg) && entryShown(sg)) : [];
   const key = list.map((sg) => sg.entry_x + sg.strategy + (exitShown(sg) ? 'x' : '')).join('|') +
-    '#' + Object.keys(SG.show).filter((k) => SG.show[k]).join(',') + SG.onlyQualified;
+    '#' + Object.keys(SG.show).filter((k) => SG.show[k]).join(',') + SG.onlyQualified + S.tf;
   if (key === SG.drawnKey) return;
   SG.drawnKey = key;
 
@@ -1133,13 +1458,13 @@ function drawSignals() {
   list.forEach((sg) => {
     const buy = sg.side === 'BUY';
     markers.push({
-      time: chartTime(sg.entry_x), position: buy ? 'belowBar' : 'aboveBar', shape: buy ? 'arrowUp' : 'arrowDown',
+      time: tfTime(sg.entry_x), position: buy ? 'belowBar' : 'aboveBar', shape: buy ? 'arrowUp' : 'arrowDown',
       color: buy ? '#0EA968' : '#E5484D', text: `${sg.label} ${buy ? 'BUY' : 'SELL'} ${nf.format(sg.entry)}`,
     });
     if (exitShown(sg)) {
       const win = sg.result_r > 0;
       markers.push({
-        time: chartTime(sg.exit_x), position: buy ? 'aboveBar' : 'belowBar', shape: 'circle',
+        time: tfTime(sg.exit_x), position: buy ? 'aboveBar' : 'belowBar', shape: 'circle',
         color: win ? '#0A8A54' : '#C93A3F',
         text: `${sg.label} EXIT ${nf.format(sg.exit_price)} (${sg.result_r > 0 ? '+' : ''}${sg.result_r.toFixed(2)}R)`,
       });
@@ -1300,11 +1625,10 @@ function applyReplayFrame() {
   const path = pathFor(S.company, c);
   const seen = path.slice(0, R.tick + 1);
   const bar = { time: chartTime(c.x), open: c.o, high: Math.max(...seen), low: Math.min(...seen), close: path[R.tick] };
-  S.series.update(bar);
-  S.lastBar = bar;
+  S.lastBar = showReplayBar(bar) || bar;
   S.replayClock = { date: S.date, x: c.x };
   updateReplayQuotes(true);
-  showLegend(bar);
+  showLegend(S.lastBar);
 
   const secs = Math.floor((R.tick * 300) / TICKS);
   const d = new Date((chartTime(c.x) + secs) * 1000);
@@ -1313,10 +1637,11 @@ function applyReplayFrame() {
   renderQuote(); renderOrderPanel(); renderPositions(); renderWallet();
   drawSignals();
   checkLevelTriggers();
+  checkReplayLimits();
 }
 
 function sealCurrentBar() {           // make sure a candle we leave is stored at its true OHLC
-  S.series.update(toBar(S.candles[R.idx]));
+  if (S.tf === '5m') S.series.update(toBar(S.candles[R.idx]));
 }
 
 function atEnd() { return R.idx === S.candles.length - 1 && R.tick === TICKS - 1; }
@@ -1365,7 +1690,7 @@ function closingQuote(code) {
 async function finishReplay() {
   pause();
   R.finished = true;
-  S.series.update(toBar(S.candles[R.idx]));
+  showWholeReplayDay();
   SG.drawnKey = ''; drawSignals();
   renderAll();
   const hasDelivery = S.account.positions.some((p) => p.product === 'DELIVERY');
@@ -1379,6 +1704,10 @@ async function finishReplay() {
     await submitOrder(pos.quantity > 0 ? 'SELL' : 'BUY', Math.abs(pos.quantity),
       { auto: true, reason: 'session_end', company: pos.company, product: 'INTRADAY', override: q });
   }
+  // the day is over: its limit orders that never filled expire
+  if (openLimits().some((o) => o.mode === 'replay' && o.context === S.date)) {
+    try { await postJson(URLS.limitExpire, { date: S.date }); await refreshAccount(); } catch (e) { /* shown next refresh */ }
+  }
 }
 
 function restartReplay() {
@@ -1387,7 +1716,7 @@ function restartReplay() {
   R.finished = false; R.idx = 0; R.tick = 0; R.q = {};
   S.replayClock = null;
   S.series.setData([]);
-  S.barCount = 0;
+  S.barCount = 0; S.min1Shown = 0;
   SG.drawnKey = '';
   applyReplayFrame();
   play();
@@ -1416,7 +1745,16 @@ async function startReplay(gen) {
   } else {
     S.replayClock = null;
   }
-  S.series.setData(S.candles.slice(0, R.idx).map(toBar));
+  if (S.tf === '1m') {
+    try { await loadMin1(); } catch (e) {
+      toast(e.message + ' Showing 5m.', 'error');
+      S.tf = '5m';
+      els.tfToggle.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.tf === '5m'));
+    }
+    if (gen !== S.gen) return;
+  }
+  S.min1Shown = 0;
+  S.series.setData(S.tf === '1m' ? [] : fromFive(S.candles.slice(0, R.idx).map(toBar)));
   S.barCount = R.idx;
   applyPrevDay(data.previous_day);
   els.chartEmpty.hidden = true;
@@ -1463,6 +1801,9 @@ async function startSession() {
   const gen = ++S.gen;
   const sameReplayDay = S.uiMode === 'replay' && S.mode === 'replay' && S.date === date;
   S.mode = S.uiMode; S.date = date; S.company = code;
+  S.min1 = null; S.min1Shown = 0;
+  setMarkMode(false);
+  loadMarks();
   S.companyName = els.company.selectedOptions[0].dataset.name || '';
   S.live = null; S.quotes = {}; S.candles = []; S.barCount = 0; S.lastBar = null;
   if (!sameReplayDay) { S.books = {}; R.paths = {}; }
@@ -1554,6 +1895,13 @@ async function submitOrder(side, qty, opts = {}) {
 
   const body = Object.assign({ company: code, side, quantity: qty, mode: S.mode, product }, levels);
   if (opts.reason) body.reason = opts.reason;
+  const isLimit = !opts.auto && !opts.exit && S.orderType === 'LIMIT';
+  if (isLimit) {
+    const lp = parseFloat(els.limitPrice.value);
+    if (!(lp > 0)) { toast('Enter a limit price.', 'error'); return; }
+    body.order_type = 'LIMIT';
+    body.limit_price = lp.toFixed(2);
+  }
   if (S.mode === 'replay') {          // capture time + price together, before any await
     const q = opts.override || R.q[code];
     body.date = S.date;
@@ -1572,12 +1920,22 @@ async function submitOrder(side, qty, opts = {}) {
   try {
     const res = await postJson(URLS.order, body);
     S.account.balance = res.balance;
+    if (isLimit && !res.order) {
+      const lo = res.limit_order;
+      toast(lo.status === 'REJECTED'
+        ? `Limit order rejected: ${lo.status_note}`
+        : `Limit ${side} ${qty} ${code} @ ${nf.format(lo.limit_price)} placed - it fills when the price reaches it.`,
+        lo.status === 'REJECTED' ? 'error' : 'info');
+      if (Object.keys(levels).length) clearLevelInputs();
+      await refreshAccount();
+      return;
+    }
     const pnl = res.order.realized_pnl;
     const prefix = opts.reason === 'stop_loss' ? 'Stop loss hit: '
       : opts.reason === 'target' ? 'Target hit: '
       : opts.auto ? 'Auto square-off: ' : '';
     toast(
-      `${prefix}${side} ${qty} ${code}${product === 'DELIVERY' ? ' (Delivery)' : ''} @ ${nf.format(res.order.price)}` + (pnl !== 0 ? ` · P&L ${pnlText(pnl)}` : ''),
+      `${prefix}${isLimit ? 'Limit filled: ' : ''}${side} ${qty} ${code}${product === 'DELIVERY' ? ' (Delivery)' : ''} @ ${nf.format(res.order.price)}` + (pnl !== 0 ? ` · P&L ${pnlText(pnl)}` : ''),
       opts.reason === 'stop_loss' ? 'error' : 'success'
     );
     if (Object.keys(levels).length) clearLevelInputs();
@@ -1630,6 +1988,23 @@ async function addToWallet() {
     toast(e.message, 'error');
   } finally {
     els.walletAdd.disabled = false;
+  }
+}
+
+async function withdrawFromWallet() {
+  const amount = els.walletInput.value.trim();
+  if (!amount) { toast('Enter an amount to withdraw.', 'error'); return; }
+  els.walletWithdraw.disabled = true;
+  try {
+    const res = await postJson(URLS.walletWithdraw, { amount });
+    S.account.balance = res.balance;
+    els.walletInput.value = '';
+    renderWallet(); renderOrderPanel();
+    toast(`Withdrew ${money(Number(amount))} from your wallet.`, 'success');
+  } catch (e) {
+    toast(e.message, 'error');
+  } finally {
+    els.walletWithdraw.disabled = false;
   }
 }
 
@@ -1734,6 +2109,38 @@ els.sigList.addEventListener('click', (e) => {
 });
 
 els.walletAdd.addEventListener('click', addToWallet);
+els.walletWithdraw.addEventListener('click', withdrawFromWallet);
+els.orderTypeToggle.addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-ot]');
+  if (!b) return;
+  S.orderType = b.dataset.ot;
+  if (S.orderType === 'LIMIT' && !els.limitPrice.value && currentLtp() != null) els.limitPrice.value = currentLtp().toFixed(2);
+  renderOrderPanel();
+});
+els.limitPrice.addEventListener('input', renderOrderPanel);
+els.limitLtp.addEventListener('click', () => {
+  if (currentLtp() != null) { els.limitPrice.value = currentLtp().toFixed(2); renderOrderPanel(); }
+});
+els.limitTable.addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-cancel]');
+  if (b) { b.disabled = true; cancelLimit(parseInt(b.dataset.cancel, 10)); }
+});
+els.tfToggle.addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-tf]');
+  if (b) setTf(b.dataset.tf);
+});
+els.markBtn.addEventListener('click', () => {
+  if (!S.company) { toast('Show a stock first, then mark a price on its chart.', 'error'); return; }
+  setMarkMode(!S.markMode);
+});
+els.markAdd.addEventListener('click', () => { addMark(parseFloat(els.markInput.value)); els.markInput.value = ''; });
+els.markInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') els.markAdd.click(); });
+els.markChips.addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-mark]');
+  if (!b) return;
+  if (b.dataset.mark === 'all') S.marks = []; else S.marks.splice(parseInt(b.dataset.mark, 10), 1);
+  saveMarks(); drawMarks();
+});
 els.walletInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') addToWallet(); });
 
 els.playBtn.addEventListener('click', () => (R.playing ? pause() : play()));
@@ -1746,24 +2153,44 @@ els.speed.addEventListener('change', () => {
 
 document.querySelectorAll('.tab').forEach((tab) => tab.addEventListener('click', () => {
   document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t === tab));
-  els.posTable.hidden = tab.dataset.tab !== 'positions';
-  els.ordTable.hidden = tab.dataset.tab !== 'orders';
+  S.tab = tab.dataset.tab;
+  els.posTable.hidden = S.tab !== 'positions';
+  els.ordTable.hidden = S.tab !== 'orders';
+  els.tradesTable.hidden = S.tab !== 'trades';
+  renderLimitOrders();
 }));
 
 els.posTable.addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-exit]');
   if (!btn || btn.disabled) return;
   const pos = positionFor(btn.dataset.exit, btn.dataset.product);
-  if (pos) submitOrder(pos.quantity > 0 ? 'SELL' : 'BUY', Math.abs(pos.quantity), { company: pos.company, product: pos.product });
+  if (pos) submitOrder(pos.quantity > 0 ? 'SELL' : 'BUY', Math.abs(pos.quantity), { company: pos.company, product: pos.product, exit: true });
 });
 
 /* ======================================================================
    boot — a direct link (/paper-trading/<code>/live/ or /old/<date>/) starts by itself
    ====================================================================== */
+// Before a stock is shown, keep the saved Live positions priced (and limit orders checked).
+async function idleTick() {
+  if (S.company) return;                 // a session is running and does its own polling
+  const gen = S.gen;
+  try {
+    await refreshAccount();
+    await refreshOtherQuotes(gen);
+    if (gen !== S.gen || S.company) return;
+    renderPositions(); renderWallet(); renderOrderPanel(); renderTrades();
+    await maybeSquareoff(gen);
+  } catch (e) { /* try again on the next tick */ }
+}
+
 async function boot() {
   initChart();
   renderAll();
   try { await refreshAccount(); } catch (e) { toast(e.message, 'error'); }
+  if (!INITIAL.company) {
+    idleTick();
+  }
+  S.idleTimer = setInterval(idleTick, LIVE_POLL_MS);
 
   if (INITIAL.error) setNotice(INITIAL.error, 'error');
   if (INITIAL.company) {

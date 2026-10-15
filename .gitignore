@@ -22,5 +22,8 @@ test.py
 # Fetch error logs
 logs/
 
+# Local secrets (ANTHROPIC_API_KEY ...)
+.env
+
 # Trained prediction models (regenerate with: python manage.py train_models)
 ml_models/

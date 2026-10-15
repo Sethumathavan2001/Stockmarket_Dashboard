@@ -46,7 +46,9 @@
     <a href="{% url 'market:daily_data_page' %}" class="{% if app == 'market' and current == 'daily_data_page' %}active{% endif %}">Daily Data Scraper</a>
     <a href="{% url 'stock_prediction_page' %}" class="{% if current == 'stock_prediction_page' %}active{% endif %}">Stock Prediction</a>
     <a href="{% url 'candle_predictor_page' %}" class="{% if current == 'candle_predictor_page' %}active{% endif %}">Candle Predictor</a>
-    <a href="{% url 'paper_trading:page' %}" class="{% if app == 'paper_trading' %}active{% endif %}">Paper Trading</a>
+    <a href="{% url 'paper_trading:page' %}" class="{% if app == 'paper_trading' and not current|slice:':5' == 'page2' %}active{% endif %}">Paper Trading</a>
+    <a href="{% url 'paper_trading:page2' %}" class="{% if app == 'paper_trading' and current|slice:':5' == 'page2' %}active{% endif %}">Paper Trading 2</a>
+    <a href="{% url 'ai_prediction_page' %}" class="{% if current == 'ai_prediction_page' %}active{% endif %}">AI Prediction</a>
   </nav>
 </header>
 {% endwith %}
