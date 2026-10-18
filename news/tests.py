@@ -101,3 +101,40 @@ class ViewTests(TestCase):
         with mock.patch.object(fetch, "_nse_json", side_effect=fetch.SourceError("down")):
             self.assertEqual(self.client.get("/api/news/announcements/?days=x").status_code, 502)
         self.assertEqual(self.client.get("/api/news/stock/NOPE/").status_code, 404)
+
+
+class SentimentTests(TestCase):
+    def label(self, text):
+        from .sentiment import score
+        return score(text)["label"]
+
+    def test_direction_rules(self):
+        self.assertEqual(self.label("L&T Finance Q2 net profit rises 33% to Rs 975 crore"), "positive")
+        self.assertEqual(self.label("Jio Financial Q2: PAT drops 51% YoY"), "negative")
+        self.assertEqual(self.label("Loss narrows to Rs 40 crore"), "positive")          # bad metric falling
+        self.assertEqual(self.label("Net loss widens to Rs 200 crore"), "negative")
+        self.assertEqual(self.label("Current account deficit narrows in August"), "positive")
+        self.assertEqual(self.label("AI stock selloff eases as investors buy on dips"), "positive")
+
+    def test_events_and_routine_phrases(self):
+        self.assertEqual(self.label("Brokerage upgrades Infosys to buy, raises target"), "positive")
+        self.assertEqual(self.label("MSCI weighs downgrade of Indonesia"), "negative")
+        self.assertEqual(self.label("ED raid at company offices"), "negative")
+        self.assertEqual(self.label("Stock split record date: last day to buy"), "neutral")
+        self.assertEqual(self.label("Top stocks to watch today: Reliance, Wipro"), "neutral")
+        self.assertEqual(self.label("Sebi revises settlement methodology"), "neutral")
+
+    def test_negation_and_reasons(self):
+        from .sentiment import score
+        self.assertEqual(self.label("No downgrade expected for the bank"), "positive")
+        r = score("Infosys profit jumps 20%")
+        self.assertTrue(any("profit jumps" in c for c in r["cues"]))
+
+    def test_feeds_carry_sentiment_and_mood(self):
+        with mock.patch.object(fetch, "_get", return_value=NS(content=RSS)):
+            out = fetch.market_news(refresh=True)
+        self.assertTrue(all("sentiment" in it for it in out["items"]))
+        self.assertEqual(out["mood"]["total"], 2)
+        with mock.patch.object(fetch, "_nse_json", return_value=NSE):
+            ann = fetch.announcements(1, refresh=True)
+        self.assertIn("mood", ann)

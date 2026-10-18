@@ -468,11 +468,58 @@ def backtest_analogs(b, X, hist_mask):
 # ==========================================================================
 # public entry point
 # ==========================================================================
+NEWS_TILT = 0.35        # strongest news moves the median by 35 % of the half-width of the 10-90 % range
+NEWS_WIDEN = 0.5        # and widens the range by up to 50 % (news days move more)
+
+
+def apply_news(forecast, signal, pc, ph, pl, price, interval, backtest):
+    """
+    Tilt the analog forecast by the news signal (bias -1..1) and widen it by its intensity (0..1).
+    Every analog's path is shifted by bias * NEWS_TILT * (that step's 10-90 % half-width), so the shift
+    is sized to how much this stock normally moves over that many candles.  Rule of thumb, not tested.
+    """
+    cfg = INTERVALS[interval]
+    bias, widen = float(signal["bias"]), 1 + NEWS_WIDEN * float(signal["intensity"])
+    ahead = pc.shape[1]
+    q10, q50, q90 = (np.percentile(pc, q, axis=0) for q in (10, 50, 90))
+    tilt = bias * NEWS_TILT * (q90 - q10) / 2                    # per step, as a return
+    adj = q50 + tilt
+    hi = np.maximum(np.median(ph, axis=0), q50)
+    lo = np.minimum(np.median(pl, axis=0), q50)
+    candles, band, prev = [], [], 0.0
+    for i in range(ahead):
+        c = adj[i]
+        h = max(prev, c, c + (hi[i] - q50[i]) * widen)
+        l_ = min(prev, c, c + (lo[i] - q50[i]) * widen)
+        x = forecast["candles"][i]["x"]
+        candles.append({"x": x, "o": price * (1 + prev), "h": price * (1 + h), "l": price * (1 + l_), "c": price * (1 + c)})
+        band.append({"x": x, "p10": price * (1 + c - (q50[i] - q10[i]) * widen),
+                     "p25": price * (1 + c - (q50[i] - np.percentile(pc[:, i], 25)) * widen),
+                     "p75": price * (1 + c + (np.percentile(pc[:, i], 75) - q50[i]) * widen),
+                     "p90": price * (1 + c + (q90[i] - q50[i]) * widen)})
+        prev = c
+    horizons = []
+    for h0 in forecast["horizons"]:
+        i = h0["bars"] - 1
+        col = pc[:, i] + tilt[i]
+        med = float(np.median(col))
+        horizons.append({**h0, "price": price * (1 + med), "ret_pct": med * 100, "p_up": float((col > 0).mean()),
+                         "low": price * (1 + med - (q50[i] - q10[i]) * widen),
+                         "high": price * (1 + med + (q90[i] - q50[i]) * widen),
+                         "base_ret_pct": h0["ret_pct"], "base_p_up": h0["p_up"], "news_tilt_pct": float(tilt[i] * 100)})
+    main = next((x for x in horizons if x["bars"] == cfg["main"]), horizons[-1] if horizons else None)
+    return {**forecast, "candles": candles, "band": band, "horizons": horizons, "main": main,
+            "base": {"candles": [{"x": c["x"], "c": c["c"]} for c in forecast["candles"]], "main": forecast["main"]},
+            "news": {**signal, "applied": True, "tilt_main_pct": main["news_tilt_pct"] if main else 0.0,
+                     "widen": round(widen, 2)}}
+
+
 def _label(interval, bars):
     return f"{bars * INTERVALS[interval]['minutes']} min"
 
 
-def predict(company, interval="5m", day=None, asof=None):
+def predict(company, interval="5m", day=None, asof=None, news=None):
+    """news: optional callable(company) -> news signal; used only for today's live session."""
     if interval not in INTERVALS:
         raise PredictorError("Interval must be 1m or 5m.")
     cfg = INTERVALS[interval]
@@ -498,6 +545,9 @@ def predict(company, interval="5m", day=None, asof=None):
         if before:
             k_now = before[-1]
     is_latest = k_now == day_idx[-1]
+    news_status = None
+    if news is not None and not (day == datetime.now(IST).date() and is_latest):
+        news_status = "News is used only for today's live session (latest candle) - not for past sessions or earlier times."
     detections = detect(b)
 
     key = f"candlepred:{company.pk}:{interval}:{day.isoformat()}:{int(hist_mask.sum())}"
@@ -554,6 +604,13 @@ def predict(company, interval="5m", day=None, asof=None):
                         "analogs": [{"day": b.days[b.day_id[j]].isoformat(), "time": b.ts[j].strftime("%H:%M"),
                                      "move_pct": float(pc[i_, min(cfg["main"], ahead) - 1] * 100)}
                                     for i_, j in enumerate(nb[:8])]}
+            live_session = day == datetime.now(IST).date() and is_latest
+            if news is not None and live_session:
+                try:
+                    forecast = apply_news(forecast, news(company), pc, ph, pl, price, interval, bt)
+                except Exception as exc:            # news sources down: keep the plain forecast
+                    logger.warning("News signal failed for %s: %s", company.code, exc)
+                    news_status = f"News unavailable ({exc}) - showing the forecast without news."
 
     # ---- patterns on the selected day (up to "now") with what happened next
     det_day = [(k, key_) for k, key_ in detections if b.day_id[k] == di and k <= k_now]
@@ -599,6 +656,7 @@ def predict(company, interval="5m", day=None, asof=None):
         "markers": markers, "log": log[::-1], "active": active, "pattern_vote": vote,
         "library": library, "forecast": forecast, "backtest": bt,
         "main_label": _label(interval, cfg["main"]),
+        "news_status": news_status,
         "horizon_labels": {str(hz): _label(interval, hz) for hz in cfg["horizons"]},
         "history": {"days": len(hist_days), "bars": int(hist_mask.sum()),
                     "from": b.days[hist_days[0]].isoformat() if hist_days else None,

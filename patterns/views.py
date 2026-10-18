@@ -2,7 +2,7 @@
 Intraday Candle Predictor page and API.
 
   GET /candle-predictor/                                       the page
-  GET /api/candle-predictor/<code>/?interval=5m|1m&day=YYYY-MM-DD&asof=HH:MM
+  GET /api/candle-predictor/<code>/?interval=5m|1m&day=YYYY-MM-DD&asof=HH:MM&news=1
         candles of the day, detected patterns (with this stock's history for each), the
         analog forecast from "asof" (default: the latest candle) and its tested accuracy.
 """
@@ -39,7 +39,8 @@ def candle_predictor_view(request):
     companies = Company.objects.exclude(sector="ETF").order_by("code").values("code", "name")
     return render(request, "patterns/candle_predictor.html", {
         "companies": list(companies),
-        "initial": {"company": request.GET.get("company", ""), "interval": request.GET.get("interval", "5m")},
+        "initial": {"company": request.GET.get("company", ""), "interval": request.GET.get("interval", "5m"),
+                    "news": request.GET.get("news") == "1"},
     })
 
 
@@ -53,7 +54,11 @@ def candle_prediction_data(request, company_code):
     except ValueError:
         return JsonResponse({"error": "Invalid day or time."}, status=400)
     try:
-        data = engine.predict(company, interval=interval, day=day, asof=asof)
+        news = None
+        if request.GET.get("news") == "1":
+            from news.signal import news_signal
+            news = news_signal
+        data = engine.predict(company, interval=interval, day=day, asof=asof, news=news)
     except engine.PredictorError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
     except Exception as exc:

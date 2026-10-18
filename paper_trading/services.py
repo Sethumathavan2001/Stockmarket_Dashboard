@@ -39,8 +39,10 @@ Price rules (the server never trusts a client-supplied price blindly)
            [low, high] range.
 """
 import logging
+import threading
 from datetime import date as date_cls, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from functools import wraps
 from zoneinfo import ZoneInfo
 
 from django.conf import settings
@@ -55,6 +57,7 @@ from prediction.data import load_today_intraday_yfinance
 from prediction.market_time import get_market_status, is_stale
 from prediction.tickers import get_yahoo_ticker
 
+from . import charges
 from .models import PaperAccount, PaperLimitOrder, PaperOrder, PaperPosition
 
 logger = logging.getLogger(__name__)
@@ -67,6 +70,7 @@ DELIVERY = PaperPosition.PRODUCT_DELIVERY
 PRODUCTS = (INTRADAY, DELIVERY)
 REPLAY_HOLDINGS = "replay"            # shared context for Old-mode DELIVERY holdings
 
+D = Decimal
 TWO = Decimal("0.01")
 FOUR = Decimal("0.0001")
 ZERO = Decimal("0")
@@ -79,6 +83,25 @@ BOOKS = (1, 2)                         # Paper Trading = book 1, Paper Trading 2
 
 class TradeError(Exception):
     """A user-facing failure (bad input, insufficient funds, market closed...)."""
+
+
+class AlreadyClosed(TradeError):
+    """An exit (stop loss / target / square-off / Exit button) for a position that is no longer open -
+    typically sent a second time by another open tab.  Nothing is traded."""
+
+
+# Every change to an account (orders, limit fills, brackets, wallet) runs one at a time.  Several
+# open tabs check stop losses / targets and send exits at the same moment; SQLite ignores
+# select_for_update, so without this two requests could both read the old position.
+ORDER_LOCK = threading.RLock()
+
+
+def serialized(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        with ORDER_LOCK:
+            return fn(*args, **kwargs)
+    return wrapper
 
 
 # --------------------------------------------------------------------------
@@ -309,6 +332,7 @@ def check_levels_hit(quantity, stop_loss, target_price, price):
 # --------------------------------------------------------------------------
 # wallet
 # --------------------------------------------------------------------------
+@serialized
 def add_to_wallet(account, raw_amount):
     try:
         amount = Decimal(str(raw_amount)).quantize(TWO, rounding=ROUND_HALF_UP)
@@ -326,6 +350,7 @@ def add_to_wallet(account, raw_amount):
     return locked
 
 
+@serialized
 def withdraw_from_wallet(account, raw_amount):
     """Take money out of the wallet (only the available balance - not money blocked in positions)."""
     try:
@@ -639,9 +664,11 @@ def resolve_replay_execution(company, replay_date, market_time_raw, price_raw):
 # --------------------------------------------------------------------------
 # order execution
 # --------------------------------------------------------------------------
+@serialized
 @transaction.atomic
 def execute_order(*, account, company, side, quantity, price, mode, replay_date, market_time,
-                  levels=None, reason="", product=INTRADAY, order_type=PaperOrder.ORDER_MARKET):
+                  levels=None, reason="", product=INTRADAY, order_type=PaperOrder.ORDER_MARKET, close_only=False):
+    """close_only: the order may only reduce the existing position (exits) - never open or flip one."""
     account = PaperAccount.objects.select_for_update().get(pk=account.pk)
     context = make_context(mode, replay_date)                    # the order's day / "live"
     pos, _ = PaperPosition.objects.select_for_update().get_or_create(
@@ -655,6 +682,15 @@ def execute_order(*, account, company, side, quantity, price, mode, replay_date,
     q, basis, balance = pos.quantity, pos.cost_basis, account.balance
     old_q = q
     direction = 1 if side == PaperOrder.SIDE_BUY else -1
+
+    if close_only:
+        if q == 0 or (q > 0) == (direction > 0):
+            raise AlreadyClosed(f"Your {company.code} {product.title()} position is already closed - nothing to exit.")
+        if reason == "stop_loss" and pos.stop_loss is None:
+            raise AlreadyClosed(f"{company.code}: the stop loss was removed or already handled - nothing to exit.")
+        if reason == "target" and pos.target_price is None:
+            raise AlreadyClosed(f"{company.code}: the target was removed or already handled - nothing to exit.")
+        quantity = min(quantity, abs(q))           # an exit never turns into a new position
     price = price.quantize(FOUR)
 
     if product == DELIVERY:
@@ -762,6 +798,7 @@ def execute_order(*, account, company, side, quantity, price, mode, replay_date,
     return order, pos, account
 
 
+@serialized
 @transaction.atomic
 def update_bracket(*, account, company, mode, replay_date, levels, clear_sl=False, clear_target=False,
                    product=INTRADAY):
@@ -836,18 +873,22 @@ def squareoff_live_intraday(account, now=None):
         else:
             continue
 
-        order, _, _ = execute_order(
-            account=account,
-            company=pos.company,
-            side=PaperOrder.SIDE_SELL if pos.quantity > 0 else PaperOrder.SIDE_BUY,
-            quantity=abs(pos.quantity),
-            price=_parse_price(price),
-            mode=LIVE,
-            replay_date=None,
-            market_time=when,
-            reason="session_end",
-            product=INTRADAY,
-        )
+        try:
+            order, _, _ = execute_order(
+                account=account,
+                company=pos.company,
+                side=PaperOrder.SIDE_SELL if pos.quantity > 0 else PaperOrder.SIDE_BUY,
+                quantity=abs(pos.quantity),
+                price=_parse_price(price),
+                mode=LIVE,
+                replay_date=None,
+                market_time=when,
+                reason="session_end",
+                product=INTRADAY,
+                close_only=True,
+            )
+        except AlreadyClosed:                       # another tab squared it off a moment ago
+            continue
         order.company = pos.company
         closed.append(order)
     return {"closed": closed, "skipped": skipped}
@@ -989,6 +1030,7 @@ def _check_delivery_sell(account, company, side, quantity, mode, replay_date, pr
                          "can't be placed. Delivery has no short selling.")
 
 
+@serialized
 def place_limit_order(*, account, company, side, quantity, limit_price, mode, replay_date, product,
                       levels=None, current_price=None, market_time=None):
     """
@@ -1016,6 +1058,7 @@ def place_limit_order(*, account, company, side, quantity, limit_price, mode, re
     return lo, order
 
 
+@serialized
 @transaction.atomic
 def _fill(lo, price, market_time):
     """Execute an OPEN limit order at `price`. A failure (e.g. not enough money) marks it REJECTED."""
@@ -1133,6 +1176,7 @@ def _yahoo_day_5m(company, day):
     return df
 
 
+@serialized
 def cancel_limit_order(account, limit_id):
     lo = PaperLimitOrder.objects.filter(account=account, pk=limit_id).first()
     if lo is None:
@@ -1167,7 +1211,9 @@ def trade_log(account, mode, replay_date=None, limit=200):
     for o in orders:
         pos_ctx = LIVE if mode == LIVE else (o.context if o.product == INTRADAY else REPLAY_HOLDINGS)
         st = book.setdefault((o.company_id, o.product, pos_ctx),
-                             {"q": 0, "basis": ZERO, "start": None, "company": o.company, "product": o.product})
+                             {"q": 0, "basis": ZERO, "start": None, "company": o.company, "product": o.product,
+                              "legs": []})
+        order_value = o.price * o.quantity
         when = to_ist(o.market_time or o.created_at)
         direction = 1 if o.side == PaperOrder.SIDE_BUY else -1
         q = st["q"]
@@ -1176,6 +1222,12 @@ def trade_log(account, mode, replay_date=None, limit=200):
             avg = st["basis"] / abs(q)
             sign = 1 if q > 0 else -1
             pnl = (o.price - avg) * closing * sign
+            share = D(closing) / abs(q)
+            legs = [(v, f * share) for v, f in st["legs"]] + [(order_value, D(closing) / o.quantity)]
+            st["legs"] = [[v, f * (1 - share)] for v, f in st["legs"]]
+            entry_value, exit_value = avg * closing, o.price * closing
+            buy_v, sell_v = (entry_value, exit_value) if q > 0 else (exit_value, entry_value)
+            costs = {b: charges.trade_charges(b, o.product, buy_v, sell_v, legs) for b in charges.BROKERS}
             rows.append({
                 "company": o.company.code, "product": o.product, "side": "LONG" if q > 0 else "SHORT",
                 "quantity": closing, "entry_time": st["start"].isoformat(), "entry_price": float(avg.quantize(FOUR)),
@@ -1183,13 +1235,16 @@ def trade_log(account, mode, replay_date=None, limit=200):
                 "pnl_pct": float(pnl / (avg * closing) * 100) if avg else 0.0,
                 "minutes": round((when - st["start"]).total_seconds() / 60),
                 "exit_reason": o.reason or "manual", "exit_type": o.order_type, "status": "CLOSED",
+                "charges": {b: {k: float(v) for k, v in c.items()} for b, c in costs.items()},
+                "net_pnl": {b: float((pnl - c["total"]).quantize(FOUR)) for b, c in costs.items()},
             })
             st["basis"] -= st["basis"] * closing / abs(q)
             st["q"] = q - sign * closing
         opening = o.quantity - closing
         if opening:
             if st["q"] == 0:
-                st["start"], st["basis"] = when, ZERO
+                st["start"], st["basis"], st["legs"] = when, ZERO, []
+            st["legs"].append([order_value, D(opening) / o.quantity])
             st["basis"] += o.price * opening
             st["q"] += direction * opening
         if st["q"] == 0:
@@ -1202,6 +1257,8 @@ def trade_log(account, mode, replay_date=None, limit=200):
                 "quantity": abs(st["q"]), "entry_time": st["start"].isoformat(), "entry_price": float(avg.quantize(FOUR)),
                 "exit_time": None, "exit_price": None, "pnl": None, "pnl_pct": None, "minutes": None,
                 "exit_reason": None, "exit_type": None, "status": "OPEN",
+                # what the entry orders cost so far; the page adds the exit side at the live price
+                "entry_legs": [[float(v), float(f)] for v, f in st["legs"] if f > 0],
             })
     if mode == REPLAY and replay_date:
         day = replay_date.isoformat()

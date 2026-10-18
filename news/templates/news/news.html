@@ -70,6 +70,44 @@
   .notice{ margin:12px 16px; padding:10px 14px; border-radius:8px; font-size:13px; background:var(--red-bg); color:var(--red-dark); }
   .more{ display:block; width:100%; border:none; background:var(--panel); padding:12px; font-size:13px; font-weight:600; color:var(--navy-800); cursor:pointer; font-family:inherit; }
 
+  /* sentiment */
+  .feed li{ border-left:4px solid transparent; }
+  .feed li.s-positive{ border-left-color:var(--green); background:#F3FBF7; }
+  .feed li.s-negative{ border-left-color:var(--red); background:#FEF6F6; }
+  .feed li.s-positive.strong{ background:#E4F6EC; } .feed li.s-negative.strong{ background:#FCE9E9; }
+  .feed li.s-positive:hover{ background:#E9F7EF; } .feed li.s-negative:hover{ background:#FBEEEE; }
+  .senti{ display:inline-flex; align-items:center; gap:4px; font-size:11px; font-weight:700; padding:2px 8px; border-radius:999px; white-space:nowrap; cursor:help; }
+  .senti.positive{ background:var(--green-bg); color:var(--green-dark); }
+  .senti.negative{ background:var(--red-bg); color:var(--red-dark); }
+  .senti.neutral{ background:var(--panel); color:var(--text-muted); border:1px solid var(--border); }
+  .why{ font-size:11.5px; color:var(--text-muted); }
+  .mood{ padding:12px 16px; border-bottom:1px solid var(--border); display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:8px 16px; align-items:center; }
+  .mood .ml{ font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--text-muted); }
+  .mood .mv{ font-size:18px; font-weight:700; }
+  .mv.positive{ color:var(--green-dark); } .mv.negative{ color:var(--red-dark); } .mv.mixed{ color:var(--amber); }
+  .bar{ display:flex; height:12px; border-radius:6px; overflow:hidden; background:var(--panel); }
+  .bar span{ display:block; height:100%; }
+  .mood .bar span{ cursor:pointer; } .mood .bar span:hover{ opacity:.8; }
+  .bar .p{ background:var(--green); } .bar .n{ background:#CBD5E1; } .bar .r{ background:var(--red); }
+  .mood .legend{ font-size:12px; color:var(--text-muted); white-space:nowrap; }
+  .mood .legend b.p{ color:var(--green-dark); } .mood .legend b.r{ color:var(--red-dark); }
+  @media (max-width:800px){ .mood{ grid-template-columns:1fr; } }
+  .sfilter{ display:flex; gap:6px; }
+  .sfilter .chip.positive.active{ background:var(--green-dark); border-color:var(--green-dark); }
+  .sfilter .chip.negative.active{ background:var(--red-dark); border-color:var(--red-dark); }
+  .talk{ padding:10px 16px; border-bottom:1px solid var(--border); display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+  .talk .ml{ font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--text-muted); margin-right:4px; }
+  .tk{ display:inline-flex; align-items:center; gap:5px; font-size:12px; font-weight:700; padding:3px 9px; border-radius:6px; cursor:pointer; border:1px solid var(--border); background:#fff; font-family:inherit; color:var(--navy-800); }
+  .tk.positive{ border-color:#9FDDBF; background:var(--green-bg); color:var(--green-dark); }
+  .tk.negative{ border-color:#F5B5B7; background:var(--red-bg); color:var(--red-dark); }
+  .tk small{ font-weight:600; opacity:.85; }
+  .sp-list li.s-positive{ border-left:3px solid var(--green); background:#F3FBF7; }
+  .sp-list li.s-negative{ border-left:3px solid var(--red); background:#FEF6F6; }
+  .sp-mood{ padding:10px 16px; border-bottom:1px solid var(--border); display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .sp-mood > div{ border:1px solid var(--border); border-radius:8px; padding:8px 10px; }
+  .sp-mood .ml{ font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--text-muted); }
+  .sp-mood .mv{ font-size:15px; font-weight:700; margin:2px 0 6px; }
+
   /* stock panel */
   .sp-head{ background:linear-gradient(135deg,#0B2545,#123B7A); color:#fff; border-radius:var(--radius) var(--radius) 0 0; padding:14px 16px; }
   .sp-head .ttl{ font-size:15px; font-weight:700; } .sp-head .sub{ font-size:12px; opacity:.8; margin-top:2px; }
@@ -115,7 +153,10 @@
           <button class="btn ghost small" id="mRefresh">Refresh</button>
           <span class="meta" id="mMeta"></span>
         </div>
-        <div class="toolbar" style="background:#fff"><div class="chips" id="mSources"></div></div>
+        <div class="toolbar" style="background:#fff"><div class="chips" id="mSources"></div>
+          <div class="sfilter" style="margin-left:auto" data-target="m"></div></div>
+        <div class="mood" id="mMood" hidden></div>
+        <div class="talk" id="mTalk" hidden></div>
         <div id="mError" class="notice" hidden></div>
         <ul class="feed" id="mFeed"><li class="empty" style="display:block">Loading headlines...</li></ul>
         <button class="more" id="mMore" hidden>Show more</button>
@@ -130,9 +171,11 @@
           </select>
           <label class="toggle"><input type="checkbox" id="aImportant" checked> Important only</label>
           <label class="toggle"><input type="checkbox" id="aMine" checked> Only my stocks</label>
+          <div class="sfilter" data-target="a"></div>
           <button class="btn ghost small" id="aRefresh">Refresh</button>
           <span class="meta" id="aMeta"></span>
         </div>
+        <div class="mood" id="aMood" hidden></div>
         <div id="aError" class="notice" hidden></div>
         <ul class="feed" id="aFeed"><li class="empty" style="display:block">Loading announcements...</li></ul>
         <button class="more" id="aMore" hidden>Show more</button>
@@ -149,7 +192,7 @@
         </div>
         <div id="spBody"><div class="empty">Pick a company, or click any blue symbol in the feed.</div></div>
       </div>
-      <div class="disclaimer">Headlines come from the publishers' RSS feeds and Google News; announcements come from NSE. Links open the original source. News moves prices fastest at the open, so check the gap and how the first 15 minutes trade before acting on a headline.</div>
+      <div class="disclaimer">Sentiment is scored by finance-aware word rules (e.g. "profit rises", "loss narrows", "downgrade"); hover a label to see why. It reads the words, not the facts behind them, so sarcasm, mixed results and news that is already priced in can be misjudged. Headlines come from the publishers' RSS feeds and Google News; announcements come from NSE. Links open the original source. News moves prices fastest at the open, so check the gap and how the first 15 minutes trade before acting on a headline.</div>
     </aside>
   </div>
 </div>
@@ -184,6 +227,40 @@ function ago(iso){
 }
 async function getJson(url){ const r = await fetch(url); const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`); return d; }
 function symBtn(code, label){ return BY_CODE[code] ? `<button class="sym" data-code="${esc(code)}" title="${esc(BY_CODE[code].name)}">${esc(label || code.replace('.NS', ''))}</button>` : `<span class="sym ext">${esc(label || code)}</span>`; }
+const SENT = {positive:'▲ Positive', negative:'▼ Negative', neutral:'● Neutral'};
+const sentFilter = {m:'all', a:'all'};
+function sentPill(s){
+  if (!s) return '';
+  const why = s.cues.length ? s.cues.join('\n') : 'No market-moving words found';
+  return `<span class="senti ${s.label}" title="Why (score ${s.score > 0 ? '+' : ''}${s.score}):\n${esc(why)}">${SENT[s.label]}${s.label !== 'neutral' ? ' ' + (s.score > 0 ? '+' : '') + s.score.toFixed(1) : ''}</span>`;
+}
+function whyText(s){ return s && s.cues.length && s.label !== 'neutral' ? `<span class="why">· ${esc(s.cues.slice(0, 3).map(c => c.slice(2)).join(', '))}</span>` : ''; }
+function liClass(s){ return s ? `s-${s.label}${s.strong ? ' strong' : ''}` : ''; }
+function moodOf(items){
+  const c = {positive:0, negative:0, neutral:0}; items.forEach(it => c[it.sentiment.label]++);
+  const m = {total: items.length, ...c, mood: c.positive + c.negative ? Math.round((c.positive - c.negative) / (c.positive + c.negative) * 100) : 0};
+  m.label = m.mood >= 20 ? 'Positive' : m.mood <= -20 ? 'Negative' : 'Mixed';
+  return m;
+}
+function barHtml(m){ const t = Math.max(m.total, 1);
+  return `<div class="bar" title="Click a colour to filter"><span class="p" data-s="positive" style="width:${m.positive / t * 100}%"></span><span class="n" data-s="neutral" style="width:${m.neutral / t * 100}%"></span><span class="r" data-s="negative" style="width:${m.negative / t * 100}%"></span></div>`; }
+function moodHtml(m, what){
+  return `<div><div class="ml">${esc(what)} mood</div><div class="mv ${m.label.toLowerCase()}">${m.label} ${m.mood > 0 ? '+' : ''}${m.mood}</div></div>
+    ${barHtml(m)}<div class="legend"><b class="p">${m.positive} positive</b> · ${m.neutral} neutral · <b class="r">${m.negative} negative</b></div>`;
+}
+function renderSentFilter(target, m){
+  const el = document.querySelector(`.sfilter[data-target="${target}"]`);
+  el.innerHTML = ['all', 'positive', 'negative', 'neutral'].map(k => `<button class="chip ${k} ${sentFilter[target] === k ? 'active' : ''}" data-s="${k}">${k === 'all' ? 'All' : SENT[k] + ' ' + m[k]}</button>`).join('');
+}
+function setSent(target, s){
+  sentFilter[target] = s === 'all' || sentFilter[target] === s ? 'all' : s;
+  if (target === 'm') { mShown = PAGE; renderMarket(); } else { aShown = PAGE; renderAnn(); }
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('.sfilter .chip'); if (b) return setSent(b.closest('.sfilter').dataset.target, b.dataset.s);
+  const seg = e.target.closest('.mood .bar span'); if (seg) return setSent(seg.closest('.mood').id === 'mMood' ? 'm' : 'a', seg.dataset.s);
+  const tk = e.target.closest('.tk[data-code]'); if (tk) openStock(tk.dataset.code);
+});
 function whenCell(iso){ const d = dayLabel(iso); return `<div class="when">${d ? esc(d) + '<br>' : ''}${hhmm(iso)}</div><div class="ago">${ago(iso)}</div>`; }
 
 // ---------------------------------------------------------------- tabs
@@ -219,16 +296,31 @@ function renderSources(){
 }
 function renderMarket(){
   const q = $('mSearch').value.trim().toLowerCase(), mine = $('mMine').checked;
-  const rows = marketData.items.filter(it => (srcFilter === 'All' || it.source === srcFilter)
+  const base = marketData.items.filter(it => (srcFilter === 'All' || it.source === srcFilter)
     && (!mine || it.mentions.length) && (!q || (it.title + ' ' + it.summary).toLowerCase().includes(q)));
+  const rows = base.filter(it => sentFilter.m === 'all' || it.sentiment.label === sentFilter.m);
+  const mood = moodOf(base);
+  $('mMood').hidden = false; $('mMood').innerHTML = moodHtml(mood, srcFilter === 'All' ? 'Market news' : srcFilter);
+  renderSentFilter('m', mood);
+  renderTalk(base);
   $('cntMarket').textContent = marketData.items.length;
   $('mMeta').textContent = `${rows.length} shown · updated ${hhmm(marketData.fetched_at)}`;
-  $('mFeed').innerHTML = rows.slice(0, mShown).map(it => `<li><div>${whenCell(it.time)}</div><div>
+  $('mFeed').innerHTML = rows.slice(0, mShown).map(it => `<li class="${liClass(it.sentiment)}"><div>${whenCell(it.time)}</div><div>
       <a class="headline" href="${esc(safeUrl(it.url))}" target="_blank" rel="noopener">${esc(it.title)}</a>
       ${it.summary && it.summary !== it.title ? `<div class="summary">${esc(it.summary)}</div>` : ''}
-      <div class="row-meta">${it._new ? '<span class="new">NEW</span>' : ''}<span class="src">${esc(it.source)}</span>${it.mentions.map(c => symBtn(c)).join('')}</div>
+      <div class="row-meta">${it._new ? '<span class="new">NEW</span>' : ''}${sentPill(it.sentiment)}<span class="src">${esc(it.source)}</span>${it.mentions.map(c => symBtn(c)).join('')}${whyText(it.sentiment)}</div>
     </div></li>`).join('') || '<li class="empty" style="display:block">No headlines match.</li>';
   $('mMore').hidden = rows.length <= mShown;
+}
+function renderTalk(items){
+  const by = {};
+  items.forEach(it => it.mentions.forEach(c => { const b = by[c] = by[c] || {n:0, p:0, r:0}; b.n++; if (it.sentiment.label === 'positive') b.p++; if (it.sentiment.label === 'negative') b.r++; }));
+  const top = Object.entries(by).sort((a, b) => b[1].n - a[1].n).slice(0, 14);
+  $('mTalk').hidden = !top.length;
+  $('mTalk').innerHTML = '<span class="ml">Stocks in the news</span>' + top.map(([c, b]) => {
+    const cls = b.p > b.r ? 'positive' : b.r > b.p ? 'negative' : '';
+    return `<button class="tk ${cls}" data-code="${esc(c)}" title="${esc((BY_CODE[c] || {}).name || c)}: ${b.p} positive, ${b.r} negative of ${b.n} headlines">${esc(c.replace('.NS', ''))} <small>${b.p ? '▲' + b.p : ''}${b.r ? ' ▼' + b.r : ''}${!b.p && !b.r ? '● ' + b.n : ''}</small></button>`;
+  }).join('');
 }
 $('mSearch').addEventListener('input', () => { mShown = PAGE; renderMarket(); });
 $('mMine').addEventListener('change', () => { mShown = PAGE; renderMarket(); });
@@ -249,13 +341,17 @@ async function loadAnn(refresh){
 }
 function renderAnn(){
   const q = $('aSearch').value.trim().toLowerCase(), imp = $('aImportant').checked, mine = $('aMine').checked;
-  const rows = annData.items.filter(a => (!imp || a.important) && (!mine || a.code)
+  const base = annData.items.filter(a => (!imp || a.important) && (!mine || a.code)
     && (!q || (a.symbol + ' ' + a.name + ' ' + a.subject + ' ' + a.text).toLowerCase().includes(q)));
+  const rows = base.filter(a => sentFilter.a === 'all' || a.sentiment.label === sentFilter.a);
+  const mood = moodOf(base);
+  $('aMood').hidden = false; $('aMood').innerHTML = moodHtml(mood, 'Announcements');
+  renderSentFilter('a', mood);
   $('cntAnn').textContent = annData.items.length;
   $('aMeta').textContent = `${rows.length} of ${annData.items.length} · updated ${hhmm(annData.fetched_at)}`;
-  $('aFeed').innerHTML = rows.slice(0, aShown).map(a => `<li><div>${whenCell(a.time)}</div><div>
+  $('aFeed').innerHTML = rows.slice(0, aShown).map(a => `<li class="${liClass(a.sentiment)}"><div>${whenCell(a.time)}</div><div>
       <div class="row-meta" style="margin-top:0">${a.code ? symBtn(a.code, a.symbol) : `<span class="sym ext">${esc(a.symbol)}</span>`}
-        <b style="font-size:13.5px">${esc(a.name)}</b><span class="pill ${a.important ? 'imp' : ''}">${esc(a.subject)}</span></div>
+        <b style="font-size:13.5px">${esc(a.name)}</b><span class="pill ${a.important ? 'imp' : ''}">${esc(a.subject)}</span>${sentPill(a.sentiment)}${whyText(a.sentiment)}</div>
       <div class="ann-text">${esc(a.text)}</div>
       <div class="row-meta">${a.industry ? `<span class="src">${esc(a.industry)}</span>` : ''}${a.pdf ? `<a class="pdf" href="${esc(safeUrl(a.pdf))}" target="_blank" rel="noopener">Filing (PDF) ↗</a>` : ''}</div>
     </div></li>`).join('') || '<li class="empty" style="display:block">No announcements match these filters.</li>';
@@ -281,12 +377,15 @@ async function openStock(code){
     const links = `<div class="sp-links"><a href="${AI_URL}?company=${encodeURIComponent(code)}">AI analysis</a>
       <a href="${CANDLE_URL}?company=${encodeURIComponent(code)}">Candle Predictor</a>
       <a href="${PAPER_LIVE_URL.replace('CODE_PLACEHOLDER', encodeURIComponent(code))}">Paper trade</a></div>`;
-    const ann = d.announcements.map(a => `<li><div class="t">${esc(dayLabel(a.time) || 'Today')} ${hhmm(a.time)} · <span class="pill ${a.important ? 'imp' : ''}">${esc(a.subject)}</span></div>
+    const ann = d.announcements.map(a => `<li class="${liClass(a.sentiment)}"><div class="t">${esc(dayLabel(a.time) || 'Today')} ${hhmm(a.time)} · <span class="pill ${a.important ? 'imp' : ''}">${esc(a.subject)}</span> ${sentPill(a.sentiment)}</div>
         <div>${esc(a.text)}</div>${a.pdf ? `<a class="pdf" href="${esc(safeUrl(a.pdf))}" target="_blank" rel="noopener">Filing (PDF) ↗</a>` : ''}</li>`).join('');
-    const news = d.news.map(n => `<li><div class="t">${esc(dayLabel(n.time) || 'Today')} ${hhmm(n.time)} · ${esc(n.source)}</div>
+    const news = d.news.map(n => `<li class="${liClass(n.sentiment)}"><div class="t">${esc(dayLabel(n.time) || 'Today')} ${hhmm(n.time)} · ${esc(n.source)} ${sentPill(n.sentiment)}</div>
         <a href="${esc(safeUrl(n.url))}" target="_blank" rel="noopener">${esc(n.title)}</a></li>`).join('');
     $('spBody').innerHTML = `<div class="sp-co"><div class="nm">${esc(d.company)} <span style="font-weight:500;font-size:13px">${esc(d.name)}</span></div>
         <div class="ind">${esc([d.sector, d.industry].filter(Boolean).join(' · '))}</div>${links}</div>
+      <div class="sp-mood">${[['Last 7 days', d.mood_7d], ['Last 30 days', d.mood]].map(([lbl, m]) => `<div>
+          <div class="ml">${lbl} · ${m.total} items</div><div class="mv ${m.label.toLowerCase()}">${m.total ? m.label + ' ' + (m.mood > 0 ? '+' : '') + m.mood : '—'}</div>
+          ${barHtml(m)}<div class="why" style="margin-top:4px">▲ ${m.positive} · ▼ ${m.negative} · ● ${m.neutral}</div></div>`).join('')}</div>
       ${d.errors.length ? `<div class="notice">${d.errors.map(esc).join('<br>')}</div>` : ''}
       <div class="sp-sec"><span>NSE filings · last 30 days</span><span>${d.announcements.length}</span></div>
       <ul class="sp-list">${ann || '<li class="t">No filings in the last 30 days.</li>'}</ul>

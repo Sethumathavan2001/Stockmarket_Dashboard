@@ -22,9 +22,12 @@ from django.core.cache import cache
 from market.models import Company
 from prediction.market_time import IST
 
+from . import sentiment
+
 logger = logging.getLogger(__name__)
 
 TIMEOUT = 15
+NSE_TIMEOUT = 30          # NSE can be slow, especially around the open
 MARKET_CACHE = 120          # seconds
 ANN_CACHE = 120
 STOCK_CACHE = 300
@@ -81,7 +84,7 @@ def _nse_json(path):
                 s = cr.Session(impersonate="chrome")
                 s.get("https://www.nseindia.com/", timeout=TIMEOUT)
                 _nse.update(session=s, made=datetime.now())
-            r = s.get("https://www.nseindia.com" + path, timeout=TIMEOUT, headers=headers)
+            r = s.get("https://www.nseindia.com" + path, timeout=NSE_TIMEOUT, headers=headers)
             if r.status_code == 200:
                 try:
                     return r.json()
@@ -219,8 +222,11 @@ def market_news(refresh=False):
             continue
         seen.add(k)
         it["mentions"] = mentions(it["title"] + " " + it["summary"])
+        it["sentiment"] = sentiment.score(it["title"], it["summary"])
         unique.append(it)
-    out = {"items": unique[:250], "sources": sources, "fetched_at": datetime.now(IST).isoformat()}
+    unique = unique[:250]
+    out = {"items": unique, "sources": sources, "mood": sentiment.summarize(unique),
+           "fetched_at": datetime.now(IST).isoformat()}
     cache.set(key, out, MARKET_CACHE)
     return out
 
@@ -241,7 +247,8 @@ def _announcement(a, codes):
     important = bool(IMPORTANT.search(subject))
     return {"symbol": sym, "code": code if code in codes else None, "name": a.get("sm_name") or sym,
             "industry": a.get("smIndustry") or "", "subject": subject, "text": text,
-            "time": t.isoformat() if t else None, "pdf": _safe_url(a.get("attchmntFile")), "important": important}
+            "time": t.isoformat() if t else None, "pdf": _safe_url(a.get("attchmntFile")), "important": important,
+            "sentiment": sentiment.score(subject, text)}
 
 
 def _codes():
@@ -266,7 +273,8 @@ def announcements(days=1, refresh=False):
     codes = _codes()
     items = [_announcement(a, codes) for a in (data if isinstance(data, list) else [])]
     items.sort(key=lambda x: x["time"] or "", reverse=True)
-    out = {"items": items, "from": frm.isoformat(), "to": today.isoformat(), "fetched_at": datetime.now(IST).isoformat()}
+    out = {"items": items, "from": frm.isoformat(), "to": today.isoformat(), "mood": sentiment.summarize(items),
+           "fetched_at": datetime.now(IST).isoformat()}
     cache.set(key, out, ANN_CACHE)
     return out
 
@@ -297,9 +305,14 @@ def stock_news(company, refresh=False):
     try:
         items = parse_rss(_get(url).content, "Google News")
         items.sort(key=lambda x: x["time"] or "", reverse=True)
+        for it in items:
+            it["sentiment"] = sentiment.score(it["title"])
         out["news"] = items[:40]
     except Exception as exc:
         logger.warning("Google News for %s failed: %s", company.code, exc)
         out["errors"].append(f"Google News: {exc}")
+    week_ago = (datetime.now(IST) - timedelta(days=7)).isoformat()
+    out["mood"] = sentiment.summarize(out["news"] + out["announcements"])
+    out["mood_7d"] = sentiment.summarize([x for x in out["news"] + out["announcements"] if (x["time"] or "") >= week_ago])
     cache.set(key, out, STOCK_CACHE)
     return out

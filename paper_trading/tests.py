@@ -1,12 +1,14 @@
 import json
 import random
+import threading
 from datetime import datetime, time, timedelta
 from decimal import Decimal
 from unittest import mock
 
 import pandas as pd
 from django.core.cache import cache
-from django.test import TestCase
+from django.db import connection
+from django.test import TestCase, TransactionTestCase
 from django.urls import reverse
 
 from market.models import Company, DailyData, FiveMinuteData
@@ -1547,3 +1549,167 @@ class PaperTrading2PageTests(BaseCase):
         self.assertContains(r, "const BOOK = 2;")
         self.assertContains(r, "Paper Trading 2")
         self.assertContains(self.client.get(reverse("paper_trading:page")), "const BOOK = 1;")
+
+
+class DuplicateExitTests(BaseCase):
+    """Several open tabs sending the same stop loss / target / exit must never open a new position."""
+
+    def setUp(self):
+        super().setUp()
+        self.post(reverse("paper_trading:wallet_add"), {"amount": 100000})
+
+    def live(self, **body):
+        payload = {"company": "TST", "mode": "live", "product": "INTRADAY", **body}
+        with mock.patch.object(svc, "get_market_status", return_value="OPEN"), \
+             mock.patch.object(svc, "fetch_live_today", return_value=live_frame(1, close=95.0)):
+            return self.post(reverse("paper_trading:order"), payload)
+
+    def position(self):
+        pos = PaperPosition.objects.filter(account__owner_key="book:1", company=self.company).first()
+        return pos.quantity if pos else 0
+
+    def short_with_target(self):
+        r = self.live(side="SELL", quantity=100, target_price="90")
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(self.position(), -100)
+
+    def test_target_exit_sent_twice_closes_once(self):
+        self.short_with_target()
+        first = self.live(side="BUY", quantity=100, reason="target")
+        second = self.live(side="BUY", quantity=100, reason="target")          # the other tab
+        self.assertEqual(first.status_code, 200, first.content)
+        self.assertEqual(second.status_code, 409)
+        self.assertEqual(second.json()["code"], "already_closed")
+        self.assertEqual(self.position(), 0)                                    # no new LONG
+        self.assertEqual(PaperOrder.objects.filter(reason="target").count(), 1)
+
+    def test_exit_button_never_flips_and_is_capped(self):
+        self.short_with_target()
+        r = self.live(side="BUY", quantity=500, close_only=True)                # stale, bigger quantity
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(r.json()["order"]["quantity"], 100)
+        self.assertEqual(self.position(), 0)
+        again = self.live(side="BUY", quantity=100, close_only=True)
+        self.assertEqual(again.status_code, 409)
+
+    def test_stop_loss_exit_after_the_level_was_removed_is_refused(self):
+        self.live(side="BUY", quantity=10, stop_loss_price="90")
+        self.post(reverse("paper_trading:bracket"), {"company": "TST", "mode": "live", "product": "INTRADAY",
+                                                     "clear_stop_loss": True})
+        r = self.live(side="SELL", quantity=10, reason="stop_loss")
+        self.assertEqual(r.status_code, 409)
+        self.assertEqual(self.position(), 10)
+
+    def test_same_order_id_runs_once(self):
+        a = self.live(side="BUY", quantity=5, client_order_id="abc-123")
+        b = self.live(side="BUY", quantity=5, client_order_id="abc-123")         # double click / retry
+        self.assertEqual(a.status_code, 200)
+        self.assertEqual(b.status_code, 409)
+        self.assertEqual(self.position(), 5)
+
+    def test_normal_orders_can_still_reverse(self):
+        self.live(side="BUY", quantity=10)
+        r = self.live(side="SELL", quantity=30)                                 # a deliberate manual reversal
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(self.position(), -20)
+
+    def test_squareoff_from_two_tabs_closes_once(self):
+        today = svc.today_ist()
+        svc.execute_order(account=svc.get_account(1), company=self.company, side="BUY", quantity=10,
+                          price=D("100"), mode=svc.LIVE, replay_date=None, market_time=at(today, 10, 0))
+        with mock.patch.object(svc, "fetch_live_today", return_value=live_frame(1, close=101.0)):
+            a = svc.squareoff_live_intraday(svc.get_account(1), now=at(today, 15, 21))
+            b = svc.squareoff_live_intraday(svc.get_account(1), now=at(today, 15, 21))
+        self.assertEqual((len(a["closed"]), len(b["closed"])), (1, 0))
+        self.assertEqual(self.position(), 0)
+
+
+class ConcurrentExitTests(TransactionTestCase):
+    """Two exits arriving at the same moment (two tabs) - the order lock makes them run one at a time."""
+
+    def test_simultaneous_exits(self):
+        company = Company.objects.create(name="Test Co", code="TST")
+        account = PaperAccount.objects.create(owner_key="book:1", balance=D("100000"))
+        svc.execute_order(account=account, company=company, side="SELL", quantity=100, price=D("100"),
+                          mode=svc.LIVE, replay_date=None, market_time=None, levels={"target_price": D("95")})
+        barrier, results = threading.Barrier(2), []
+
+        def exit_once():
+            barrier.wait()
+            try:
+                svc.execute_order(account=account, company=company, side="BUY", quantity=100, price=D("95"),
+                                  mode=svc.LIVE, replay_date=None, market_time=None, reason="target", close_only=True)
+                results.append("filled")
+            except svc.AlreadyClosed:
+                results.append("already_closed")
+            finally:
+                connection.close()
+
+        threads = [threading.Thread(target=exit_once) for _ in range(2)]
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join()
+        self.assertEqual(sorted(results), ["already_closed", "filled"])
+        self.assertEqual(PaperPosition.objects.get(company=company).quantity, 0)
+
+
+class ChargesTests(BaseCase):
+    """Zerodha / Angel One charges (paper_trading/charges.py) and their use in the trade log."""
+
+    def test_zerodha_intraday_worked_example(self):
+        from . import charges
+        # buy 1000 @ 100, sell 1000 @ 101 (NSE, intraday)
+        c = charges.trade_charges("zerodha", "INTRADAY", D("100000"), D("101000"),
+                                  [(D("100000"), D("1")), (D("101000"), D("1"))])
+        self.assertEqual(c["brokerage"], D("40.00"))                 # 0.03% = Rs 30 -> capped at Rs 20, x2 orders
+        self.assertEqual(c["stt"], D("25.25"))                       # 0.025% of the sell side
+        self.assertEqual(c["exchange"], D("6.17"))                   # 0.00307% of 2,01,000
+        self.assertEqual(c["stamp"], D("3.00"))                      # 0.003% of the buy side
+        self.assertEqual(c["gst"], D("8.35"))                        # 18% of brokerage + exchange + SEBI
+        self.assertEqual(c["dp"], D("0.00"))
+        self.assertEqual(c["total"], sum(v for k, v in c.items() if k != "total"))
+
+    def test_angel_one_brokerage_rate_minimum_and_cap(self):
+        from . import charges
+        self.assertEqual(charges.order_brokerage("angelone", "INTRADAY", D("10000")), D("10"))     # 0.1%
+        self.assertEqual(charges.order_brokerage("angelone", "INTRADAY", D("1000")), D("5"))       # minimum
+        self.assertEqual(charges.order_brokerage("angelone", "DELIVERY", D("500000")), D("20"))    # cap
+        self.assertEqual(charges.order_brokerage("zerodha", "INTRADAY", D("10000")), D("3"))       # 0.03%
+        self.assertEqual(charges.order_brokerage("zerodha", "DELIVERY", D("500000")), D("0"))      # free
+
+    def test_delivery_pays_stt_both_sides_and_dp(self):
+        from . import charges
+        z = charges.trade_charges("zerodha", "DELIVERY", D("50000"), D("52000"), [(D("50000"), 1), (D("52000"), 1)])
+        a = charges.trade_charges("angelone", "DELIVERY", D("50000"), D("52000"), [(D("50000"), 1), (D("52000"), 1)])
+        self.assertEqual(z["stt"], D("102.00"))                      # 0.1% of 50,000 + 52,000
+        self.assertEqual(z["stamp"], D("7.50"))                      # 0.015% of the buy
+        self.assertEqual((z["brokerage"], z["dp"]), (D("0.00"), D("15.34")))
+        self.assertEqual((a["brokerage"], a["dp"]), (D("40.00"), D("23.60")))
+
+    def test_trade_log_charges_each_order_once(self):
+        # two buys of 5 then one sell of 10: three orders -> three brokerages in one trade
+        self.trade("BUY", 5, 100)
+        self.trade("BUY", 5, 102)
+        self.trade("SELL", 10, 103)
+        row = [r for r in svc.trade_log(self.account, "live") if r["status"] == "CLOSED"][0]
+        z = row["charges"]["zerodha"]
+        expected = 0.0003 * (500 + 510 + 1030)                      # 0.03% each, all under the Rs 20 cap
+        self.assertAlmostEqual(z["brokerage"], round(expected, 2), places=2)
+        self.assertAlmostEqual(row["net_pnl"]["zerodha"], row["pnl"] - z["total"], places=2)
+
+    def test_partial_exit_splits_the_entry_brokerage(self):
+        self.trade("BUY", 10, 1000)                                  # Rs 10,000 entry order -> Rs 3 brokerage (Zerodha)
+        self.trade("SELL", 4, 1010)
+        rows = svc.trade_log(self.account, "live")
+        closed = [r for r in rows if r["status"] == "CLOSED"][0]
+        still = [r for r in rows if r["status"] == "OPEN"][0]
+        # 40% of the entry order's Rs 3 + the whole exit order's brokerage (0.03% of 4,040 = 1.212)
+        self.assertAlmostEqual(closed["charges"]["zerodha"]["brokerage"], round(3 * 0.4 + 1.212, 2), places=2)
+        self.assertEqual(still["entry_legs"], [[10000.0, 0.6]])
+
+    def test_page_ships_the_rates(self):
+        r = self.client.get(reverse("paper_trading:page"))
+        self.assertContains(r, 'id="brokers-data"')
+        self.assertContains(r, "Angel One")
+        self.assertContains(r, "zerodha.com/charges")

@@ -76,6 +76,27 @@
   @media (max-width:1000px){ .grid2{ grid-template-columns:1fr; } }
   .note{ font-size:12px; color:var(--text-muted); line-height:1.55; padding:10px 16px 14px; }
   .filter-inline{ display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--text-muted); }
+  .news-opt{ display:flex; align-items:center; gap:6px; font-size:13px; font-weight:600; color:var(--navy-800); padding:8px 12px 10px;
+    border:1px solid var(--border); border-radius:8px; background:#fff; cursor:pointer; }
+  .news-opt.disabled{ color:var(--text-muted); cursor:not-allowed; opacity:.7; }
+  .news-opt small{ font-weight:500; color:var(--text-muted); }
+  .nw-grid{ display:grid; grid-template-columns:260px minmax(0,1fr); gap:0; }
+  @media (max-width:900px){ .nw-grid{ grid-template-columns:1fr; } }
+  .nw-side{ padding:14px 16px; border-right:1px solid var(--border); }
+  .nw-big{ font-size:22px; font-weight:700; margin:4px 0 8px; }
+  .nw-meter{ position:relative; height:10px; border-radius:5px; background:linear-gradient(90deg,#E5484D,#E2E8F0 50%,#0EA968); margin:10px 0 4px; }
+  .nw-meter i{ position:absolute; top:-4px; width:4px; height:18px; border-radius:2px; background:var(--navy-900); transform:translateX(-2px); }
+  .nw-scale{ display:flex; justify-content:space-between; font-size:10.5px; color:var(--text-muted); }
+  .nw-stat{ font-size:12.5px; color:var(--text-muted); line-height:1.7; margin-top:8px; }
+  .nw-list{ list-style:none; margin:0; padding:0; max-height:300px; overflow-y:auto; }
+  .nw-list li{ padding:8px 16px; border-bottom:1px solid var(--panel); border-left:3px solid transparent; font-size:13px; line-height:1.5; }
+  .nw-list li.positive{ border-left-color:var(--green); background:#F3FBF7; }
+  .nw-list li.negative{ border-left-color:var(--red); background:#FEF6F6; }
+  .nw-list .t{ font-size:11px; color:var(--text-muted); }
+  .nw-list a{ color:var(--text); text-decoration:none; } .nw-list a:hover{ color:var(--blue-600); text-decoration:underline; }
+  .senti{ font-size:10.5px; font-weight:700; padding:1px 7px; border-radius:999px; }
+  .senti.positive{ background:var(--green-bg); color:var(--green-dark); } .senti.negative{ background:var(--red-bg); color:var(--red-dark); }
+  .senti.neutral{ background:var(--panel); color:var(--text-muted); }
   .disclaimer{ font-size:12px; color:var(--text-muted); margin-top:18px; line-height:1.55; }
 </style>
 </head>
@@ -111,6 +132,9 @@
       <label for="asofSelect">Predict from</label>
       <select id="asofSelect"><option value="">Latest candle</option></select>
     </div>
+    <label class="news-opt" id="newsOpt" title="Adds this stock's fresh news (since the last close) and today's market mood to the forecast. Live session only.">
+      <input type="checkbox" id="newsChk"> Include news <small id="newsHint">(live session only)</small>
+    </label>
     <button class="btn" id="goBtn" type="button">Predict</button>
     <label class="auto"><input type="checkbox" id="autoRefresh" checked> Auto-refresh while the market is open</label>
   </div>
@@ -127,6 +151,7 @@
       </div>
       <div class="legend">
         <span><i style="background:#7C3AED"></i>Predicted candles</span>
+        <span id="baseLegend" hidden><i style="background:#94A3B8"></i>Forecast without news</span>
         <span><i style="background:#A78BFA"></i>80 % range</span>
         <span><i style="background:#F59E0B"></i>VWAP</span>
         <span><i style="background:#CBD5E1"></i>Actual later (past days)</span>
@@ -145,6 +170,22 @@
     <div class="kpi"><div class="lbl">How good is this forecast?</div><div class="big" id="kTested">—</div><div class="small" id="kTestedSub"></div></div>
     <div class="kpi"><div class="lbl">Patterns right now</div><div class="big" id="kPatterns">—</div><div class="small" id="kPatternsSub"></div></div>
     <div class="kpi"><div class="lbl">Day context</div><div class="big" id="kContext">—</div><div class="small" id="kContextSub"></div></div>
+  </div>
+
+  <!-- NEWS -->
+  <div class="card" id="newsCard" hidden>
+    <div class="card-head"><span class="card-title">News check · since the last close</span><span class="card-sub" id="newsSub"></span></div>
+    <div class="nw-grid">
+      <div class="nw-side">
+        <div class="card-title" style="font-size:10.5px">News lean</div>
+        <div class="nw-big" id="nwLabel">—</div>
+        <div class="nw-meter"><i id="nwPin" style="left:50%"></i></div>
+        <div class="nw-scale"><span>Negative</span><span>Neutral</span><span>Positive</span></div>
+        <div class="nw-stat" id="nwStat"></div>
+      </div>
+      <ul class="nw-list" id="nwList"></ul>
+    </div>
+    <div class="note" id="nwNote"></div>
   </div>
 
   <!-- FORECAST TABLE + ACTIVE PATTERNS -->
@@ -229,6 +270,7 @@ function initChart() {
   const band = { color: '#A78BFA', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false };
   S.p10 = S.chart.addLineSeries(band);
   S.p90 = S.chart.addLineSeries(band);
+  S.base = S.chart.addLineSeries({ color: '#94A3B8', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
   S.vwap = S.chart.addLineSeries({ color: '#F59E0B', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
   new ResizeObserver(() => S.chart.applyOptions({ width: els.chart.clientWidth })).observe(els.chart);
 }
@@ -244,6 +286,9 @@ function drawChart(d) {
   const bandPts = (key) => (f ? [{ time: last.time, value: last.close }, ...f.band.map((p) => ({ time: ct(p.x), value: p[key] }))] : []);
   S.p10.setData(bandPts('p10'));
   S.p90.setData(bandPts('p90'));
+  const base = f && f.base ? [{ time: last.time, value: last.close }, ...f.base.candles.map((c) => ({ time: ct(c.x), value: c.c }))] : [];
+  S.base.setData(base);
+  $('baseLegend').hidden = !base.length;
   S.vwap.setData(d.vwap.map((p) => ({ time: ct(p.x), value: p.v })));
 
   S.lines.forEach((l) => S.actual.removePriceLine(l));
@@ -284,7 +329,8 @@ function drawCards(d) {
   if (m) {
     const lean = m.p_up >= 0.55 ? ['Bullish lean', 'up'] : m.p_up <= 0.45 ? ['Bearish lean', 'down'] : ['No clear lean', 'muted'];
     $('kForecast').innerHTML = `<span class="${lean[1]}">${lean[0]}</span>`;
-    $('kForecastSub').innerHTML = `Median move <b class="${tone(m.ret_pct)}">${sgn(m.ret_pct)}%</b> to ₹${nf.format(m.price)} · P(up) <b>${pct(m.p_up)}</b><br>80 % range ₹${nf.format(m.low)} – ₹${nf.format(m.high)} · ${f.neighbors} analogs`;
+    $('kForecastSub').innerHTML = `Median move <b class="${tone(m.ret_pct)}">${sgn(m.ret_pct)}%</b> to ₹${nf.format(m.price)} · P(up) <b>${pct(m.p_up)}</b><br>80 % range ₹${nf.format(m.low)} – ₹${nf.format(m.high)} · ${f.neighbors} analogs`
+      + (f.news ? `<br><b>With news</b> (${esc(f.news.label)}): ${sgn(m.news_tilt_pct)}% tilt · without news ${sgn(m.base_ret_pct)}%, P(up) ${pct(m.base_p_up)}` : '');
   } else {
     $('kForecast').textContent = 'No forecast';
     $('kForecastSub').textContent = 'The session is over for this candle (nothing left to predict).';
@@ -395,6 +441,46 @@ function fillSelectors(d) {
   els.asof.value = keepT && times.includes(keepT) ? keepT : '';
 }
 
+/* ---------------- news ---------------- */
+function drawNews(d) {
+  const n = d.forecast && d.forecast.news;
+  $('newsCard').hidden = !n;
+  if (!n) return;
+  const cls = n.label === 'Positive' ? 'up' : n.label === 'Negative' ? 'down' : 'muted';
+  $('nwLabel').innerHTML = `<span class="${cls}">${esc(n.label)} ${n.bias > 0 ? '+' : ''}${n.bias.toFixed(2)}</span>`;
+  $('nwPin').style.left = ((n.bias + 1) / 2 * 100) + '%';
+  const mm = n.market_mood;
+  $('nwStat').innerHTML = `${n.fresh_count} fresh items · <span class="up">▲ ${n.positive}</span> · <span class="down">▼ ${n.negative}</span><br>`
+    + `Stock news ${sgn(n.stock_bias * 100, 0)} · market mood ${mm ? sgn(mm.mood, 0) : 'n/a'}<br>`
+    + `News intensity ${Math.round(n.intensity * 100)}% → range widened ×${n.widen}<br>`
+    + `Tilt on the ${esc(d.main_label)} forecast: <b class="${tone(n.tilt_main_pct)}">${sgn(n.tilt_main_pct)}%</b>`;
+  $('newsSub').textContent = 'since ' + new Date(n.since).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' }) + ' IST';
+  const SL = { positive: '▲ Positive', negative: '▼ Negative', neutral: '● Neutral' };
+  $('nwList').innerHTML = n.items.map((it) => {
+    const s = it.sentiment.label;
+    const t = new Date(it.time).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' });
+    const link = /^https?:\/\//i.test(it.url || '') ? `<a href="${esc(it.url)}" target="_blank" rel="noopener">${esc(it.title)}</a>` : esc(it.title);
+    return `<li class="${s}"><div class="t">${t} · ${esc(it.source)} · weight ${it.weight} <span class="senti ${s}" title="${esc(it.sentiment.cues.join(', '))}">${SL[s]}</span></div>${link}</li>`;
+  }).join('') || '<li class="t">No news about this stock since the last close.</li>';
+  $('nwNote').innerHTML = 'Newer and stronger items count more (half-life 6 hours); company filings marked important count 1.5×. '
+    + 'The forecast path is shifted by the news lean, sized to this stock\'s normal range, and the range is widened on news-heavy days. '
+    + '<b>This news adjustment is a rule of thumb</b> - the app has no news history, so unlike the candle forecast it cannot be back-tested. '
+    + 'Compare it with the grey dashed line (the forecast without news).';
+}
+
+function syncNewsOption() {
+  const pastOrEarlier = !!(els.day.value || els.asof.value);
+  $('newsChk').disabled = pastOrEarlier;
+  $('newsOpt').classList.toggle('disabled', pastOrEarlier);
+  $('newsHint').textContent = pastOrEarlier ? '(only for the latest live session)' : '(live session only)';
+}
+$('newsChk').checked = INITIAL.news || (() => { try { return localStorage.getItem('candle:news') === '1'; } catch (e) { return false; } })();
+$('newsChk').addEventListener('change', () => {
+  try { localStorage.setItem('candle:news', $('newsChk').checked ? '1' : '0'); } catch (e) {}
+  if (els.company.value) load();
+});
+['change'].forEach((ev) => { els.day.addEventListener(ev, syncNewsOption); els.asof.addEventListener(ev, syncNewsOption); });
+
 /* ---------------- actions ---------------- */
 async function load(silent = false) {
   const code = els.company.value;
@@ -403,6 +489,8 @@ async function load(silent = false) {
   const q = new URLSearchParams({ interval: S.iv });
   if (els.day.value) q.set('day', els.day.value);
   if (els.asof.value) q.set('asof', els.asof.value);
+  syncNewsOption();
+  if ($('newsChk').checked && !$('newsChk').disabled) q.set('news', '1');
   try {
     history.replaceState(null, '', `?company=${encodeURIComponent(code)}&interval=${S.iv}`);
     const r = await fetch(DATA_URL.replace('CODE', encodeURIComponent(code)) + '?' + q);
@@ -415,7 +503,8 @@ async function load(silent = false) {
     els.qBadge.textContent = d.is_live ? 'LIVE' : d.interval + ' · ' + d.day;
     els.qAsOf.textContent = 'predicting from ' + hm(d.asof) + (d.is_latest ? '' : ' (later candles shown faded)');
     fillSelectors(d);
-    drawChart(d); drawCards(d); drawForecastTable(d); drawActive(d); drawLog(d); drawLibrary(d); drawAnalogs(d);
+    drawChart(d); drawCards(d); drawNews(d); drawForecastTable(d); drawActive(d); drawLog(d); drawLibrary(d); drawAnalogs(d);
+    if (d.news_status) notice(d.news_status, 'warn');
     els.row2.hidden = false;
     schedule(d);
   } catch (e) {

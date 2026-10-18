@@ -189,6 +189,20 @@
   .btn-update{ width:100%; margin-top:10px; padding:9px 0; border:1px solid var(--blue-600); background:var(--blue-50); color:var(--navy-800); border-radius:8px; font-weight:700; font-size:13px; cursor:pointer; font-family:inherit; }
   .btn-update:hover:not(:disabled){ background:#E0EAFF; }
   .btn-update:disabled{ opacity:.5; cursor:not-allowed; }
+  .ch-summary{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; padding:14px 14px 4px; }
+  .ch-kpi{ border:1px solid var(--border); border-radius:8px; padding:10px 12px; background:var(--panel); }
+  .ch-kpi .l{ font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--text-muted); }
+  .ch-kpi .v{ font-size:18px; font-weight:700; margin-top:4px; font-family:'JetBrains Mono',monospace; }
+  .ch-kpi .s{ font-size:11.5px; color:var(--text-muted); margin-top:2px; line-height:1.45; }
+  .ch-kpi.main{ background:#fff; border-width:2px; }
+  .ch-note{ font-size:11.5px; color:var(--text-muted); line-height:1.6; padding:10px 14px 14px; }
+  .ch-note a{ color:var(--blue-600); }
+  #brokerTable td.chg{ color:#B45309; }
+  #brokerTable small{ color:var(--text-muted); }
+  .est{ font-size:10px; font-weight:700; padding:1px 6px; border-radius:4px; background:var(--blue-50); color:var(--blue-600); margin-left:4px; }
+  .tab-role{ margin-left:auto; align-self:center; font-size:11px; font-weight:700; padding:3px 9px; border-radius:999px; cursor:help; white-space:nowrap; }
+  .tab-role.lead{ background:var(--green-bg); color:var(--green); }
+  .tab-role.follow{ background:#F1F5F9; color:#64748B; }
   .reason-tag{ font-size:10px; font-weight:700; padding:2px 7px; border-radius:999px; background:var(--amber-bg); color:var(--amber); margin-left:6px; white-space:nowrap; }
   .reason-tag.target{ background:var(--green-bg); color:var(--green); }
   .reason-tag.stop_loss{ background:var(--red-bg); color:var(--red); }
@@ -377,12 +391,20 @@
         <button class="tab active" data-tab="positions" type="button">Positions</button>
         <button class="tab" data-tab="orders" type="button">Orders</button>
         <button class="tab" data-tab="trades" type="button" title="One row per completed trade: entry, exit, P&amp;L">Trades</button>
+        <button class="tab" data-tab="angelone" type="button" title="Your trades with Angel One's brokerage, taxes and fees deducted">Angel One</button>
+        <button class="tab" data-tab="zerodha" type="button" title="Your trades with Zerodha's brokerage, taxes and fees deducted">Zerodha</button>
+        <span class="tab-role" id="tabRole" hidden></span>
       </div>
       <div class="card table-wrap" style="border-top:none; border-radius:0 0 10px 10px;">
         <table id="positionsTable"></table>
         <table id="limitTable" hidden></table>
         <table id="ordersTable" hidden></table>
         <table id="tradesTable" hidden></table>
+        <div id="brokerView" hidden>
+          <div class="ch-summary" id="chSummary"></div>
+          <table id="brokerTable"></table>
+          <div class="ch-note" id="chNote"></div>
+        </div>
       </div>
     </section>
 
@@ -500,6 +522,7 @@
 
 {{ initial|json_script:"initial-state" }}
 
+{{ brokers|json_script:"brokers-data" }}
 <script>
 (() => {
 'use strict';
@@ -535,6 +558,7 @@ const IST_SHIFT = 19800;   // +5:30. Chart times are shifted so the (UTC) axis r
 const PREV_COLORS = { open: '#CA8A04', high: '#0EA968', low: '#E5484D', close: '#2F6FED' };  // yellow, green, red, blue
 const REASON_LABEL = { stop_loss: 'SL hit', target: 'Target hit', session_end: 'Auto close' };
 const PRODUCT_LABEL = { INTRADAY: 'Intraday', DELIVERY: 'Delivery' };
+const BROKERS = JSON.parse(document.getElementById('brokers-data').textContent);
 const PRODUCT_NOTE = {
   INTRADAY: `Can go short. Closed automatically at the end of the day (Old) or at ${SQUAREOFF_LABEL} (Live).`,
   DELIVERY: 'Buy and hold — no short selling, never auto-closed. Old-mode holdings carry over to later dates.',
@@ -627,14 +651,69 @@ async function apiFetch(url, options = {}) {
   const res = await fetch(url, options);
   let data = {};
   try { data = await res.json(); } catch (e) { /* non-JSON error page */ }
-  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  if (!res.ok) {
+    const err = new Error(data.error || `Request failed (${res.status})`);
+    err.status = res.status; err.code = data.code;
+    throw err;
+  }
   return data;
 }
-const postJson = (url, body) => apiFetch(url, {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken() },
-  body: JSON.stringify(Object.assign({ book: BOOK }, body)),
-});
+async function postJson(url, body) {
+  const data = await apiFetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken() },
+    body: JSON.stringify(Object.assign({ book: BOOK }, body)),
+  });
+  announceChange();                       // other open tabs of this account refresh at once
+  return data;
+}
+
+/* ======================================================================
+   several open tabs of the same account
+   ====================================================================== */
+// 1. Any change made in one tab (order, exit, bracket, wallet, limit) makes the others refresh.
+// 2. Only ONE live tab per account watches stop losses / targets and does the auto square-off,
+//    so an exit is never sent twice.  If that tab is closed, another open tab takes over.
+//    (The server also refuses an exit for a position that is already closed.)
+const TAB = { channel: null, leader: false, claiming: false, release: null, syncTimer: null };
+try { TAB.channel = new BroadcastChannel('paper-trading-book-' + BOOK); } catch (e) { /* old browser */ }
+function announceChange() {
+  try { if (TAB.channel) TAB.channel.postMessage({ type: 'changed', at: Date.now() }); } catch (e) { /* ignore */ }
+}
+if (TAB.channel) {
+  TAB.channel.onmessage = (ev) => {
+    if (!ev.data || ev.data.type !== 'changed') return;
+    clearTimeout(TAB.syncTimer);
+    TAB.syncTimer = setTimeout(() => { if (S.account && !S.busy) refreshAccount().catch(() => {}); }, 200);
+  };
+}
+const HAS_LOCKS = !!(navigator.locks && navigator.locks.request);
+function claimAutoExits() {
+  if (!HAS_LOCKS) { TAB.leader = true; renderTabRole(); return; }
+  if (TAB.claiming) return;
+  TAB.claiming = true;
+  navigator.locks.request('paper-auto-exits-book-' + BOOK, () => {
+    if (S.mode !== 'live') return undefined;            // switched to Old mode while waiting: pass it on
+    TAB.leader = true; renderTabRole();
+    return new Promise((resolve) => { TAB.release = resolve; });          // held until released / tab closed
+  }).finally(() => { TAB.leader = false; TAB.claiming = false; TAB.release = null; renderTabRole(); });
+}
+function releaseAutoExits() {
+  if (!HAS_LOCKS) { TAB.leader = false; renderTabRole(); return; }
+  if (TAB.release) TAB.release();
+}
+function isAutoExitTab() { return S.mode !== 'live' || TAB.leader; }   // replay sessions are per tab
+function renderTabRole() {
+  const el = document.getElementById('tabRole');
+  if (!el) return;
+  const live = S.mode === 'live';
+  el.hidden = !live;
+  el.className = 'tab-role ' + (TAB.leader ? 'lead' : 'follow');
+  el.textContent = TAB.leader ? 'Auto exits: this tab' : 'Auto exits: another tab';
+  el.title = TAB.leader
+    ? 'This tab watches stop losses / targets and squares off Intraday positions for this account.'
+    : 'Another open Paper Trading tab of this account watches stop losses / targets. This tab follows its changes. If you close that tab, this one takes over.';
+}
 
 function toast(message, kind = 'info') {
   const t = document.createElement('div');
@@ -1131,6 +1210,115 @@ function renderTrades() {
     `<tbody>${rows || '<tr><td colspan="12" class="empty-row">No trades yet.</td></tr>'}</tbody>${foot}`;
 }
 
+/* ======================================================================
+   Angel One / Zerodha tabs: every trade with that broker's charges deducted
+   ====================================================================== */
+// Closed trades: the server worked out the charges (paper_trading/charges.py).  Open trades: the same
+// formula here, as if closed now at the live price (marked "est.").
+function estimateCharges(broker, t, exitPrice) {
+  const b = BROKERS[broker], c = BROKERS._common, p = t.product;
+  const brk = (v) => {
+    const r = b.brokerage[p];
+    if (!r.pct) return 0;
+    return Math.max(Math.min(v * r.pct / 100, r.cap), r.min);
+  };
+  const entryV = t.entry_price * t.quantity, exitV = exitPrice * t.quantity;
+  const [buyV, sellV] = t.side === 'LONG' ? [entryV, exitV] : [exitV, entryV];
+  const turnover = buyV + sellV;
+  const brokerage = (t.entry_legs || []).reduce((s, [v, f]) => s + brk(v) * f, 0) + brk(exitV);
+  const stt = buyV * c.stt[p].buy / 100 + sellV * c.stt[p].sell / 100;
+  const exchange = turnover * b.exchange_pct / 100;
+  const sebi = turnover * (c.sebi_per_crore + c.ipft_per_crore) / 1e7;
+  const stamp = buyV * c.stamp_buy[p] / 100;
+  const gst = (brokerage + exchange + sebi) * c.gst;
+  const dp = p === 'DELIVERY' ? b.dp_per_sell : 0;
+  const parts = { brokerage, stt, exchange, sebi, stamp, gst, dp };
+  parts.total = Object.values(parts).reduce((s, x) => s + x, 0);
+  return parts;
+}
+
+const istHm = (iso) => new Date(iso).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' });
+const istDay = (iso) => new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', timeZone: 'Asia/Kolkata' });
+function renderBrokerTab() {
+  if (!(S.tab in BROKERS)) return;
+  const key = S.tab, info = BROKERS[key];
+  const list = S.account.trades || [];
+  const tot = { gross: 0, brokerage: 0, stt: 0, exchange: 0, sebi: 0, stamp: 0, gst: 0, dp: 0, total: 0, net: 0 };
+  let closed = 0, winsGross = 0, winsNet = 0, turned = 0;
+  const money = (v) => (v == null ? '—' : '₹' + nf.format(v));
+  const rows = list.map((t) => {
+    const sign = t.side === 'LONG' ? 1 : -1;
+    const open = t.status === 'OPEN';
+    let ch, gross, exitPrice = t.exit_price;
+    if (open) {
+      exitPrice = ltpFor(t.company);
+      if (exitPrice == null) return '';
+      gross = (exitPrice - t.entry_price) * t.quantity * sign;
+      ch = estimateCharges(key, t, exitPrice);
+    } else {
+      gross = t.pnl;
+      ch = t.charges[key];
+      closed += 1;
+      Object.keys(ch).forEach((k) => { tot[k] += ch[k]; });
+      tot.gross += gross;
+      if (gross > 0) winsGross += 1;
+      if (gross - ch.total > 0) winsNet += 1;
+      if (gross > 0 && gross - ch.total <= 0) turned += 1;
+    }
+    const net = gross - ch.total;
+    if (!open) tot.net += net;
+    const value = t.entry_price * t.quantity;
+    const be = (ch.total / value) * 100;
+    return `<tr>
+      <td><strong>${esc(t.company)}</strong>${open ? '<span class="est" title="Still open: charges as if closed now at the live price">est.</span>' : ''}<br><small>${esc(PRODUCT_LABEL[t.product] || t.product)} · ${t.side} ${t.quantity}</small></td>
+      <td class="num">${istHm(t.entry_time)} → ${open ? 'now' : istHm(t.exit_time)}<br><small>${nf.format(t.entry_price)} → ${nf.format(exitPrice)}</small><br><small>${istDay(t.entry_time)}</small></td>
+      <td class="num ${tone(gross)}">${pnlText(gross)}</td>
+      <td class="num chg">${nf.format(ch.brokerage)}</td>
+      <td class="num chg">${nf.format(ch.stt)}</td>
+      <td class="num chg">${nf.format(ch.gst)}</td>
+      <td class="num chg" title="Exchange ₹${nf.format(ch.exchange)} · SEBI + IPFT ₹${nf.format(ch.sebi)} · Stamp duty ₹${nf.format(ch.stamp)}${ch.dp ? ' · DP ₹' + nf.format(ch.dp) : ''}">${nf.format(ch.exchange + ch.sebi + ch.stamp + ch.dp)}</td>
+      <td class="num chg"><strong>${nf.format(ch.total)}</strong><br><small>${be.toFixed(3)}% of value</small></td>
+      <td class="num ${tone(net)}"><strong>${pnlText(net)}</strong>${open ? '<br><small>if closed now</small>' : ''}</td>
+      <td class="num ${tone(net)}">${((net / value) * 100 >= 0 ? '+' : '') + ((net / value) * 100).toFixed(2)}%</td>
+    </tr>`;
+  }).join('');
+
+  const charges = tot.total;
+  const kp = (l, v, s, cls = '', main = false) => `<div class="ch-kpi${main ? ' main' : ''}"><div class="l">${l}</div><div class="v ${cls}">${v}</div><div class="s">${s || ''}</div></div>`;
+  $('chSummary').innerHTML = closed ? [
+    kp('Gross P&L', pnlText(tot.gross), `${closed} closed trades · ${winsGross} won`, tone(tot.gross)),
+    kp(`${esc(info.name)} charges`, '−' + money(charges), `Brokerage ₹${nf.format(tot.brokerage)} · STT ₹${nf.format(tot.stt)}<br>GST ₹${nf.format(tot.gst)} · other ₹${nf.format(tot.exchange + tot.sebi + tot.stamp + tot.dp)}`, 'down'),
+    kp('Net P&L after charges', pnlText(tot.net), `${winsNet} of ${closed} trades profitable after charges`, tone(tot.net), true),
+    kp('Charges vs result', tot.gross > 0 ? Math.round((charges / tot.gross) * 100) + '%' : '—',
+       tot.gross > 0 ? 'of the gross profit went to charges' : 'gross result is a loss - charges add to it'),
+    kp('Avg cost per trade', money(charges / closed), turned ? `${turned} winning trade${turned === 1 ? '' : 's'} became a loss after charges` : 'no winner was wiped out by charges'),
+  ].join('') : '';
+
+  const foot = closed ? `<tfoot><tr><td colspan="2">Closed trades (${closed})</td>
+      <td class="num ${tone(tot.gross)}">${pnlText(tot.gross)}</td>
+      <td class="num">${nf.format(tot.brokerage)}</td><td class="num">${nf.format(tot.stt)}</td>
+      <td class="num">${nf.format(tot.gst)}</td>
+      <td class="num" title="Exchange ₹${nf.format(tot.exchange)} · SEBI + IPFT ₹${nf.format(tot.sebi)} · Stamp duty ₹${nf.format(tot.stamp)} · DP ₹${nf.format(tot.dp)}">${nf.format(tot.exchange + tot.sebi + tot.stamp + tot.dp)}</td>
+      <td class="num">${nf.format(charges)}</td><td class="num ${tone(tot.net)}">${pnlText(tot.net)}</td><td></td></tr></tfoot>` : '';
+  $('brokerTable').innerHTML =
+    `<thead><tr><th>Trade</th><th class="num">Entry → Exit</th><th class="num">Gross P&amp;L</th>
+      <th class="num" title="Per executed order">Brokerage</th><th class="num" title="Securities Transaction Tax">STT</th>
+      <th class="num" title="18% on brokerage + exchange + SEBI">GST</th>
+      <th class="num" title="Exchange transaction charges + SEBI fee + IPFT + stamp duty + DP (hover a value for the split)">Other</th>
+      <th class="num">Total charges</th><th class="num">Net P&amp;L</th><th class="num">Net %</th></tr></thead>` +
+    `<tbody>${rows || '<tr><td colspan="10" class="empty-row">No trades yet.</td></tr>'}</tbody>${foot}`;
+
+  const r = info.brokerage, c = BROKERS._common;
+  const brText = (x) => (x.pct ? `${x.pct}% or ₹${x.cap} per executed order, whichever is lower${x.min ? `, minimum ₹${x.min}` : ''}` : 'zero');
+  $('chNote').innerHTML = `<b>${esc(info.name)} rates</b> (NSE equity, from <a href="${esc(info.source)}" target="_blank" rel="noopener">${esc(info.name)}'s price list</a>, checked ${esc(info.checked)}):
+    brokerage - intraday ${brText(r.INTRADAY)}; delivery ${brText(r.DELIVERY)} ·
+    STT intraday ${c.stt.INTRADAY.sell}% on sell, delivery ${c.stt.DELIVERY.buy}% on buy &amp; sell ·
+    exchange ${info.exchange_pct}% · SEBI ₹${c.sebi_per_crore}/crore · stamp duty on buy: intraday ${c.stamp_buy.INTRADAY}%, delivery ${c.stamp_buy.DELIVERY}% ·
+    GST ${c.gst * 100}% on brokerage + exchange + SEBI · DP ₹${info.dp_per_sell} per delivery sell.<br>
+    Brokerage is per executed order, so a trade built from several orders pays it more than once. Contract notes round STT and stamp duty to the rupee, so a real note can differ by about ₹1.
+    Not included: account opening, yearly demat AMC, call &amp; trade and dealer square-off fees. ${esc(info.notes)}`;
+}
+
 function renderReplayControls() {
   const on = S.mode === 'replay' && !!S.company && S.candles.length > 0;
   els.replay.hidden = !on;
@@ -1145,6 +1333,7 @@ function renderReplayControls() {
 
 function renderAll() {
   renderWallet(); renderQuote(); renderOrderPanel(); renderPositions(); renderOrders(); renderLimitOrders(); renderTrades();
+  renderBrokerTab();
   renderReplayControls();
 }
 
@@ -1317,7 +1506,7 @@ async function refreshOtherQuotes(gen) {
 // Intraday positions left over from an earlier day, or still open at the square-off time, are
 // closed by the server (at that day's close / the latest price).  Cheap when nothing is due.
 async function maybeSquareoff(gen) {
-  if (S.busy || S.mode !== 'live') return;
+  if (S.busy || S.mode !== 'live' || !isAutoExitTab()) return;
   if (!S.account.positions.some((p) => p.product === 'INTRADAY')) return;
   try {
     const res = await postJson(URLS.squareoff, {});
@@ -1801,6 +1990,8 @@ async function startSession() {
   const gen = ++S.gen;
   const sameReplayDay = S.uiMode === 'replay' && S.mode === 'replay' && S.date === date;
   S.mode = S.uiMode; S.date = date; S.company = code;
+  if (S.mode === 'live') claimAutoExits(); else releaseAutoExits();
+  renderTabRole();
   S.min1 = null; S.min1Shown = 0;
   setMarkMode(false);
   loadMarks();
@@ -1842,7 +2033,7 @@ async function startSession() {
 // ordinary market order tagged with the reason.  Stop loss wins if one tick reaches both.
 // One exit is sent at a time; the next is picked up on the following tick / refresh.
 function checkLevelTriggers() {
-  if (S.busy) return;
+  if (S.busy || !isAutoExitTab()) return;
   const now = Date.now();
   for (const pos of S.account.positions) {
     if (pos.stop_loss == null && pos.target_price == null) continue;
@@ -1895,6 +2086,8 @@ async function submitOrder(side, qty, opts = {}) {
 
   const body = Object.assign({ company: code, side, quantity: qty, mode: S.mode, product }, levels);
   if (opts.reason) body.reason = opts.reason;
+  if (opts.auto || opts.exit) body.close_only = true;          // an exit can never open a new position
+  body.client_order_id = (crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random().toString(36).slice(2));
   const isLimit = !opts.auto && !opts.exit && S.orderType === 'LIMIT';
   if (isLimit) {
     const lp = parseFloat(els.limitPrice.value);
@@ -1941,7 +2134,12 @@ async function submitOrder(side, qty, opts = {}) {
     if (Object.keys(levels).length) clearLevelInputs();
     await refreshAccount();
   } catch (e) {
-    toast(e.message, 'error');
+    if (e.code === 'already_closed') {
+      toast(`${code}: ${e.message}`, 'info');                  // e.g. closed a moment ago in another tab
+      try { await refreshAccount(); } catch (e2) { /* next refresh */ }
+    } else {
+      toast(e.message, 'error');
+    }
     if (opts.reason === 'stop_loss' || opts.reason === 'target') S.cooldown[`${code}|${product}`] = Date.now() + 5000;
   } finally {
     S.busy = false; renderOrderPanel(); renderPositions();
@@ -2157,8 +2355,15 @@ document.querySelectorAll('.tab').forEach((tab) => tab.addEventListener('click',
   els.posTable.hidden = S.tab !== 'positions';
   els.ordTable.hidden = S.tab !== 'orders';
   els.tradesTable.hidden = S.tab !== 'trades';
+  $('brokerView').hidden = !(S.tab in BROKERS);
   renderLimitOrders();
+  renderBrokerTab();
 }));
+{   // ?tab=trades|angelone|zerodha opens that tab directly
+  const want = new URLSearchParams(location.search).get('tab');
+  const btn = want && document.querySelector(`.tab[data-tab="${CSS.escape(want)}"]`);
+  if (btn) btn.click();
+}
 
 els.posTable.addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-exit]');

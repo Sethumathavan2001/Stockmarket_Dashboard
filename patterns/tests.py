@@ -102,3 +102,70 @@ class PredictorTests(TestCase):
             self.assertEqual(self.client.get("/api/candle-predictor/TST.NS/?interval=3m").status_code, 400)
             self.assertEqual(self.client.get("/api/candle-predictor/TST.NS/?day=2019-01-01").status_code, 400)
         self.assertEqual(self.client.get("/candle-predictor/").status_code, 200)
+
+
+class NewsOptionTests(TestCase):
+    """The "Include news" option: applied to today's live session only, tilts and widens the forecast."""
+
+    def setUp(self):
+        cache.clear()
+        self.company = Company.objects.create(name="Test Co", code="TST.NS", exchange="NSE")
+
+    def live_frame(self):
+        df = frame(days=40)
+        today = datetime.now(IST).date()
+        shift = pd.Timestamp(today) - pd.Timestamp(df["timestamp"].dt.date.iloc[-1])
+        df["timestamp"] = df["timestamp"] + shift                     # the last session becomes today
+        keep = ~((df["timestamp"].dt.date == today) & (df["timestamp"].dt.time > time(11, 0)))
+        return df[keep].reset_index(drop=True)                        # today's candles up to 11:00
+
+    def signal(self, bias, intensity=0.0):
+        return lambda company: {"bias": bias, "intensity": intensity, "label": "Positive" if bias > 0 else "Negative",
+                                "items": [], "fresh_count": 0, "positive": 0, "negative": 0}
+
+    def run_live(self, news):
+        df = self.live_frame()
+        clock = datetime.combine(datetime.now(IST).date(), time(11, 2), tzinfo=IST)
+        with mock.patch.object(engine, "load_candles", return_value=df), \
+                mock.patch.object(engine, "datetime", wraps=datetime) as dt:
+            dt.now.return_value = clock
+            return engine.predict(self.company, "5m", news=news)
+
+    def test_positive_news_tilts_up_and_widens(self):
+        plain = self.run_live(None)["forecast"]
+        out = self.run_live(self.signal(0.8, intensity=1.0))
+        f = out["forecast"]
+        self.assertIsNone(out["news_status"])
+        self.assertTrue(f["news"]["applied"])
+        self.assertGreater(f["main"]["ret_pct"], plain["main"]["ret_pct"])
+        self.assertGreater(f["main"]["news_tilt_pct"], 0)
+        self.assertEqual(len(f["base"]["candles"]), len(f["candles"]))
+        w_plain = plain["band"][-1]["p90"] - plain["band"][-1]["p10"]
+        w_news = f["band"][-1]["p90"] - f["band"][-1]["p10"]
+        self.assertGreater(w_news, w_plain * 1.3)                      # intensity 1 -> range x1.5
+        for c in f["candles"]:
+            self.assertLessEqual(c["l"], min(c["o"], c["c"]))
+            self.assertGreaterEqual(c["h"], max(c["o"], c["c"]))
+
+    def test_negative_news_tilts_down(self):
+        plain = self.run_live(None)["forecast"]
+        f = self.run_live(self.signal(-0.8))["forecast"]
+        self.assertLess(f["main"]["ret_pct"], plain["main"]["ret_pct"])
+        self.assertLessEqual(f["main"]["p_up"], plain["main"]["p_up"])
+
+    def test_past_sessions_never_use_news(self):
+        df = frame(days=40)
+        called = []
+        with mock.patch.object(engine, "load_candles", return_value=df):
+            out = engine.predict(self.company, "5m", day=df["timestamp"].dt.date.iloc[-1], asof=time(11, 0),
+                                 news=lambda c: called.append(c))
+        self.assertEqual(called, [])
+        self.assertIn("only for today's live session", out["news_status"])
+        self.assertNotIn("news", out["forecast"])
+
+    def test_news_failure_keeps_plain_forecast(self):
+        def broken(company):
+            raise RuntimeError("feeds down")
+        out = self.run_live(broken)
+        self.assertNotIn("news", out["forecast"])
+        self.assertIn("News unavailable", out["news_status"])

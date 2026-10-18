@@ -3,6 +3,7 @@ from datetime import timedelta
 from functools import wraps
 
 from django.conf import settings
+from django.core.cache import cache
 from django.db.models import Max, Min
 from django.http import Http404, JsonResponse
 from django.shortcuts import render
@@ -12,6 +13,7 @@ from django.views.decorators.http import require_GET, require_POST, require_safe
 
 from market.models import Company, FiveMinuteData  # adjust if your app is named differently
 
+from . import charges
 from . import services as svc
 from . import signals as sig
 from .models import PaperOrder
@@ -24,6 +26,8 @@ def api(view):
     def wrapper(request, *args, **kwargs):
         try:
             return view(request, *args, **kwargs)
+        except svc.AlreadyClosed as exc:
+            return JsonResponse({"error": str(exc), "code": "already_closed"}, status=409)
         except svc.TradeError as exc:
             return JsonResponse({"error": str(exc)}, status=400)
 
@@ -109,6 +113,7 @@ def paper_trading_page(request, company_code=None, mode=None, date=None, book=1)
             "squareoff_label": svc.intraday_squareoff_time().strftime("%I:%M %p").lstrip("0"),
             "initial": initial,
             "book": book,
+            "brokers": charges.broker_info(),
             "page_url": reverse("paper_trading:page2" if book == 2 else "paper_trading:page"),
         },
         status=status,
@@ -207,8 +212,18 @@ def place_order(request):
     if reason not in ("", "stop_loss", "target", "session_end"):
         reason = ""
 
+    # stop loss / target / square-off and the Exit button only ever close what is open
+    close_only = bool(body.get("close_only")) or reason in ("stop_loss", "target", "session_end")
+
     account = _account_post(body)
+    # the same order sent twice (double click, network retry) runs once
+    coid = str(body.get("client_order_id") or "")[:64]
+    if coid and not cache.add(f"paper:coid:{account.pk}:{coid}", 1, 3600):
+        raise svc.AlreadyClosed("This order was already received - the duplicate was ignored.")
+
     if str(body.get("order_type", "MARKET")).upper() == "LIMIT":
+        if close_only:
+            raise svc.TradeError("Exits are market orders.")
         limit_price = svc.parse_optional_price(body.get("limit_price"), "Limit price")
         current, market_time = (None, None) if mode == svc.LIVE else svc.resolve_replay_execution(
             company, replay_date, body.get("market_time"), body.get("price"))
@@ -243,6 +258,7 @@ def place_order(request):
         levels=levels,
         reason=reason,
         product=product,
+        close_only=close_only,
     )
     order.company = company  # avoid an extra query when serialising
     position.company = company
