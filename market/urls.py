@@ -1,10 +1,13 @@
 from django.urls import path
-from . import views
+from . import index_membership, indices, views
 
 app_name = 'market'
 
 urlpatterns = [
     path('', views.home, name='home'),
+    path('api/market/indices/', indices.indices_api, name='indices'),
+    path('api/market/indices/<str:key>/chart/', indices.index_chart_api, name='index_chart'),
+    path('api/market/stock-indices/<str:code>/', index_membership.stock_indices_api, name='stock_indices'),
     path('industries-by-sector/', views.industries_by_sector, name='industries_by_sector'),
     path('daily/', views.daily_data_view, name='daily_data'),
     path('5min/', views.five_min_view, name='five_min'),

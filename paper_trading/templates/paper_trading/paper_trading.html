@@ -81,6 +81,16 @@
   .quote{ padding:16px 20px; display:flex; flex-wrap:wrap; align-items:center; gap:14px 28px; margin-bottom:16px; }
   .q-symbol{ font-size:20px; font-weight:700; }
   .q-name{ font-size:12.5px; color:var(--text-muted); margin-top:2px; }
+  .q-idx{ display:flex; flex-wrap:wrap; gap:4px; margin-top:6px; max-width:520px; }
+  .q-idx:empty{ display:none; }
+  .ix-chip{ display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:600; padding:2px 8px; border-radius:999px;
+    border:1px solid var(--border); background:var(--panel); color:var(--navy-800); white-space:nowrap; font-family:inherit; line-height:1.5; }
+  .ix-chip.sector{ background:#fff; color:var(--text-muted); }
+  .ix-chip.live{ cursor:pointer; }
+  .ix-chip.live:hover{ border-color:var(--blue-600); background:var(--blue-50); }
+  .ix-chip b{ font-family:'JetBrains Mono',monospace; font-weight:600; }
+  .ix-chip b.up{ color:var(--green); } .ix-chip b.down{ color:var(--red); }
+  .ix-chip.none{ color:var(--text-muted); font-weight:500; border-style:dashed; }
   .q-ltp{ font-family:'JetBrains Mono',monospace; font-size:30px; font-weight:700; line-height:1; }
   .q-chg{ font-family:'JetBrains Mono',monospace; font-size:13px; font-weight:600; margin-top:6px; }
   .q-meta{ margin-left:auto; display:flex; flex-direction:column; align-items:flex-end; gap:6px; font-size:12.5px; color:var(--text-muted); }
@@ -124,6 +134,10 @@
   .side-pill.buy, .side-pill.long{ background:var(--green-bg); color:var(--green); }
   .side-pill.sell, .side-pill.short{ background:var(--red-bg); color:var(--red); }
   .ctx{ font-size:11px; color:var(--text-muted); }
+  .btn-chart{ display:inline-flex; align-items:center; gap:5px; border:1px solid var(--border); background:#fff; border-radius:6px; padding:4px 10px; font-size:12px; font-weight:600; cursor:pointer; color:var(--blue-600); font-family:inherit; }
+  .btn-chart:hover{ background:var(--blue-50); }
+  .btn-chart.on{ background:var(--blue-50); border-color:var(--blue-600); }
+  .btn-chart svg{ width:14px; height:14px; }
   .btn-exit{ border:1px solid var(--border); background:#fff; border-radius:6px; padding:4px 12px; font-size:12px; font-weight:600; cursor:pointer; color:var(--navy-800); font-family:inherit; }
   .btn-exit:hover:not(:disabled){ border-color:var(--red); color:var(--red); }
   .btn-exit:disabled{ color:#B6BEC9; cursor:not-allowed; }
@@ -325,6 +339,7 @@
         <div>
           <div class="q-symbol" id="qSymbol">—</div>
           <div class="q-name" id="qName">Select a company to begin</div>
+          <div class="q-idx" id="qIndices" aria-label="Indices this stock belongs to"></div>
         </div>
         <div>
           <div class="q-ltp" id="qLtp">—</div>
@@ -556,7 +571,7 @@ const LIVE_POLL_MS = {{ live_poll_seconds }} * 1000;
 const TICKS = 7;           // ticks per candle: open, mid, low/high, mid, high/low, mid, close
 const IST_SHIFT = 19800;   // +5:30. Chart times are shifted so the (UTC) axis reads as IST.
 const PREV_COLORS = { open: '#CA8A04', high: '#0EA968', low: '#E5484D', close: '#2F6FED' };  // yellow, green, red, blue
-const REASON_LABEL = { stop_loss: 'SL hit', target: 'Target hit', session_end: 'Auto close' };
+const REASON_LABEL = { stop_loss: 'SL hit', target: 'Target hit', session_end: 'Auto close', claude: 'Claude pick' };
 const PRODUCT_LABEL = { INTRADAY: 'Intraday', DELIVERY: 'Delivery' };
 const BROKERS = JSON.parse(document.getElementById('brokers-data').textContent);
 const PRODUCT_NOTE = {
@@ -709,10 +724,11 @@ function renderTabRole() {
   const live = S.mode === 'live';
   el.hidden = !live;
   el.className = 'tab-role ' + (TAB.leader ? 'lead' : 'follow');
-  el.textContent = TAB.leader ? 'Auto exits: this tab' : 'Auto exits: another tab';
-  el.title = TAB.leader
-    ? 'This tab watches stop losses / targets and squares off Intraday positions for this account.'
-    : 'Another open Paper Trading tab of this account watches stop losses / targets. This tab follows its changes. If you close that tab, this one takes over.';
+  el.className = 'tab-role lead';
+  el.textContent = 'SL / target: server watching';
+  el.title = 'The server checks the stop loss and target of every Live position every 15 seconds during market hours and squares '
+    + 'off Intraday positions at the cutoff - also when this page is closed or you are on another page. '
+    + (TAB.leader ? 'This tab also reacts at once to price ticks it sees.' : 'Another open tab of this account also reacts to price ticks.');
 }
 
 function toast(message, kind = 'info') {
@@ -755,7 +771,8 @@ const currentLtp = () => ltpFor(S.company);
 
 /* Why (if at all) trading `code` is blocked right now. '' means tradable. */
 function tradeBlockReason(code = S.company, force = false) {
-  if (!S.company) return 'Select a company and press Show to start trading.';
+  // an Exit (or any order) needs only that stock's live price - not a chart session for it
+  if (!code) return 'Select a company and press Show to start trading.';
   if (S.mode === 'live') {
     const lq = liveQuoteFor(code);
     if (!lq) return 'Loading live data…';
@@ -929,7 +946,41 @@ function renderWallet() {
   els.walletUnrealized.className = tone(o.total);
 }
 
+/* indices the selected stock belongs to (niftyindices.com lists); live % change from the navbar's index strip */
+const IXM = { code: null, data: null };
+async function loadStockIndices(code) {
+  IXM.code = code; IXM.data = null; renderIndexChips();
+  if (!code) return;
+  try {
+    const d = await apiFetch(`{% url 'market:stock_indices' 'CODE' %}`.replace('CODE', encodeURIComponent(code)));
+    if (IXM.code === code) { IXM.data = d; renderIndexChips(); }
+  } catch (e) { /* no badges - nothing else depends on them */ }
+}
+function renderIndexChips() {
+  const box = $('qIndices');
+  if (!IXM.code || !IXM.data) { box.innerHTML = ''; return; }
+  const live = {};
+  ((window.SITE_INDICES || {}).indices || []).forEach((i) => { if (i.key) live[i.key] = i; });
+  const chips = IXM.data.indices.map((ix) => {
+    const l = ix.key && live[ix.key];
+    const pct = l && l.pct != null ? `<b class="${l.pct > 0 ? 'up' : l.pct < 0 ? 'down' : ''}">${l.pct > 0 ? '+' : ''}${l.pct.toFixed(2)}%</b>` : '';
+    const tip = ix.key ? `${ix.name} - click for today's chart${l ? ` (${l.pct > 0 ? '+' : ''}${l.pct.toFixed(2)}% today)` : ''}` : `${ix.name} (${ix.group === 'broad' ? 'broad market' : 'sector'} index)`;
+    return ix.key
+      ? `<button type="button" class="ix-chip live ${ix.group}" data-ixkey="${esc(ix.key)}" data-ixname="${esc(ix.name)}" title="${esc(tip)}">${esc(ix.name)}${pct}</button>`
+      : `<span class="ix-chip ${ix.group}" title="${esc(tip)}">${esc(ix.name)}</span>`;
+  });
+  box.innerHTML = chips.join('') || '<span class="ix-chip none" title="Not in NIFTY 50 / Next 50 / Midcap 100 / Smallcap 100 / 500 or the main sector indices">Not in a major NSE index</span>';
+}
+document.addEventListener('site-indices', renderIndexChips);
+$('qIndices').addEventListener('click', (e) => {          // on the badge row, so the navbar's "click outside" doesn't fire
+  const c = e.target.closest('.ix-chip[data-ixkey]');
+  if (!c || !window.siteIndexPopup) return;
+  e.stopPropagation();
+  window.siteIndexPopup(c, c.dataset.ixkey, c.dataset.ixname);
+});
+
 function renderQuote() {
+  if (IXM.code !== (S.company || null)) loadStockIndices(S.company || null);
   const ltp = currentLtp();
   const first = S.candles[0];
   els.qSymbol.textContent = S.company || '—';
@@ -1105,6 +1156,8 @@ function renderPositions() {
       <td class="num">${p.target_price != null ? `${nf.format(p.target_price)}<br><small>${signedPct(p.target_price, p.avg_price)}</small>` : '—'}</td>
       <td class="num">${ltp != null ? nf.format(ltp) : '—'}</td>
       <td class="num ${pnl != null ? tone(pnl) : 'flat'}">${pnl != null ? pnlText(pnl) + ` (${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%)` : '—'}</td>
+      <td><button class="btn-chart ${S.mode === 'live' && S.company === p.company ? 'on' : ''}" data-chart="${esc(p.company)}" type="button"
+          title="Open the live chart of ${esc(p.company)}"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M2 13h12M4 10l3-3 2 2 4-5"/></svg>${S.mode === 'live' && S.company === p.company ? 'On chart' : 'Chart'}</button></td>
       <td class="num"><button class="btn-exit" data-exit="${esc(p.company)}" data-product="${esc(p.product)}" ${canExit ? '' : 'disabled'}
           title="Close this position at the last price">Exit</button></td>
     </tr>`;
@@ -1112,10 +1165,10 @@ function renderPositions() {
 
   const foot = S.account.positions.length > 1
     ? `<tfoot><tr><td colspan="8">Total open P&amp;L${priced < S.account.positions.length ? ` (${priced} of ${S.account.positions.length} priced)` : ''}</td>
-       <td class="num ${tone(total)}">${pnlText(total)}</td><td></td></tr></tfoot>` : '';
+       <td class="num ${tone(total)}">${pnlText(total)}</td><td></td><td></td></tr></tfoot>` : '';
   els.posTable.innerHTML =
-    `<thead><tr><th>Symbol</th><th>Product</th><th>Side</th><th class="num">Qty</th><th class="num">Avg price</th><th class="num">Stop loss</th><th class="num">Target</th><th class="num">LTP</th><th class="num">Unrealized P&amp;L</th><th class="num"></th></tr></thead>` +
-    `<tbody>${rows || '<tr><td colspan="10" class="empty-row">No open positions in this session.</td></tr>'}</tbody>${foot}`;
+    `<thead><tr><th>Symbol</th><th>Product</th><th>Side</th><th class="num">Qty</th><th class="num">Avg price</th><th class="num">Stop loss</th><th class="num">Target</th><th class="num">LTP</th><th class="num">Unrealized P&amp;L</th><th>Chart</th><th class="num"></th></tr></thead>` +
+    `<tbody>${rows || '<tr><td colspan="11" class="empty-row">No open positions in this session.</td></tr>'}</tbody>${foot}`;
 }
 
 function renderOrders() {
@@ -2365,6 +2418,19 @@ document.querySelectorAll('.tab').forEach((tab) => tab.addEventListener('click',
   if (btn) btn.click();
 }
 
+// Chart column: open that stock's LIVE chart on this page (same book), then bring the chart into view
+els.posTable.addEventListener('click', async (e) => {
+  const c = e.target.closest('button[data-chart]');
+  if (!c) return;
+  const code = c.dataset.chart;
+  const view = () => document.getElementById('chart').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  if (S.mode === 'live' && S.company === code) { view(); return; }
+  if (![...els.company.options].some((o) => o.value === code)) { toast(`${code} is not in the company list.`, 'error'); return; }
+  els.company.value = code;
+  setUiMode('live');
+  await startSession();
+  view();
+});
 els.posTable.addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-exit]');
   if (!btn || btn.disabled) return;

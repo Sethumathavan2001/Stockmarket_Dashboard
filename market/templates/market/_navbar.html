@@ -1,12 +1,61 @@
 {% comment %}
   Site-wide top navbar, identical on every page. Included in market/base.html
   and in the standalone pages (chart, paper trading, stock prediction, candle
-  predictor). Styles use their own "site-" class names and set every size
+  predictor ...). Styles use their own "site-" class names and set every size
   explicitly, so page CSS cannot change the navbar's height or width.
-  Add new pages to the link list here only.
+  Above it, a live index strip (NIFTY, SENSEX, BANK NIFTY ...) from /api/market/indices/.
+  Add new pages to the link list here only. Related pages share a hover menu ("Data", "Paper Trading").
 {% endcomment %}
 {% with current=request.resolver_match.url_name app=request.resolver_match.app_name %}
 <style>
+  .site-ticker{
+    box-sizing:border-box; width:100%; height:32px; margin:0; padding:0 28px;
+    display:flex; align-items:center; gap:18px; overflow-x:auto; scrollbar-width:none;
+    background:#071A33; color:rgba(255,255,255,.88); border-bottom:1px solid rgba(255,255,255,.08);
+    font-family:'Inter',system-ui,sans-serif; font-size:12.5px; line-height:1; white-space:nowrap;
+  }
+  .site-ticker::-webkit-scrollbar{ display:none; }
+  .site-ticker *{ box-sizing:border-box; }
+  .site-tk-status{ display:inline-flex; align-items:center; gap:6px; font-size:11px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:rgba(255,255,255,.7); flex:none; }
+  .site-tk-status i{ width:7px; height:7px; border-radius:50%; background:#94A3B8; display:inline-block; }
+  .site-tk-status.open i{ background:#5BE49B; box-shadow:0 0 0 3px rgba(91,228,155,.2); }
+  .site-tk-item{ display:inline-flex; align-items:baseline; gap:7px; flex:none; cursor:default; }
+  .site-tk-name{ font-weight:600; color:#fff; }
+  .site-tk-last{ font-family:'JetBrains Mono',ui-monospace,Consolas,monospace; font-variant-numeric:tabular-nums; color:#fff; }
+  .site-tk-chg{ font-family:'JetBrains Mono',ui-monospace,Consolas,monospace; font-variant-numeric:tabular-nums; font-size:12px; }
+  .site-tk-chg.up{ color:#5BE49B; } .site-tk-chg.down{ color:#FF8A8F; } .site-tk-chg.flat{ color:rgba(255,255,255,.6); }
+  .site-tk-tag{ font-size:10px; font-weight:600; color:rgba(255,255,255,.55); }
+  .site-tk-sep{ width:1px; height:14px; background:rgba(255,255,255,.14); flex:none; }
+  .site-tk-msg{ color:rgba(255,255,255,.55); }
+  .site-tk-item{ border-radius:5px; padding:3px 6px; margin:0 -6px; }
+  .site-tk-item[data-key]{ cursor:pointer; }
+  .site-tk-item[data-key]:hover, .site-tk-item.on{ background:rgba(255,255,255,.1); }
+  .site-tk-item:focus-visible{ outline:2px solid #5BE49B; outline-offset:0; }
+  .site-ix-pop{
+    position:fixed; z-index:60; width:400px; max-width:calc(100vw - 24px); box-sizing:border-box;
+    background:#0E2A52; color:#fff; border:1px solid rgba(255,255,255,.16); border-radius:12px;
+    box-shadow:0 16px 36px rgba(0,0,0,.4); padding:12px 14px; font-family:'Inter',system-ui,sans-serif; line-height:1.4;
+  }
+  .site-ix-pop[hidden]{ display:none !important; }
+  .site-ix-pop *{ box-sizing:border-box; }
+  .site-ix-head{ display:flex; justify-content:space-between; align-items:flex-start; gap:10px; }
+  .site-ix-name{ font-size:14px; font-weight:700; }
+  .site-ix-sub{ font-size:11.5px; color:rgba(255,255,255,.6); margin-top:2px; }
+  .site-ix-px{ text-align:right; font-family:'JetBrains Mono',ui-monospace,Consolas,monospace; font-variant-numeric:tabular-nums; }
+  .site-ix-px b{ display:block; font-size:16px; }
+  .site-ix-px span{ font-size:12px; }
+  .site-ix-x{ border:none; background:transparent; color:rgba(255,255,255,.7); font-size:18px; line-height:1; cursor:pointer; padding:0 2px; margin-left:6px; }
+  .site-ix-x:hover{ color:#fff; }
+  .site-ix-chart{ height:190px; width:100%; margin-top:8px; border-radius:8px; overflow:hidden; background:#0B2240; }
+  .site-ix-msg{ height:190px; display:flex; align-items:center; justify-content:center; color:rgba(255,255,255,.6); font-size:13px; margin-top:8px; }
+  .site-ix-legend{ display:flex; flex-wrap:wrap; gap:4px 12px; font-size:11px; color:rgba(255,255,255,.65); margin-top:6px; }
+  .site-ix-legend i{ display:inline-block; width:12px; height:2px; vertical-align:middle; margin-right:4px; }
+  .site-ix-tbl{ width:100%; border-collapse:collapse; margin-top:8px; font-size:12px; }
+  .site-ix-tbl th{ text-align:right; font-weight:600; color:rgba(255,255,255,.6); padding:3px 4px; font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; }
+  .site-ix-tbl td{ padding:3px 4px; font-family:'JetBrains Mono',ui-monospace,Consolas,monospace; font-variant-numeric:tabular-nums; text-align:right; border-top:1px solid rgba(255,255,255,.08); }
+  .site-ix-tbl td:first-child{ text-align:left; font-family:'Inter',system-ui,sans-serif; color:rgba(255,255,255,.8); }
+
+
   .site-header{
     box-sizing:border-box; width:100%; min-height:60px; margin:0; padding:10px 28px;
     display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px 24px;
@@ -25,31 +74,259 @@
     background:#5BE49B; box-shadow:0 0 0 4px rgba(91,228,155,.18);
   }
   .site-nav{ display:flex; flex-wrap:wrap; align-items:center; gap:4px; margin:0; padding:0; }
-  .site-nav a{
-    display:inline-block; margin:0; padding:6px 10px; border:none; border-radius:6px;
-    color:rgba(255,255,255,.85); text-decoration:none; white-space:nowrap;
-    font-size:13.5px; font-weight:500; line-height:1.4;
+  .site-nav > a, .site-dd-btn{
+    display:inline-flex; align-items:center; gap:4px; margin:0; padding:6px 10px; border:none; border-radius:6px;
+    color:rgba(255,255,255,.85); text-decoration:none; white-space:nowrap; background:transparent; cursor:pointer;
+    font-family:inherit; font-size:13.5px; font-weight:500; line-height:1.4;
     transition:background .15s ease, color .15s ease;
   }
-  .site-nav a:hover{ background:rgba(255,255,255,.12); color:#fff; }
-  .site-nav a.active{ background:rgba(255,255,255,.2); color:#fff; font-weight:600; }
+  .site-nav > a:hover, .site-dd-btn:hover, .site-dd:hover .site-dd-btn{ background:rgba(255,255,255,.12); color:#fff; }
+  .site-nav > a.active, .site-dd.active .site-dd-btn{ background:rgba(255,255,255,.2); color:#fff; font-weight:600; }
+  .site-nav a:focus-visible, .site-dd-btn:focus-visible{ outline:2px solid #5BE49B; outline-offset:1px; }
+  .site-dd{ position:relative; }
+  .site-dd-btn svg{ width:12px; height:12px; opacity:.8; transition:transform .15s ease; }
+  .site-dd:hover .site-dd-btn svg, .site-dd.open .site-dd-btn svg{ transform:rotate(180deg); }
+  .site-dd-menu{
+    display:none; position:absolute; top:100%; left:0; z-index:40; padding-top:6px; min-width:250px;
+  }
+  .site-dd:hover .site-dd-menu, .site-dd:focus-within .site-dd-menu, .site-dd.open .site-dd-menu{ display:block; }
+  .site-dd-panel{
+    background:#0E2A52; border:1px solid rgba(255,255,255,.14); border-radius:10px; padding:6px;
+    box-shadow:0 12px 28px rgba(0,0,0,.35);
+  }
+  .site-dd-panel a{
+    display:block; padding:8px 10px; border-radius:7px; color:#fff; text-decoration:none; white-space:normal;
+  }
+  .site-dd-panel a:hover, .site-dd-panel a:focus-visible{ background:rgba(255,255,255,.12); outline:none; }
+  .site-dd-panel a.active{ background:rgba(255,255,255,.2); }
+  .site-dd-panel b{ display:block; font-size:13.5px; font-weight:600; }
+  .site-dd-panel span{ display:block; font-size:12px; color:rgba(255,255,255,.65); margin-top:1px; }
 </style>
+
+<div class="site-ticker" id="siteTicker" role="region" aria-label="Market indices">
+  <span class="site-tk-status" id="siteTkStatus"><i></i><span>NSE</span></span>
+  <span class="site-tk-msg" id="siteTkMsg">Loading indices…</span>
+</div>
+
 <header class="site-header">
   <div class="site-brand"><span class="site-brand-dot"></span> Market Dashboard</div>
-  <nav class="site-nav">
+  <nav class="site-nav" aria-label="Main">
     <a href="{% url 'market:home' %}" class="{% if app == 'market' and current == 'home' %}active{% endif %}">Home</a>
-    <a href="{% url 'market:daily_data' %}" class="{% if app == 'market' and current == 'daily_data' %}active{% endif %}">Daily Data</a>
-    <a href="{% url 'market:five_min' %}" class="{% if app == 'market' and current == 'five_min' %}active{% endif %}">5 Minutes</a>
+
+    <div class="site-dd {% if app == 'market' and current == 'daily_data' or app == 'market' and current == 'five_min' or app == 'market' and current == 'daily_data_page' %}active{% endif %}">
+      <button type="button" class="site-dd-btn" aria-haspopup="true" aria-expanded="false">Data
+        <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 4.5l3 3 3-3"/></svg></button>
+      <div class="site-dd-menu"><div class="site-dd-panel" role="menu">
+        <a role="menuitem" href="{% url 'market:daily_data' %}" class="{% if app == 'market' and current == 'daily_data' %}active{% endif %}"><b>Daily Data</b><span>Daily OHLC history of every stock</span></a>
+        <a role="menuitem" href="{% url 'market:five_min' %}" class="{% if app == 'market' and current == 'five_min' %}active{% endif %}"><b>5 Minutes</b><span>Intraday 5-minute candles</span></a>
+        <a role="menuitem" href="{% url 'market:daily_data_page' %}" class="{% if app == 'market' and current == 'daily_data_page' %}active{% endif %}"><b>Scraper</b><span>Fetch the latest daily and 5-minute data</span></a>
+      </div></div>
+    </div>
+
     <a href="{% url 'market:live' %}" class="{% if app == 'market' and current == 'live' %}active{% endif %}">Live</a>
     <a href="{% url 'market:analysis' %}" class="{% if app == 'market' and current == 'analysis' %}active{% endif %}">Analysis</a>
     <a href="{% url 'market:chart_view' %}" class="{% if app == 'market' and current == 'chart_view' %}active{% endif %}">Chart</a>
-    <a href="{% url 'market:daily_data_page' %}" class="{% if app == 'market' and current == 'daily_data_page' %}active{% endif %}">Scraper</a>
     <a href="{% url 'stock_prediction_page' %}" class="{% if current == 'stock_prediction_page' %}active{% endif %}">Stock Prediction</a>
     <a href="{% url 'candle_predictor_page' %}" class="{% if current == 'candle_predictor_page' %}active{% endif %}">Candle Predictor</a>
-    <a href="{% url 'paper_trading:page' %}" class="{% if app == 'paper_trading' and not current|slice:':5' == 'page2' %}active{% endif %}">Paper Trading</a>
-    <a href="{% url 'paper_trading:page2' %}" class="{% if app == 'paper_trading' and current|slice:':5' == 'page2' %}active{% endif %}">Paper Trading 2</a>
+
+    <div class="site-dd {% if app == 'paper_trading' and current != 'claude_orders' %}active{% endif %}">
+      <button type="button" class="site-dd-btn" aria-haspopup="true" aria-expanded="false">Paper Trading
+        <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 4.5l3 3 3-3"/></svg></button>
+      <div class="site-dd-menu"><div class="site-dd-panel" role="menu">
+        <a role="menuitem" href="{% url 'paper_trading:page' %}" class="{% if app == 'paper_trading' and not current|slice:':5' == 'page2' and current != 'claude_orders' %}active{% endif %}"><b>Paper Trading</b><span>Account 1 - live and replay trading</span></a>
+        <a role="menuitem" href="{% url 'paper_trading:page2' %}" class="{% if app == 'paper_trading' and current|slice:':5' == 'page2' %}active{% endif %}"><b>Paper Trading 2</b><span>Account 2 - separate wallet (Claude Orders go here)</span></a>
+      </div></div>
+    </div>
+
+    <a href="{% url 'paper_trading:claude_orders' %}" class="{% if app == 'paper_trading' and current == 'claude_orders' %}active{% endif %}">Claude Orders</a>
     <a href="{% url 'ai_prediction_page' %}" class="{% if current == 'ai_prediction_page' %}active{% endif %}">AI Prediction</a>
     <a href="{% url 'news_page' %}" class="{% if current == 'news_page' %}active{% endif %}">News</a>
   </nav>
 </header>
+
+<div class="site-ix-pop" id="siteIxPop" hidden role="dialog" aria-label="Index chart">
+  <div class="site-ix-head">
+    <div><div class="site-ix-name" id="siteIxName"></div><div class="site-ix-sub" id="siteIxSub"></div></div>
+    <div style="display:flex;align-items:flex-start"><div class="site-ix-px" id="siteIxPx"></div><button class="site-ix-x" id="siteIxClose" type="button" aria-label="Close" title="Close">×</button></div>
+  </div>
+  <div class="site-ix-chart" id="siteIxChart"></div>
+  <div class="site-ix-msg" id="siteIxMsg" hidden></div>
+  <div class="site-ix-legend"><span><i style="background:#5BE49B"></i>Prev high</span><span><i style="background:#FF8A8F"></i>Prev low</span><span><i style="background:#9CC3FF"></i>Prev close</span><span><i style="background:rgba(255,255,255,.55)"></i>Today open</span></div>
+  <table class="site-ix-tbl" id="siteIxTbl"></table>
+</div>
+
+<script>
+(() => {
+  // ---- hover menus: also open on click / tap (touch screens) and close on Escape or a click outside
+  const dds = document.querySelectorAll('.site-dd');
+  dds.forEach((dd) => {
+    const btn = dd.querySelector('.site-dd-btn');
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const open = !dd.classList.contains('open');
+      dds.forEach((x) => { x.classList.remove('open'); x.querySelector('.site-dd-btn').setAttribute('aria-expanded', 'false'); });
+      dd.classList.toggle('open', open); btn.setAttribute('aria-expanded', String(open));
+    });
+    dd.addEventListener('mouseenter', () => btn.setAttribute('aria-expanded', 'true'));
+    dd.addEventListener('mouseleave', () => { if (!dd.classList.contains('open')) btn.setAttribute('aria-expanded', 'false'); });
+  });
+  document.addEventListener('click', () => dds.forEach((x) => { x.classList.remove('open'); x.querySelector('.site-dd-btn').setAttribute('aria-expanded', 'false'); }));
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') dds.forEach((x) => { x.classList.remove('open'); x.querySelector('.site-dd-btn').setAttribute('aria-expanded', 'false'); }); });
+
+  // ---- live index strip
+  const URL_ = "{% url 'market:indices' %}";
+  const box = document.getElementById('siteTicker'), status = document.getElementById('siteTkStatus');
+  const nf = new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+  function render(d) {
+    const open = d.market_status === 'OPEN';
+    status.className = 'site-tk-status' + (open ? ' open' : '');
+    status.querySelector('span').textContent = open ? 'NSE open' : 'NSE ' + String(d.market_status || 'closed').toLowerCase();
+    const items = (d.indices || []).filter((i) => i.last != null).map((i) => {
+      const cls = i.change > 0 ? 'up' : i.change < 0 ? 'down' : 'flat', arrow = i.change > 0 ? '▲' : i.change < 0 ? '▼' : '';
+      const tip = [`${i.name}`, i.open != null ? `Open ${nf.format(i.open)} · High ${nf.format(i.high)} · Low ${nf.format(i.low)}` : '',
+        i.prev_close != null ? `Previous close ${nf.format(i.prev_close)}` : '',
+        i.advances != null ? `Advances ${i.advances} · Declines ${i.declines}` : '',
+        i.delayed ? 'Delayed about 15 minutes (Yahoo)' : `Source ${i.source}${i.time ? ', ' + i.time : ''}`, i.stale ? 'Last known value - source unavailable' : '']
+        .filter(Boolean).join('\n');
+      return `<span class="site-tk-item" ${i.key ? `data-key="${esc(i.key)}" tabindex="0" role="button" aria-label="${esc(i.short)} chart"` : ''} title="${esc(tip)}"><span class="site-tk-name">${esc(i.short)}</span>
+        <span class="site-tk-last">${nf.format(i.last)}</span>
+        <span class="site-tk-chg ${cls}">${arrow} ${i.change > 0 ? '+' : ''}${nf.format(i.change)} (${i.pct > 0 ? '+' : ''}${i.pct.toFixed(2)}%)</span>
+        ${i.delayed ? '<span class="site-tk-tag">15m delay</span>' : ''}${i.stale ? '<span class="site-tk-tag">stale</span>' : ''}</span>`;
+    });
+    box.querySelectorAll('.site-tk-item, .site-tk-sep, .site-tk-msg').forEach((n) => n.remove());
+    box.insertAdjacentHTML('beforeend', items.length ? items.join('<span class="site-tk-sep"></span>') : '<span class="site-tk-msg">Indices unavailable right now</span>');
+  }
+  async function load() {
+    try {
+      const r = await fetch(URL_);
+      if (r.ok) {
+        const d = await r.json();
+        render(d);
+        window.SITE_INDICES = d;                                   // shared with the page (e.g. index badges)
+        document.dispatchEvent(new CustomEvent('site-indices', { detail: d }));
+      }
+    } catch (e) { /* keep the last values on screen */ }
+  }
+  load();
+  setInterval(() => { if (!document.hidden) load(); }, 30000);
+
+  // ---- index popup: hover to preview, click to pin; today's 5-minute candles + the previous day's OHLC
+  const CHART_URL = "{% url 'market:index_chart' 'KEY' %}";
+  const pop = document.getElementById('siteIxPop'), chartBox = document.getElementById('siteIxChart'), msg = document.getElementById('siteIxMsg');
+  const IX = { key: null, pinned: false, chart: null, showT: null, hideT: null, anchor: null };
+  let libLoading = null;
+  function needLib() {
+    if (window.LightweightCharts) return Promise.resolve();
+    if (!libLoading) libLoading = new Promise((ok, fail) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js';
+      s.onload = ok; s.onerror = () => fail(new Error('Chart library could not load.'));
+      document.head.appendChild(s);
+    });
+    return libLoading;
+  }
+  function place(anchor) {
+    const r = anchor.getBoundingClientRect(), w = pop.offsetWidth;
+    pop.style.top = (r.bottom + 6) + 'px';
+    pop.style.left = Math.max(12, Math.min(r.left, window.innerWidth - w - 12)) + 'px';
+  }
+  function hide() {
+    pop.hidden = true; IX.key = null; IX.pinned = false;
+    if (IX.anchor) IX.anchor.classList.remove('on');
+    IX.anchor = null;
+  }
+  async function show(anchor, pin) {
+    const key = anchor.dataset.key;
+    clearTimeout(IX.hideT);
+    if (IX.anchor && IX.anchor !== anchor) IX.anchor.classList.remove('on');
+    IX.anchor = anchor; anchor.classList.add('on');
+    if (pin) IX.pinned = true;
+    pop.hidden = false; place(anchor);
+    if (IX.key === key) return;
+    IX.key = key;
+    const nameEl = anchor.querySelector('.site-tk-name');
+    document.getElementById('siteIxName').textContent = anchor.dataset.name || (nameEl ? nameEl.textContent : key);
+    document.getElementById('siteIxSub').textContent = 'Loading…';
+    document.getElementById('siteIxPx').innerHTML = '';
+    document.getElementById('siteIxTbl').innerHTML = '';
+    msg.hidden = true; chartBox.hidden = false;
+    try {
+      await needLib();
+      const r = await fetch(CHART_URL.replace('KEY', encodeURIComponent(key)));
+      const d = await r.json();
+      if (IX.key !== key) return;                                   // moved on to another index meanwhile
+      if (!r.ok || !d.candles || !d.candles.length) throw new Error(d.error || 'No chart data right now.');
+      draw(d);
+    } catch (e) {
+      if (IX.key !== key) return;
+      chartBox.hidden = true; msg.hidden = false; msg.textContent = e.message || 'Chart unavailable.';
+      document.getElementById('siteIxSub').textContent = '';
+    }
+  }
+  function draw(d) {
+    const t = d.today, p = d.previous, ref = p ? p.close : t.open, chg = t.last - ref, pc = ref ? (chg / ref) * 100 : 0;
+    const col = chg > 0 ? '#5BE49B' : chg < 0 ? '#FF8A8F' : 'rgba(255,255,255,.7)';
+    const when = new Date(t.time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' });
+    document.getElementById('siteIxSub').textContent = `${d.is_today ? 'Today' : 'Last session ' + d.session} · 5-minute candles to ${when}${d.delayed ? ' · about 15 min delayed' : ''}`;
+    document.getElementById('siteIxPx').innerHTML = `<b>${nf.format(t.last)}</b><span style="color:${col}">${chg > 0 ? '+' : ''}${nf.format(chg)} (${pc > 0 ? '+' : ''}${pc.toFixed(2)}%)</span>`;
+    if (IX.chart) { IX.chart.remove(); IX.chart = null; }
+    const ch = LightweightCharts.createChart(chartBox, {
+      autoSize: true, layout: { background: { color: '#0B2240' }, textColor: 'rgba(255,255,255,.65)', fontFamily: 'JetBrains Mono, monospace', fontSize: 10 },
+      grid: { vertLines: { color: 'rgba(255,255,255,.05)' }, horzLines: { color: 'rgba(255,255,255,.06)' } },
+      rightPriceScale: { borderColor: 'rgba(255,255,255,.12)' }, timeScale: { borderColor: 'rgba(255,255,255,.12)', timeVisible: true, secondsVisible: false },
+      crosshair: { mode: LightweightCharts.CrosshairMode.Normal }, handleScroll: false, handleScale: false,
+    });
+    const s = ch.addCandlestickSeries({ upColor: '#22C38E', downColor: '#F05A61', borderVisible: false, wickUpColor: '#22C38E', wickDownColor: '#F05A61' });
+    s.setData(d.candles.map(([x, o, h, l, c]) => ({ time: Math.floor(Date.parse(x) / 1000) + 19800, open: o, high: h, low: l, close: c })));
+    const line = (price, color, title, style) => s.createPriceLine({ price, color, lineWidth: 1, lineStyle: style, axisLabelVisible: true, title });
+    if (p) { line(p.high, '#5BE49B', 'PDH', 2); line(p.low, '#FF8A8F', 'PDL', 2); line(p.close, '#9CC3FF', 'PDC', 2); }
+    line(t.open, 'rgba(255,255,255,.55)', 'Open', 1);
+    ch.timeScale().fitContent();
+    IX.chart = ch;
+    const row = (lbl, o, h, l, c) => `<tr><td>${lbl}</td><td>${nf.format(o)}</td><td>${nf.format(h)}</td><td>${nf.format(l)}</td><td>${nf.format(c)}</td></tr>`;
+    const pd = p ? new Date(p.date + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short' }) : '';
+    document.getElementById('siteIxTbl').innerHTML = '<tr><th></th><th>Open</th><th>High</th><th>Low</th><th>Close</th></tr>'
+      + (p ? row(`Previous day <span style="color:rgba(255,255,255,.5)">(${esc(pd)})</span>`, p.open, p.high, p.low, p.close) : '')
+      + row(d.is_today ? 'Today so far' : 'Last session', t.open, t.high, t.low, t.last);
+    place(IX.anchor);
+  }
+  box.addEventListener('mouseover', (e) => {
+    const it = e.target.closest('.site-tk-item[data-key]'); if (!it) return;
+    clearTimeout(IX.showT); clearTimeout(IX.hideT);
+    if (IX.pinned && IX.key !== it.dataset.key) return;                // a pinned popup stays until it is closed
+    IX.showT = setTimeout(() => show(it, false), 250);
+  });
+  box.addEventListener('mouseout', (e) => {
+    const it = e.target.closest('.site-tk-item[data-key]'); if (!it || it.contains(e.relatedTarget)) return;
+    clearTimeout(IX.showT);
+    if (!IX.pinned) IX.hideT = setTimeout(hide, 300);
+  });
+  pop.addEventListener('mouseenter', () => clearTimeout(IX.hideT));
+  pop.addEventListener('mouseleave', () => { if (!IX.pinned) IX.hideT = setTimeout(hide, 300); });
+  box.addEventListener('click', (e) => {
+    const it = e.target.closest('.site-tk-item[data-key]'); if (!it) return;
+    e.stopPropagation(); clearTimeout(IX.showT);
+    if (IX.pinned && IX.key === it.dataset.key) { hide(); return; }
+    show(it, true);
+  });
+  box.addEventListener('keydown', (e) => {
+    const it = e.target.closest('.site-tk-item[data-key]');
+    if (it && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); it.click(); }
+  });
+  document.getElementById('siteIxClose').addEventListener('click', hide);
+  // other parts of a page can open the popup next to their own element: siteIndexPopup(el, 'nifty50', 'NIFTY 50')
+  window.siteIndexPopup = (el, key, name) => {
+    el.dataset.key = key; if (name) el.dataset.name = name;
+    if (IX.pinned && IX.key === key && IX.anchor === el) { hide(); return; }
+    show(el, true);
+  };
+  pop.addEventListener('click', (e) => e.stopPropagation());
+  document.addEventListener('click', () => { if (!pop.hidden) hide(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !pop.hidden) hide(); });
+  window.addEventListener('resize', () => { if (!pop.hidden && IX.anchor) place(IX.anchor); });
+  box.addEventListener('scroll', () => { if (!pop.hidden && IX.anchor) place(IX.anchor); });
+  window.addEventListener('scroll', () => { if (!pop.hidden && IX.anchor) place(IX.anchor); }, { passive: true });
+})();
+</script>
 {% endwith %}

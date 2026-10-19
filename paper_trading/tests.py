@@ -1713,3 +1713,139 @@ class ChargesTests(BaseCase):
         self.assertContains(r, 'id="brokers-data"')
         self.assertContains(r, "Angel One")
         self.assertContains(r, "zerodha.com/charges")
+
+
+class ClaudeOrdersTests(BaseCase):
+    """Claude Orders page: recommendations from claude_orders.json placed into Paper Trading 2."""
+
+    def setUp(self):
+        super().setUp()
+        import tempfile
+        from pathlib import Path
+        from . import claude_orders
+        self.mod = claude_orders
+        self.tmp = Path(tempfile.mkdtemp()) / "claude_orders.json"
+        self.patcher = mock.patch.object(claude_orders, "ORDERS_FILE", self.tmp)
+        self.patcher.start()
+        self.addCleanup(self.patcher.stop)
+        svc.add_to_wallet(svc.get_account(2), "100000")
+
+    def write(self, session=None, **over):
+        order = {"id": "20261019-1024-TST-BUY", "code": "TST", "name": "Test Co", "sector": "", "side": "BUY",
+                 "product": "INTRADAY", "conviction": "Medium", "score": 1.0, "price_at": 100.0,
+                 "price_time": "2026-10-19T10:20:00+05:30", "stop": 99.0, "target": 101.5, "stop_pct": 1.0,
+                 "target_pct": 1.5, "reasons": [], "news": [], "square_off_by": "15:20"}
+        order.update(over)
+        self.tmp.write_text(json.dumps({"generated": "2026-10-19T10:24:00+05:30",
+                                        "session": session or svc.today_ist().isoformat(), "orders": [order]}),
+                            encoding="utf-8")
+
+    def place(self, close=100.2, qty=10):
+        with mock.patch.object(svc, "get_market_status", return_value="OPEN"), \
+             mock.patch.object(svc, "fetch_live_today", return_value=live_frame(1, close=close)):
+            return self.post(reverse("paper_trading:claude_orders_place"), {"id": "20261019-1024-TST-BUY", "quantity": qty})
+
+    def test_places_into_book_2_with_percent_levels_from_the_fill(self):
+        self.write()
+        r = self.place(close=100.2)
+        self.assertEqual(r.status_code, 200, r.content)
+        o = PaperOrder.objects.get()
+        self.assertEqual((o.account.owner_key, o.side, o.quantity, o.reason), ("book:2", "BUY", 10, "claude"))
+        pos = PaperPosition.objects.get(account=o.account)
+        self.assertAlmostEqual(float(pos.stop_loss), 100.2 * 0.99, places=2)        # 1% below the actual fill
+        self.assertAlmostEqual(float(pos.target_price), 100.2 * 1.015, places=2)
+        self.assertFalse(PaperOrder.objects.filter(account__owner_key="book:1").exists())
+
+    def test_cannot_place_twice(self):
+        self.write()
+        self.assertEqual(self.place().status_code, 200)
+        r = self.place()
+        self.assertEqual(r.status_code, 409)
+        self.assertEqual(r.json()["code"], "already_placed")
+        self.assertEqual(PaperOrder.objects.count(), 1)
+
+    def test_old_recommendations_are_refused(self):
+        self.write(session="2026-01-01")
+        r = self.place()
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("2026-01-01", r.json()["error"])
+
+    def test_refused_when_price_already_passed_stop_or_target(self):
+        self.write()
+        self.assertEqual(self.place(close=98.5).json()["code"], "missed")          # below the 99 stop
+        self.assertEqual(self.place(close=102.0).json()["code"], "missed")         # above the 101.5 target
+        self.assertFalse(PaperOrder.objects.exists())
+
+    def test_page_and_state(self):
+        self.write()
+        r = self.client.get(reverse("paper_trading:claude_orders"))
+        self.assertContains(r, "Claude Orders")
+        self.assertContains(r, "20261019-1024-TST-BUY")
+        st = self.client.get(reverse("paper_trading:claude_orders_state")).json()
+        self.assertTrue(st["is_today"])
+        self.assertIsNone(st["orders"][0]["placed"])
+
+
+class MonitorTests(BaseCase):
+    """Server-side stop loss / target watcher (paper_trading/monitor.py) - works with no page open."""
+
+    def setUp(self):
+        super().setUp()
+        from . import monitor
+        self.mon = monitor
+        self.book = svc.get_account(2)
+        svc.add_to_wallet(self.book, "100000")
+        self.today = svc.today_ist()
+
+    def frame(self, rows):
+        """5-minute candles today: [(HH:MM, open, high, low, close)]."""
+        return pd.DataFrame([{"timestamp": pd.Timestamp(datetime.combine(self.today, time(*map(int, hm.split(":"))),
+                                                                         tzinfo=svc.IST)),
+                              "open": o, "high": h, "low": l, "close": c, "volume": 1000}
+                             for hm, o, h, l, c in rows])
+
+    def open_long(self, at="10:02", sl="99", tp="102"):
+        svc.execute_order(account=self.book, company=self.company, side="BUY", quantity=10, price=D("100"),
+                          mode=svc.LIVE, replay_date=None, market_time=at_(self.today, at),
+                          levels={"sl_price": D(sl), "target_price": D(tp)})
+        pos = PaperPosition.objects.get(account=self.book)
+        # pretend the position (and its levels) were last changed at entry time
+        PaperPosition.objects.filter(pk=pos.pk).update(updated_at=at_(self.today, at))
+        return PaperPosition.objects.get(pk=pos.pk)
+
+    def test_level_hit_rules(self):
+        pos = self.open_long()
+        since = at_(self.today, "10:02")
+        before = self.frame([("10:00", 100, 100.5, 98.0, 99.5)])                    # dips below SL but before entry
+        self.assertIsNone(self.mon.level_hit(pos, before, since))
+        tp = self.frame([("10:05", 100, 102.4, 99.8, 102.1)])
+        self.assertEqual(self.mon.level_hit(pos, tp, since)[:2], ("target", 102.0))
+        gap = self.frame([("10:05", 98.5, 99.0, 98.2, 98.6)])                        # opened below the stop
+        self.assertEqual(self.mon.level_hit(pos, gap, since)[:2], ("stop_loss", 98.5))
+        both = self.frame([("10:05", 100, 102.5, 98.5, 101)])
+        self.assertEqual(self.mon.level_hit(pos, both, since)[0], "stop_loss")
+
+    def test_run_once_closes_on_target_and_never_twice(self):
+        self.open_long()
+        df = self.frame([("10:05", 100, 100.6, 99.6, 100.4), ("10:10", 100.4, 102.3, 100.2, 102.1)])
+        with mock.patch.object(svc, "fetch_live_today", return_value=df):
+            exits, _ = self.mon.run_once(now=at_(self.today, "10:16"))
+            again, _ = self.mon.run_once(now=at_(self.today, "10:17"))
+        self.assertEqual(len(exits), 1)
+        self.assertEqual((exits[0].reason, exits[0].side, exits[0].price), ("target", "SELL", D("102.0000")))
+        self.assertEqual(again, [])
+        self.assertEqual(PaperPosition.objects.get(account=self.book).quantity, 0)
+
+    def test_squares_off_intraday_at_cutoff(self):
+        svc.execute_order(account=self.book, company=self.company, side="BUY", quantity=5, price=D("100"),
+                          mode=svc.LIVE, replay_date=None, market_time=at_(self.today, "10:00"))
+        df = self.frame([("15:15", 101, 101.2, 100.8, 101.0)])
+        with mock.patch.object(svc, "fetch_live_today", return_value=df):
+            _, closed = self.mon.run_once(now=at_(self.today, "15:21"))
+        self.assertEqual(len(closed), 1)
+        self.assertEqual(closed[0].reason, "session_end")
+
+
+def at_(day, hm):
+    h, m = map(int, hm.split(":"))
+    return datetime.combine(day, time(h, m), tzinfo=svc.IST)

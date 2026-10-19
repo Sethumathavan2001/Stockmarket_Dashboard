@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import views
+from . import claude_orders, views
 
 app_name = "paper_trading"
 
@@ -28,6 +28,9 @@ urlpatterns = [
     path("api/paper/bracket/", views.bracket_update, name="bracket"),
     path("api/paper/quotes/", views.quotes, name="quotes"),
     path("api/paper/squareoff/", views.squareoff, name="squareoff"),
+    path("claude-orders/", claude_orders.page, name="claude_orders"),
+    path("api/paper/claude-orders/", claude_orders.state, name="claude_orders_state"),
+    path("api/paper/claude-orders/place/", claude_orders.place, name="claude_orders_place"),
 ]
 
 # Project-level urls.py:

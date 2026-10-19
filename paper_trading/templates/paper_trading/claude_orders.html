@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claude Orders</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --navy-900:#0B2545; --navy-800:#123B7A; --blue-600:#2F6FED; --blue-50:#EEF3FF;
+    --bg:#FFFFFF; --panel:#F7F9FC; --border:#E3E8F0; --text:#101828; --text-muted:#64748B;
+    --green:#0EA968; --green-dark:#0A8A54; --green-bg:#E7F8F0; --red:#E5484D; --red-dark:#C93A3F; --red-bg:#FDECEC;
+    --amber:#B45309; --amber-bg:#FEF3E0; --purple:#7C3AED; --purple-bg:#F3EEFF; --claude:#C2410C;
+    --radius:10px; --shadow:0 1px 2px rgba(16,24,40,.04),0 1px 3px rgba(16,24,40,.06);
+  }
+  *{ box-sizing:border-box; }
+  [hidden]{ display:none !important; }
+  body{ margin:0; font-family:'Inter',system-ui,sans-serif; background:var(--bg); color:var(--text); }
+  .mono{ font-family:'JetBrains Mono',monospace; }
+  .wrap{ max-width:1320px; margin:0 auto; padding:0 24px 60px; }
+  .page-head{ display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px 16px; margin-top:20px; }
+  .page-head .title{ display:flex; flex-wrap:wrap; align-items:center; gap:4px 12px; font-size:18px; font-weight:700; }
+  .page-head .tag{ font-size:12.5px; font-weight:500; color:var(--text-muted); border-left:1px solid var(--border); padding-left:12px; }
+  .bar{ display:grid; grid-template-columns:minmax(0,1fr) auto; gap:14px 24px; align-items:center; margin-top:16px;
+    background:var(--panel); border:1px solid var(--border); border-radius:var(--radius); padding:14px 18px; }
+  .bar .meta{ font-size:13px; color:var(--text-muted); line-height:1.6; }
+  .bar .meta b{ color:var(--text); }
+  .bar a{ color:var(--blue-600); font-weight:600; text-decoration:none; }
+  .ctrl{ display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; }
+  .field{ display:flex; flex-direction:column; gap:5px; }
+  .field label{ font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--text-muted); }
+  .wallet{ font-family:'JetBrains Mono',monospace; font-size:18px; font-weight:700; }
+  input[type=number]{ border:1px solid var(--border); border-radius:8px; padding:8px 10px; font-size:14px; font-family:'JetBrains Mono',monospace; width:130px; background:#fff; }
+  .notice{ margin-top:14px; padding:10px 14px; border-radius:8px; font-size:13.5px; background:var(--blue-50); color:var(--navy-800); line-height:1.5; }
+  .notice.warn{ background:var(--amber-bg); color:var(--amber); }
+  .notice.error{ background:var(--red-bg); color:var(--red-dark); }
+  .card{ border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); background:#fff; margin-top:16px; }
+  .card-head{ display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px 16px; padding:12px 16px; border-bottom:1px solid var(--border); }
+  .card-title{ font-size:11.5px; font-weight:700; text-transform:uppercase; letter-spacing:.07em; color:var(--text-muted); }
+  .table-wrap{ overflow-x:auto; }
+  table{ width:100%; border-collapse:collapse; font-size:13px; }
+  thead th{ text-align:left; font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--text-muted); padding:9px 12px; background:var(--panel); border-bottom:1px solid var(--border); white-space:nowrap; }
+  tbody td{ padding:10px 12px; border-bottom:1px solid var(--border); vertical-align:top; }
+  td.num, th.num{ text-align:right; font-family:'JetBrains Mono',monospace; white-space:nowrap; }
+  tr.buy td:first-child{ box-shadow:inset 4px 0 0 var(--green); }
+  tr.sell td:first-child{ box-shadow:inset 4px 0 0 var(--red); }
+  tr.done td{ background:#FAFCFB; }
+  .sym{ font-weight:700; font-size:14px; } .co{ font-size:11.5px; color:var(--text-muted); }
+  .pill{ display:inline-block; font-size:11px; font-weight:700; padding:2px 9px; border-radius:999px; white-space:nowrap; }
+  .pill.buy{ background:var(--green-bg); color:var(--green-dark); } .pill.sell{ background:var(--red-bg); color:var(--red-dark); }
+  .pill.conv{ background:var(--panel); color:var(--text-muted); border:1px solid var(--border); }
+  .pill.high{ background:var(--purple-bg); color:var(--purple); border-color:transparent; }
+  .up{ color:var(--green-dark); } .down{ color:var(--red-dark); } .muted{ color:var(--text-muted); }
+  .qty{ width:96px !important; }
+  .btn{ border:none; border-radius:8px; padding:8px 14px; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit; white-space:nowrap; color:#fff; }
+  .btn.buy{ background:var(--green); } .btn.sell{ background:var(--red); }
+  .btn.ghost{ background:#fff; color:var(--navy-800); border:1px solid var(--border); font-weight:600; }
+  .btn:disabled{ opacity:.5; cursor:not-allowed; }
+  .status{ font-size:12px; margin-top:6px; line-height:1.45; max-width:260px; }
+  .status.ok{ color:var(--green-dark); } .status.err{ color:var(--red-dark); } .status.warn{ color:var(--amber); }
+  .status a{ color:var(--blue-600); font-weight:600; text-decoration:none; }
+  .why{ font-size:12px; color:var(--text-muted); line-height:1.5; max-width:380px; }
+  .why b{ color:var(--text); font-weight:600; }
+  details summary{ cursor:pointer; font-size:12px; color:var(--blue-600); font-weight:600; margin-top:4px; }
+  .news{ margin:4px 0 0; padding-left:16px; }
+  .news a{ color:var(--text); }
+  .empty{ padding:40px 16px; text-align:center; color:var(--text-muted); font-size:14px; line-height:1.6; }
+  .note{ font-size:12px; color:var(--text-muted); line-height:1.6; padding:10px 16px 14px; }
+  .toast-box{ position:fixed; right:20px; bottom:20px; display:grid; gap:8px; z-index:50; }
+  .toast{ background:var(--navy-900); color:#fff; padding:10px 14px; border-radius:8px; font-size:13px; max-width:380px; box-shadow:0 8px 20px rgba(0,0,0,.18); }
+  .toast.error{ background:var(--red-dark); } .toast.success{ background:var(--green-dark); }
+</style>
+</head>
+<body>
+
+{% include 'market/_navbar.html' %}
+
+<div class="wrap">
+  <div class="page-head">
+    <div class="title">Claude Orders <span class="tag">Intraday picks from Claude's signal board · one click places them in Paper Trading 2</span></div>
+  </div>
+
+  <div class="bar">
+    <div class="meta" id="meta"></div>
+    <div class="ctrl">
+      <div class="field"><label for="amount">Amount per order (₹)</label><input type="number" id="amount" min="1000" step="1000" value="50000"></div>
+      <div class="field"><label>Paper Trading 2 wallet</label><div class="wallet" id="wallet">—</div></div>
+      <a class="btn ghost" href="{% url 'paper_trading:page2' %}">Open Paper Trading 2 →</a>
+    </div>
+  </div>
+  <div class="notice" id="notice" hidden></div>
+
+  <div class="card">
+    <div class="card-head"><span class="card-title">Recommended orders</span><span class="co" id="quoteTime"></span></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Stock</th><th>Order</th><th class="num">At recommendation</th><th class="num">Live price</th>
+        <th class="num">Stop loss</th><th class="num">Target</th><th class="num">Quantity</th><th class="num">Value · risk</th><th>Why</th><th>Place</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table></div>
+    <div class="note">
+      Each order is placed in <b>Paper Trading 2</b> as an Intraday market order at the live price. The stop loss and target are set as the
+      recommended percentages from your actual fill, so the 1 : 1.5 reward-to-risk is kept even if the price moved. An order can't be placed
+      twice in a day, and it is refused once the live price has already passed its stop or target. Paper Trading 2 squares Intraday
+      positions off at 3:20 PM. These are research picks with modest odds (51-57% in your own tests), not investment advice.
+    </div>
+  </div>
+</div>
+<div class="toast-box" id="toasts"></div>
+
+{{ state|json_script:"state-data" }}
+<script>
+(() => {
+'use strict';
+const URLS = {
+  state: "{% url 'paper_trading:claude_orders_state' %}", place: "{% url 'paper_trading:claude_orders_place' %}",
+  quotes: "{% url 'paper_trading:quotes' %}", page2: "{% url 'paper_trading:page2_live' 'CODE_PLACEHOLDER' %}",
+  candle: "{% url 'candle_predictor_page' %}",
+};
+let ST = JSON.parse(document.getElementById('state-data').textContent);
+const LTP = {}, QTY = {}, MSG = {};
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+const safe = (u) => (/^https?:\/\//i.test(u || '') ? u : null);
+const nf = new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const inr = (v) => '₹' + nf.format(v);
+const hm = (iso) => new Date(iso).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' });
+const csrf = () => { const m = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/); return m ? decodeURIComponent(m[1]) : ''; };
+function toast(msg, kind = 'info') { const t = document.createElement('div'); t.className = 'toast ' + kind; t.textContent = msg; $('toasts').appendChild(t); setTimeout(() => t.remove(), 5000); }
+function notice(msg, kind) { $('notice').hidden = !msg; $('notice').className = 'notice' + (kind ? ' ' + kind : ''); $('notice').textContent = msg || ''; }
+try { const a = localStorage.getItem('claudeOrders:amount'); if (a) $('amount').value = a; } catch (e) {}
+
+function renderMeta() {
+  const g = ST.generated ? new Date(ST.generated) : null;
+  $('meta').innerHTML = g
+    ? `<b>${ST.orders.length} orders</b> from Claude's <a href="${esc(safe(ST.source_url) || '#')}" target="_blank" rel="noopener">${esc(ST.source || 'signal board')}</a>, made ${g.toLocaleString('en-IN', { weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' })} IST.<br>${esc(ST.method || '')}`
+    : 'No recommendations yet. Ask Claude to refresh the Intraday Signal Board - it writes them to paper_trading/claude_orders.json.';
+  $('wallet').textContent = inr(ST.balance || 0);
+  if (ST.generated && !ST.is_today) notice(`These recommendations are from ${ST.session}. Only today's recommendations can be placed - ask Claude for a fresh list.`, 'warn');
+}
+
+function plannedQty(o) {
+  if (QTY[o.id]) return QTY[o.id];
+  const px = LTP[o.code] || o.price_at, amount = Math.max(0, parseFloat($('amount').value) || 0);
+  return Math.max(1, Math.floor(amount / px));
+}
+function stateOf(o) {
+  if (o.placed) return 'placed';
+  const p = LTP[o.code]; if (p == null) return 'open';
+  const buy = o.side === 'BUY';
+  if (buy ? p <= o.stop : p >= o.stop) return 'stopped';
+  if (buy ? p >= o.target : p <= o.target) return 'reached';
+  return 'open';
+}
+function row(o) {
+  const side = o.side.toLowerCase(), p = LTP[o.code], st = stateOf(o), q = plannedQty(o);
+  const move = p != null ? (p / o.price_at - 1) * 100 : null;
+  const value = q * (p || o.price_at), risk = value * o.stop_pct / 100;
+  const conv = `<span class="pill conv ${o.conviction === 'Higher' ? 'high' : ''}">${esc(o.conviction)}</span>`;
+  const why = o.reasons.map((r) => `<b>${esc(r.signal)}:</b> ${esc(r.detail)}`).join('<br>');
+  const news = o.news.length ? `<details><summary>News (${o.news.length})</summary><ul class="news">${o.news.map((n) => {
+    const u = safe(n.url); return `<li>${u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(n.title)}</a>` : esc(n.title)} <span class="co">· ${esc(n.source || '')}</span></li>`; }).join('')}</ul></details>` : '';
+  const link = URLS.page2.replace('CODE_PLACEHOLDER', encodeURIComponent(o.code));
+  let action;
+  if (st === 'placed') {
+    action = `<div class="status ok">✓ Placed ${o.placed.quantity} @ ${inr(o.placed.price)} at ${hm(o.placed.time)}<br><a href="${link}">Open in Paper Trading 2 →</a></div>`;
+  } else {
+    const blocked = !ST.is_today || st !== 'open';
+    const why2 = !ST.is_today ? 'From an earlier day' : st === 'stopped' ? 'Price already passed the stop - skip' : st === 'reached' ? 'Target already reached - move gone' : '';
+    action = `<button class="btn ${side}" data-place="${esc(o.id)}" ${blocked ? 'disabled' : ''}>Place ${o.side}</button>
+      ${why2 ? `<div class="status warn">${esc(why2)}</div>` : ''}${MSG[o.id] ? `<div class="status ${MSG[o.id][0]}">${esc(MSG[o.id][1])}</div>` : ''}
+      <div class="status"><a href="${link}">Paper Trading 2</a> · <a href="${URLS.candle}?company=${encodeURIComponent(o.code)}">Candle Predictor</a></div>`;
+  }
+  return `<tr class="${side} ${st === 'placed' ? 'done' : ''}">
+    <td><div class="sym">${esc(o.code.replace('.NS', ''))}</div><div class="co">${esc(o.name)}</div><div class="co">${esc(o.sector)}</div></td>
+    <td><span class="pill ${side}">${o.side}</span> ${conv}<div class="co" style="margin-top:4px">Intraday · square off by ${esc(o.square_off_by)}</div></td>
+    <td class="num">${inr(o.price_at)}<div class="co">${hm(o.price_time)}</div></td>
+    <td class="num">${p != null ? inr(p) : '—'}<div class="co ${move > 0 ? 'up' : move < 0 ? 'down' : ''}">${move != null ? (move > 0 ? '+' : '') + move.toFixed(2) + '% since' : ''}</div></td>
+    <td class="num down">${o.stop_pct.toFixed(2)}%<div class="co">${inr(o.stop)} at rec.</div></td>
+    <td class="num up">${o.target_pct.toFixed(2)}%<div class="co">${inr(o.target)} at rec.</div></td>
+    <td class="num">${st === 'placed' ? o.placed.quantity : `<input type="number" class="qty" data-qty="${esc(o.id)}" min="1" step="1" value="${q}" aria-label="Quantity for ${esc(o.code)}">`}</td>
+    <td class="num">${inr(value)}<div class="co">risk ${inr(risk)}</div></td>
+    <td><div class="why">${why}</div>${news}</td>
+    <td>${action}</td>
+  </tr>`;
+}
+function render() {
+  renderMeta();
+  $('rows').innerHTML = ST.orders.map(row).join('') || '<tr><td colspan="10" class="empty">No Claude recommendations yet.</td></tr>';
+}
+
+async function refreshQuotes() {
+  const codes = [...new Set(ST.orders.map((o) => o.code))];
+  if (!codes.length) return;
+  try {
+    const r = await fetch(`${URLS.quotes}?companies=${encodeURIComponent(codes.join(','))}`);
+    const d = await r.json();
+    Object.entries(d.quotes || {}).forEach(([c, q]) => { if (q.ltp != null) LTP[c] = q.ltp; });
+    $('quoteTime').textContent = 'Live prices updated ' + new Date().toLocaleTimeString('en-IN', { hour12: false, timeZone: 'Asia/Kolkata' });
+  } catch (e) { $('quoteTime').textContent = 'Live prices unavailable right now'; }
+  render();
+}
+async function refreshState() {
+  try { const r = await fetch(URLS.state); ST = await r.json(); render(); } catch (e) {}
+}
+
+document.addEventListener('input', (e) => {
+  const q = e.target.closest('[data-qty]');
+  if (q) { QTY[q.dataset.qty] = Math.max(1, parseInt(q.value, 10) || 1); return; }
+  if (e.target.id === 'amount') { try { localStorage.setItem('claudeOrders:amount', e.target.value); } catch (err) {} Object.keys(QTY).forEach((k) => delete QTY[k]); render(); }
+});
+document.addEventListener('change', (e) => { if (e.target.closest('[data-qty]')) render(); });
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest('button[data-place]'); if (!b) return;
+  const o = ST.orders.find((x) => x.id === b.dataset.place); if (!o) return;
+  const qty = plannedQty(o);
+  b.disabled = true; b.textContent = 'Placing…';
+  try {
+    const r = await fetch(URLS.place, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() }, body: JSON.stringify({ id: o.id, quantity: qty }) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { MSG[o.id] = ['err', d.error || `Failed (${r.status})`]; toast(`${o.code}: ${d.error || 'order failed'}`, 'error'); }
+    else { delete MSG[o.id]; toast(`Placed in Paper Trading 2: ${d.order.side} ${d.order.quantity} ${o.code} @ ${inr(d.order.price)}`, 'success'); }
+  } catch (err) { MSG[o.id] = ['err', 'Network error - try again.']; }
+  try { new BroadcastChannel('paper-trading-book-2').postMessage({ type: 'changed', at: Date.now() }); } catch (err) {}
+  await refreshState();
+});
+
+render();
+refreshQuotes();
+setInterval(() => { if (!document.hidden) refreshQuotes(); }, 15000);
+setInterval(() => { if (!document.hidden) refreshState(); }, 60000);
+})();
+</script>
+</body>
+</html>

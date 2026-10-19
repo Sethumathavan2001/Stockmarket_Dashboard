@@ -22,6 +22,9 @@ test.py
 # Fetch error logs
 logs/
 
+# Claude's daily order recommendations (regenerated each session)
+paper_trading/claude_orders.json
+
 # Local secrets (ANTHROPIC_API_KEY ...)
 .env
 

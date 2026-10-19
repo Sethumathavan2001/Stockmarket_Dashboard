@@ -203,7 +203,8 @@ const COMPANIES = JSON.parse(document.getElementById('companies-data').textConte
 const BY_CODE = Object.fromEntries(COMPANIES.map(c => [c.code, c]));
 const INITIAL_COMPANY = "{{ initial_company|escapejs }}";
 const PAPER_LIVE_URL = "{% url 'paper_trading:page_live' 'CODE_PLACEHOLDER' %}";
-const AI_URL = "{% url 'ai_prediction_page' %}", CANDLE_URL = "{% url 'candle_predictor_page' %}";
+const AI_URL = "{% url 'ai_prediction_page' %}", CANDLE_URL = "{% url 'candle_predictor_page' %}", PREDICT_URL = "{% url 'stock_prediction_page' %}";
+const PAPER2_LIVE_URL = "{% url 'paper_trading:page2_live' 'CODE_PLACEHOLDER' %}";
 const PAGE = 60;
 const $ = id => document.getElementById(id);
 
@@ -376,7 +377,9 @@ async function openStock(code){
     const d = await getJson(`/api/news/stock/${encodeURIComponent(code)}/`);
     const links = `<div class="sp-links"><a href="${AI_URL}?company=${encodeURIComponent(code)}">AI analysis</a>
       <a href="${CANDLE_URL}?company=${encodeURIComponent(code)}">Candle Predictor</a>
-      <a href="${PAPER_LIVE_URL.replace('CODE_PLACEHOLDER', encodeURIComponent(code))}">Paper trade</a></div>`;
+      <a href="${PREDICT_URL}?company=${encodeURIComponent(code)}">Stock Prediction</a>
+      <a href="${PAPER_LIVE_URL.replace('CODE_PLACEHOLDER', encodeURIComponent(code))}">Paper trade</a>
+      <a href="${PAPER2_LIVE_URL.replace('CODE_PLACEHOLDER', encodeURIComponent(code))}">Paper trade 2</a></div>`;
     const ann = d.announcements.map(a => `<li class="${liClass(a.sentiment)}"><div class="t">${esc(dayLabel(a.time) || 'Today')} ${hhmm(a.time)} · <span class="pill ${a.important ? 'imp' : ''}">${esc(a.subject)}</span> ${sentPill(a.sentiment)}</div>
         <div>${esc(a.text)}</div>${a.pdf ? `<a class="pdf" href="${esc(safeUrl(a.pdf))}" target="_blank" rel="noopener">Filing (PDF) ↗</a>` : ''}</li>`).join('');
     const news = d.news.map(n => `<li class="${liClass(n.sentiment)}"><div class="t">${esc(dayLabel(n.time) || 'Today')} ${hhmm(n.time)} · ${esc(n.source)} ${sentPill(n.sentiment)}</div>
