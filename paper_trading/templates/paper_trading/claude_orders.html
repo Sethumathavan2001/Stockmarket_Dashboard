@@ -57,6 +57,12 @@
   .btn.buy{ background:var(--green); } .btn.sell{ background:var(--red); }
   .btn.ghost{ background:#fff; color:var(--navy-800); border:1px solid var(--border); font-weight:600; }
   .btn:disabled{ opacity:.5; cursor:not-allowed; }
+  .btn.refresh{ background:var(--navy-800); display:inline-flex; align-items:center; gap:7px; }
+  .btn.refresh .spin{ width:12px; height:12px; border:2px solid rgba(255,255,255,.4); border-top-color:#fff; border-radius:50%; animation:spin .8s linear infinite; }
+  @keyframes spin{ to{ transform:rotate(360deg); } }
+  .progress{ margin-top:14px; padding:10px 14px; border-radius:8px; background:var(--blue-50); color:var(--navy-800); font-size:13px; }
+  .progress .track{ height:6px; border-radius:3px; background:#fff; margin-top:8px; overflow:hidden; }
+  .progress .fill{ height:100%; background:var(--blue-600); transition:width .4s; }
   .status{ font-size:12px; margin-top:6px; line-height:1.45; max-width:260px; }
   .status.ok{ color:var(--green-dark); } .status.err{ color:var(--red-dark); } .status.warn{ color:var(--amber); }
   .status a{ color:var(--blue-600); font-weight:600; text-decoration:none; }
@@ -86,9 +92,11 @@
     <div class="ctrl">
       <div class="field"><label for="amount">Amount per order (₹)</label><input type="number" id="amount" min="1000" step="1000" value="50000"></div>
       <div class="field"><label>Paper Trading 2 wallet</label><div class="wallet" id="wallet">—</div></div>
+      <button class="btn refresh" id="refreshBtn" type="button" title="Re-run the signal board on current data (takes a few minutes)">↻ Refresh orders</button>
       <a class="btn ghost" href="{% url 'paper_trading:page2' %}">Open Paper Trading 2 →</a>
     </div>
   </div>
+  <div class="progress" id="progress" hidden><div id="progressText"></div><div class="track"><div class="fill" id="progressFill" style="width:0"></div></div></div>
   <div class="notice" id="notice" hidden></div>
 
   <div class="card">
@@ -113,7 +121,7 @@
 (() => {
 'use strict';
 const URLS = {
-  state: "{% url 'paper_trading:claude_orders_state' %}", place: "{% url 'paper_trading:claude_orders_place' %}",
+  state: "{% url 'paper_trading:claude_orders_state' %}", place: "{% url 'paper_trading:claude_orders_place' %}", refresh: "{% url 'paper_trading:claude_orders_refresh' %}",
   quotes: "{% url 'paper_trading:quotes' %}", page2: "{% url 'paper_trading:page2_live' 'CODE_PLACEHOLDER' %}",
   candle: "{% url 'candle_predictor_page' %}",
 };
@@ -133,10 +141,35 @@ try { const a = localStorage.getItem('claudeOrders:amount'); if (a) $('amount').
 function renderMeta() {
   const g = ST.generated ? new Date(ST.generated) : null;
   $('meta').innerHTML = g
-    ? `<b>${ST.orders.length} orders</b> from Claude's <a href="${esc(safe(ST.source_url) || '#')}" target="_blank" rel="noopener">${esc(ST.source || 'signal board')}</a>, made ${g.toLocaleString('en-IN', { weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' })} IST.<br>${esc(ST.method || '')}`
-    : 'No recommendations yet. Ask Claude to refresh the Intraday Signal Board - it writes them to paper_trading/claude_orders.json.';
+    ? `<b>${ST.orders.length} orders</b> from ${safe(ST.source_url) ? `Claude's <a href="${esc(safe(ST.source_url))}" target="_blank" rel="noopener">${esc(ST.source || 'signal board')}</a>` : `the ${esc(ST.source || 'signal board')}`}${ST.checked ? ` (${ST.checked} stocks checked)` : ''}, made ${g.toLocaleString('en-IN', { weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' })} IST.<br>${esc(ST.method || '')}`
+    : 'No recommendations yet. Press Refresh orders to build them from current data.';
   $('wallet').textContent = inr(ST.balance || 0);
-  if (ST.generated && !ST.is_today) notice(`These recommendations are from ${ST.session}. Only today's recommendations can be placed - ask Claude for a fresh list.`, 'warn');
+  if (ST.generated && !ST.is_today) notice(`These recommendations are from ${ST.session}. Only today's recommendations can be placed - press Refresh orders for a fresh list.`, 'warn');
+  else if (ST.generated && !ST.orders.length) notice('No stock has enough agreeing signals right now - nothing to buy or sell. Try Refresh orders again later.');
+  else notice('');
+  renderRefresh();
+}
+
+let wasRunning = false, pollTimer = null;
+function renderRefresh() {
+  const R = ST.refresh || {}, btn = $('refreshBtn');
+  btn.disabled = !!R.running;
+  btn.innerHTML = R.running ? '<span class="spin"></span>Refreshing…' : '↻ Refresh orders';
+  $('progress').hidden = !R.running;
+  if (R.running) {
+    const pct = R.total ? Math.round(R.done / R.total * 100) : 3;
+    $('progressText').textContent = `${R.step || 'Working'}${R.total ? ` · ${R.done} of ${R.total} stocks` : ''} - this takes a few minutes; you can leave the page open.`;
+    $('progressFill').style.width = Math.max(3, pct) + '%';
+  }
+  if (wasRunning && !R.running) {
+    if (R.error) toast('Refresh failed - the previous list is kept. ' + R.error, 'error');
+    else toast(`Orders refreshed: ${R.orders ?? 0} recommendation${R.orders === 1 ? '' : 's'}`, 'success');
+    Object.keys(QTY).forEach((k) => delete QTY[k]); Object.keys(MSG).forEach((k) => delete MSG[k]);
+    refreshQuotes();
+  }
+  wasRunning = !!R.running;
+  clearTimeout(pollTimer);
+  if (R.running) pollTimer = setTimeout(refreshState, 3000);
 }
 
 function plannedQty(o) {
@@ -210,6 +243,16 @@ document.addEventListener('input', (e) => {
   if (e.target.id === 'amount') { try { localStorage.setItem('claudeOrders:amount', e.target.value); } catch (err) {} Object.keys(QTY).forEach((k) => delete QTY[k]); render(); }
 });
 document.addEventListener('change', (e) => { if (e.target.closest('[data-qty]')) render(); });
+$('refreshBtn').addEventListener('click', async () => {
+  $('refreshBtn').disabled = true;
+  try {
+    const r = await fetch(URLS.refresh, { method: 'POST', headers: { 'X-CSRFToken': csrf() } });
+    const d = await r.json().catch(() => ({}));
+    if (d.refresh) ST.refresh = d.refresh;
+    if (r.status === 409) toast('A refresh is already running.');
+  } catch (err) { toast('Could not start the refresh - network error.', 'error'); }
+  renderRefresh();
+});
 document.addEventListener('click', async (e) => {
   const b = e.target.closest('button[data-place]'); if (!b) return;
   const o = ST.orders.find((x) => x.id === b.dataset.place); if (!o) return;

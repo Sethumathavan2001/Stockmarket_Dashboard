@@ -129,12 +129,13 @@
     <a href="{% url 'stock_prediction_page' %}" class="{% if current == 'stock_prediction_page' %}active{% endif %}">Stock Prediction</a>
     <a href="{% url 'candle_predictor_page' %}" class="{% if current == 'candle_predictor_page' %}active{% endif %}">Candle Predictor</a>
 
-    <div class="site-dd {% if app == 'paper_trading' and current != 'claude_orders' %}active{% endif %}">
+    <div class="site-dd {% if app == 'paper_trading' and current != 'claude_orders' or app == 'options' %}active{% endif %}">
       <button type="button" class="site-dd-btn" aria-haspopup="true" aria-expanded="false">Paper Trading
         <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 4.5l3 3 3-3"/></svg></button>
       <div class="site-dd-menu"><div class="site-dd-panel" role="menu">
         <a role="menuitem" href="{% url 'paper_trading:page' %}" class="{% if app == 'paper_trading' and not current|slice:':5' == 'page2' and current != 'claude_orders' %}active{% endif %}"><b>Paper Trading</b><span>Account 1 - live and replay trading</span></a>
         <a role="menuitem" href="{% url 'paper_trading:page2' %}" class="{% if app == 'paper_trading' and current|slice:':5' == 'page2' %}active{% endif %}"><b>Paper Trading 2</b><span>Account 2 - separate wallet (Claude Orders go here)</span></a>
+        <a role="menuitem" href="{% url 'options:page' %}" class="{% if app == 'options' %}active{% endif %}"><b>Option Trading</b><span>NSE option chain - buy / write options with margin and charges</span></a>
       </div></div>
     </div>
 

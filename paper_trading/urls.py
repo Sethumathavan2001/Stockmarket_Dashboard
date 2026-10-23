@@ -31,6 +31,7 @@ urlpatterns = [
     path("claude-orders/", claude_orders.page, name="claude_orders"),
     path("api/paper/claude-orders/", claude_orders.state, name="claude_orders_state"),
     path("api/paper/claude-orders/place/", claude_orders.place, name="claude_orders_place"),
+    path("api/paper/claude-orders/refresh/", claude_orders.refresh, name="claude_orders_refresh"),
 ]
 
 # Project-level urls.py:

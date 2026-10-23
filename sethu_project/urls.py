@@ -9,4 +9,5 @@ urlpatterns = [
     path("", include("paper_trading.urls")),
     path("", include("ai_prediction.urls")),
     path("", include("news.urls")),
+    path("", include("options.urls")),
 ]

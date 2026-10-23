@@ -5,6 +5,7 @@ claude_orders.json (next to this file), and placed on request into Paper Trading
   GET  /claude-orders/                       the page
   GET  /api/paper/claude-orders/             the orders + which were already placed today
   POST /api/paper/claude-orders/place/       {"id": "...", "quantity": 100} -> a live market order in book 2
+  POST /api/paper/claude-orders/refresh/     rebuild the list from current data (background, see claude_board)
 
 An order is placed at the LIVE price with its stop loss / target as percentages from the actual fill
 (so the reward-to-risk of the recommendation is kept even if the price moved), tagged reason="claude".
@@ -22,6 +23,7 @@ from django.views.decorators.http import require_GET, require_POST
 
 from market.models import Company
 
+from . import claude_board
 from . import services as svc
 from .models import PaperOrder
 
@@ -60,6 +62,7 @@ def _state(account):
     data["today"] = svc.today_ist().isoformat()
     data["is_today"] = data["session"] == data["today"]
     data["balance"] = float(account.balance)
+    data["refresh"] = claude_board.progress()
     return data
 
 
@@ -72,6 +75,12 @@ def page(request):
 @require_GET
 def state(request):
     return JsonResponse(_state(svc.get_account(BOOK)))
+
+
+@require_POST
+def refresh(request):
+    started = claude_board.start_refresh(ORDERS_FILE)
+    return JsonResponse({"started": started, "refresh": claude_board.progress()}, status=202 if started else 409)
 
 
 def _error(msg, status=400, code=None):
@@ -89,8 +98,8 @@ def place(request):
     if rec is None:
         return _error("Unknown recommendation.", 404)
     if data["session"] != svc.today_ist().isoformat():
-        return _error(f"These recommendations are from {data['session']}. Only today's can be placed - ask Claude for a "
-                      "fresh list.")
+        return _error(f"These recommendations are from {data['session']}. Only today's can be placed - press Refresh "
+                      "for a fresh list.")
     company = Company.objects.filter(code=rec["code"]).first()
     if company is None:
         return _error(f"{rec['code']} is not in the company list.", 404)

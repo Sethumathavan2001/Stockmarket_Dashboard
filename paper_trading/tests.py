@@ -1849,3 +1849,65 @@ class MonitorTests(BaseCase):
 def at_(day, hm):
     h, m = map(int, hm.split(":"))
     return datetime.combine(day, time(h, m), tzinfo=svc.IST)
+
+
+class ClaudeBoardTests(BaseCase):
+    """Refresh orders: the signal board's decision rules and the background refresh endpoint."""
+
+    def stock(self, forecast_up=True, cred=True, price=101.0, **over):
+        pu = 0.7 if forecast_up else 0.3
+        s = {"code": "TST.NS", "name": "Test Co", "sector": "Tech", "price": price, "asof": "2026-10-21T10:00:00+05:30",
+             "has_candles": True, "vwap_last": 100.0, "levels": {"pdc": 100.0}, "active": [], "pattern_vote": 0, "ml": None,
+             "forecast": {"band": [[i, price - 1, price + 1] for i in range(12)],
+                          "main": {"label": "15 min", "p_up": pu, "ret_pct": 0.1, "accuracy": 0.56 if cred else 0.48,
+                                   "baseline": 0.52},
+                          "news": None, "news_items": []}}
+        s.update(over)
+        return s
+
+    def test_buy_needs_a_model_signal_with_price_action(self):
+        from . import claude_board as b
+        s = b.score(self.stock(), {"dir": 1, "day_pct": 0.5, "last30_pct": 0.1}, set(), set())
+        self.assertEqual(s["decision"], "BUY")
+        self.assertAlmostEqual(s["plan"]["risk_pct"], 0.990, places=2)            # (101 - 100) / 101, inside 0.4-1.2 %
+        self.assertAlmostEqual(s["plan"]["target"], 101 * (1 + 1.5 * 0.0099), places=1)
+        order = b.to_order(s, datetime(2026, 10, 21, 10, 5, tzinfo=svc.IST))
+        self.assertEqual(order["id"], "20261021-1005-TST-BUY")
+        self.assertEqual([r["signal"] for r in order["reasons"]], ["Candle forecast", "Price action", "Market (NIFTY)"])
+
+    def test_untested_forecast_or_market_against_gives_watch(self):
+        from . import claude_board as b
+        up = {"dir": 1, "day_pct": 0.5, "last30_pct": 0.1}
+        self.assertEqual(b.score(self.stock(cred=False), up, set(), set())["decision"], "WATCH")
+        self.assertEqual(b.score(self.stock(), {"dir": -1, "day_pct": -0.5, "last30_pct": -0.1}, set(), set())["decision"], "WATCH")
+        self.assertEqual(b.score(self.stock(has_candles=False), up, set(), set())["decision"], "SKIP")
+
+    def test_refresh_runs_in_background_and_writes_the_file(self):
+        import tempfile
+        from pathlib import Path
+        from . import claude_board, claude_orders
+        tmp = Path(tempfile.mkdtemp()) / "claude_orders.json"
+        payload = {"generated": "2026-10-21T10:05:00+05:30", "session": svc.today_ist().isoformat(), "orders": []}
+        ran = threading.Event()
+
+        def fake_build():
+            ran.set()
+            return payload
+        with mock.patch.object(claude_orders, "ORDERS_FILE", tmp), mock.patch.object(claude_board, "build", fake_build), \
+             mock.patch("django.db.connection.close"):
+            with mock.patch("threading.Thread.start"):                               # first: check the busy guard
+                claude_board._set(running=True)
+                self.assertEqual(self.client.post(reverse("paper_trading:claude_orders_refresh")).status_code, 409)
+                claude_board._set(running=False)
+            r = self.client.post(reverse("paper_trading:claude_orders_refresh"))
+            self.assertEqual(r.status_code, 202)
+            for _ in range(100):
+                if not claude_board.progress()["running"]:
+                    break
+                threading.Event().wait(0.05)
+            self.assertTrue(ran.is_set())
+            self.assertEqual(json.loads(tmp.read_text(encoding="utf-8"))["generated"], payload["generated"])
+            st = self.client.get(reverse("paper_trading:claude_orders_state")).json()
+        self.assertFalse(st["refresh"]["running"])
+        self.assertEqual(st["refresh"]["orders"], 0)
+        self.assertIsNone(st["refresh"]["error"])

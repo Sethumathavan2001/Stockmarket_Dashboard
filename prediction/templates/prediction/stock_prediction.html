@@ -90,6 +90,25 @@
   .ic-cell.edge{ font-weight:700; }
   .disclaimer{ font-size:12px; color:var(--text-muted); margin-top:18px; line-height:1.55; }
   .meta{ font-size:12px; color:var(--text-muted); }
+  .news-opt{ display:flex; align-items:center; gap:6px; font-size:13px; font-weight:600; color:var(--navy-800); padding:9px 12px;
+    border:1px solid var(--border); border-radius:8px; background:#fff; cursor:pointer; }
+  .news-opt small{ font-weight:500; color:var(--text-muted); }
+  .nw-grid{ display:grid; grid-template-columns:260px minmax(0,1fr); gap:0; }
+  .nw-side{ padding:14px 16px; border-right:1px solid var(--border); }
+  @media (max-width:900px){ .nw-grid{ grid-template-columns:1fr; } .nw-side{ border-right:none; border-bottom:1px solid var(--border); } }
+  .nw-big{ font-size:22px; font-weight:700; margin:4px 0 8px; }
+  .nw-meter{ position:relative; height:10px; border-radius:5px; background:linear-gradient(90deg,#E5484D,#E2E8F0 50%,#0EA968); margin:10px 0 4px; }
+  .nw-meter i{ position:absolute; top:-4px; width:4px; height:18px; border-radius:2px; background:var(--navy-900); transform:translateX(-2px); }
+  .nw-scale{ display:flex; justify-content:space-between; font-size:10.5px; color:var(--text-muted); }
+  .nw-stat{ font-size:12.5px; color:var(--text-muted); line-height:1.7; margin-top:8px; }
+  .nw-list{ list-style:none; margin:0; padding:0; max-height:300px; overflow-y:auto; }
+  .nw-list li{ padding:8px 16px; border-bottom:1px solid var(--panel); border-left:3px solid transparent; font-size:13px; line-height:1.5; }
+  .nw-list li.positive{ border-left-color:var(--green); background:#F3FBF7; }
+  .nw-list li.negative{ border-left-color:var(--red); background:#FEF6F6; }
+  .nw-list .t{ font-size:11px; color:var(--text-muted); }
+  .nw-list a{ color:var(--text); text-decoration:none; } .nw-list a:hover{ color:var(--blue-600); text-decoration:underline; }
+  .senti{ font-size:10.5px; font-weight:700; padding:1px 7px; border-radius:999px; }
+  .senti.positive{ background:var(--green-bg); color:var(--green-dark); } .senti.negative{ background:var(--red-bg); color:var(--red-dark); }
 </style>
 </head>
 <body>
@@ -118,6 +137,9 @@
         <button type="button" data-tf="daily">Daily</button>
       </div>
     </div>
+    <label class="news-opt" title="Tilts the prediction by this stock's fresh news (since the last close) and today's market mood. Only when the data is current.">
+      <input type="checkbox" id="newsChk"> Include news <small>(current data only)</small>
+    </label>
     <button class="btn btn-primary" id="predictBtn" type="button">Predict</button>
     <button class="btn btn-ghost" id="trainBtn" type="button" title="Train all models for this stock (about 3 minutes)">Train models</button>
     <div class="train-box" id="trainBox" hidden>
@@ -141,6 +163,7 @@
       <div class="legend">
         <span><i style="background:var(--purple)"></i>Predicted path</span>
         <span><i style="background:#A78BFA"></i>Likely range (80 %)</span>
+        <span id="baseLegend" hidden><i style="background:#94A3B8"></i>Prediction without news</span>
       </div>
     </div>
     <div class="chart-wrap">
@@ -157,6 +180,26 @@
     </div>
     <div class="table-wrap"><table id="predTable"></table></div>
     <div class="note" id="predNote"></div>
+  </div>
+
+  <!-- NEWS -->
+  <div class="card" id="newsCard" hidden>
+    <div class="card-head"><span class="card-title">News check · since the last close</span><span class="card-sub" id="newsSub"></span></div>
+    <div class="nw-grid">
+      <div class="nw-side">
+        <div class="card-title" style="font-size:10.5px">News lean</div>
+        <div class="nw-big" id="nwLabel">—</div>
+        <div class="nw-meter"><i id="nwPin" style="left:50%"></i></div>
+        <div class="nw-scale"><span>Negative</span><span>Neutral</span><span>Positive</span></div>
+        <div class="nw-stat" id="nwStat"></div>
+      </div>
+      <ul class="nw-list" id="nwList"></ul>
+    </div>
+    <div class="note">Newer and stronger items count more (half-life 6 hours); company filings marked important count 1.5×.
+      Each horizon's prediction is shifted by the news lean, sized to that horizon's normal range (up to 35 % of its half-width),
+      and the range is widened on news-heavy days. <b>The news adjustment is a rule of thumb</b> - the app has no news history,
+      so unlike the models it cannot be back-tested; Test accuracy, IC and Edge describe the model without news.
+      Compare with the grey dashed line on the chart (the prediction without news).</div>
   </div>
 
   <!-- 3. LEADERBOARD -->
@@ -206,7 +249,7 @@ const URLS = {
 const forCode = (tpl, code) => tpl.replace('CODE', encodeURIComponent(code));
 const INITIAL = JSON.parse(document.getElementById('initial-state').textContent);
 const IST_SHIFT = 19800;
-const S = { code: '', tf: 'intraday', data: null, board: null, chart: null, candles: null, path: null, up: null, lo: null, poll: null };
+const S = { code: '', tf: 'intraday', data: null, board: null, chart: null, candles: null, path: null, base: null, up: null, lo: null, poll: null };
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -247,6 +290,7 @@ function initChart() {
   const band = { color: '#A78BFA', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false };
   S.up = S.chart.addLineSeries(band);
   S.lo = S.chart.addLineSeries(band);
+  S.base = S.chart.addLineSeries({ color: '#94A3B8', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
   S.path = S.chart.addLineSeries({ color: '#7C3AED', lineWidth: 2, priceLineVisible: false, lastValueVisible: true });
   new ResizeObserver(() => S.chart.applyOptions({ width: els.chart.clientWidth })).observe(els.chart);
 }
@@ -261,6 +305,8 @@ function drawChart(d) {
   S.path.setData(pts((f) => f.predicted_price));
   S.up.setData(pts((f) => f.range_80[1]));
   S.lo.setData(pts((f) => f.range_80[0]));
+  S.base.setData(d.news ? pts((f) => f.base.predicted_price) : []);
+  $('baseLegend').hidden = !d.news;
   S.path.setMarkers(fc.map((f) => ({
     time: chartTime(f.target_time), position: f.direction === 'UP' ? 'aboveBar' : 'belowBar',
     shape: f.direction === 'UP' ? 'arrowUp' : 'arrowDown', color: f.direction === 'UP' ? '#0A8A54' : '#C93A3F',
@@ -282,7 +328,7 @@ function drawPredictions(d) {
     : t.slice(0, 10);
   els.predTable.innerHTML =
     `<thead><tr><th>Horizon</th><th>Target</th><th class="num">Predicted price</th><th class="num">Change</th><th>Direction</th>
-     <th class="num">P(up)</th><th class="num">Likely range (80 %)</th><th>Best model</th><th class="num">Test accuracy</th><th class="num">IC</th><th>Edge</th></tr></thead><tbody>` +
+     <th class="num">P(up)</th><th class="num">Likely range (80 %)</th>${d.news ? '<th class="num">Without news</th><th class="num">News tilt</th>' : ''}<th>Best model</th><th class="num">Test accuracy</th><th class="num">IC</th><th>Edge</th></tr></thead><tbody>` +
     fc.map((f) => {
       const cls = f.direction === 'UP' ? 'up' : 'down';
       // the model's own direction vs how such calls did in testing
@@ -298,6 +344,8 @@ function drawPredictions(d) {
         <td><span class="pill ${cls}">${f.direction}</span></td>
         <td class="num">${pUp}</td>
         <td class="num">${nf.format(f.range_80[0])} – ${nf.format(f.range_80[1])}</td>
+        ${d.news ? `<td class="num muted">${sgn(f.base.predicted_return_pct, 3)}% <span class="pill ${f.base.direction === 'UP' ? 'up' : 'down'}">${f.base.direction}</span></td>
+        <td class="num ${f.news_tilt_pct > 0 ? 'up' : f.news_tilt_pct < 0 ? 'down' : 'muted'}">${sgn(f.news_tilt_pct, 3)}%</td>` : ''}
         <td>${esc(f.model)}</td>
         <td class="num">${pct(f.dir_acc)} <span class="muted">vs ${pct(f.baseline_acc)}</span></td>
         <td class="num">${sgn(f.ic, 3)}</td>
@@ -339,6 +387,29 @@ function drawBoard(d, label) {
     </tr>`).join('') + '</tbody>';
 }
 
+function drawNews(d) {
+  const n = d.news;
+  $('newsCard').hidden = !n;
+  if (!n) return;
+  const cls = n.label === 'Positive' ? 'up' : n.label === 'Negative' ? 'down' : 'muted';
+  $('nwLabel').innerHTML = `<span class="${cls}">${esc(n.label)} ${n.bias > 0 ? '+' : ''}${n.bias.toFixed(2)}</span>`;
+  $('nwPin').style.left = ((n.bias + 1) / 2 * 100) + '%';
+  const mm = n.market_mood;
+  const flips = d.forecasts.filter((f) => f.base.direction !== f.direction).map((f) => f.label);
+  $('nwStat').innerHTML = `${n.fresh_count} fresh items · <span class="up">▲ ${n.positive}</span> · <span class="down">▼ ${n.negative}</span><br>`
+    + `Stock news ${sgn(n.stock_bias * 100, 0)} · market mood ${mm ? sgn(mm.mood, 0) : 'n/a'}<br>`
+    + `News intensity ${Math.round(n.intensity * 100)}% → range widened ×${n.widen}<br>`
+    + (flips.length ? `<b class="${cls}">News flips the direction for ${esc(flips.join(', '))}</b>` : 'News does not change any direction');
+  $('newsSub').textContent = 'since ' + new Date(n.since).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' }) + ' IST';
+  const SL = { positive: '▲ Positive', negative: '▼ Negative', neutral: '● Neutral' };
+  $('nwList').innerHTML = n.items.map((it) => {
+    const s = it.sentiment.label;
+    const t = new Date(it.time).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' });
+    const link = /^https?:\/\//i.test(it.url || '') ? `<a href="${esc(it.url)}" target="_blank" rel="noopener">${esc(it.title)}</a>` : esc(it.title);
+    return `<li class="${s}"><div class="t">${t} · ${esc(it.source)} · weight ${it.weight} <span class="senti ${s}" title="${esc((it.sentiment.cues || []).join(', '))}">${SL[s]}</span></div>${link}</li>`;
+  }).join('') || '<li class="t">No news about this stock since the last close.</li>';
+}
+
 async function loadOverview() {
   try {
     const r = await fetch(URLS.overview);
@@ -371,12 +442,14 @@ async function predict() {
   notice('');
   els.predict.disabled = true; els.predict.textContent = 'Predicting…';
   try {
-    history.replaceState(null, '', `?company=${encodeURIComponent(code)}&timeframe=${S.tf}`);
-    const r = await fetch(forCode(URLS.predict, code) + '?timeframe=' + S.tf);
+    const news = $('newsChk').checked;
+    history.replaceState(null, '', `?company=${encodeURIComponent(code)}&timeframe=${S.tf}${news ? '&news=1' : ''}`);
+    if (news) els.predict.textContent = 'Predicting + reading news…';
+    const r = await fetch(forCode(URLS.predict, code) + '?timeframe=' + S.tf + (news ? '&news=1' : ''));
     const d = await r.json();
     if (!r.ok) {
-      els.predCard.hidden = true; els.boardCard.hidden = true;
-      S.candles.setData([]); S.path.setData([]); S.up.setData([]); S.lo.setData([]);
+      els.predCard.hidden = true; els.boardCard.hidden = true; $('newsCard').hidden = true;
+      S.candles.setData([]); S.path.setData([]); S.base.setData([]); S.up.setData([]); S.lo.setData([]);
       els.chartEmpty.hidden = false;
       els.chartEmpty.textContent = d.not_trained ? 'No models for this stock yet - press "Train models" (about 3 minutes).' : 'Nothing to show.';
       notice(d.error, d.not_trained ? 'warn' : 'error');
@@ -387,7 +460,8 @@ async function predict() {
     els.qPrice.textContent = '₹' + nf.format(d.price);
     els.qAsOf.textContent = 'last candle ' + (d.timeframe === 'intraday'
       ? new Date(d.as_of).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) : d.as_of);
-    drawChart(d); drawPredictions(d); drawBoard(d, S.board);
+    drawChart(d); drawPredictions(d); drawNews(d); drawBoard(d, S.board);
+    if (d.news_status) notice(d.news_status, 'warn');
   } catch (e) {
     notice('Prediction failed: ' + e.message, 'error');
   } finally {
@@ -452,6 +526,11 @@ els.tf.addEventListener('click', (e) => {
   if (els.company.value) predict();
 });
 els.predict.addEventListener('click', predict);
+$('newsChk').checked = INITIAL.news || (() => { try { return localStorage.getItem('predict:news') === '1'; } catch (e) { return false; } })();
+$('newsChk').addEventListener('change', () => {
+  try { localStorage.setItem('predict:news', $('newsChk').checked ? '1' : '0'); } catch (e) {}
+  if (els.company.value && S.data) predict();
+});
 els.train.addEventListener('click', train);
 els.boardTabs.addEventListener('click', (e) => {
   const b = e.target.closest('button[data-h]');

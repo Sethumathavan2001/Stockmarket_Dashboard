@@ -8,6 +8,7 @@ Every CHECK_SECONDS during market hours (both books):
     server was off is still caught, at the right price and time.  Fills: at the level, or at the
     candle's open if price gapped past it; a candle touching both levels counts as the stop.
   * Intraday positions are squared off at the cutoff (15:20 IST) - squareoff_live_intraday().
+  * the same round runs Option Trading's watcher (options/services.run_once).
 Exits are close-only (services.execute_order(close_only=True)) and serialised by ORDER_LOCK, so the
 watcher and an open page can never close the same position twice.
 
@@ -110,6 +111,15 @@ def run_once(now=None):
     return exits, closed
 
 
+def _run_options(now):
+    """Option Trading's limit fills, stop loss / target, MIS square-off and expiry settlement (options/services.py)."""
+    try:
+        from options import services as opt
+        opt.run_once(now)
+    except Exception:
+        logger.exception("options monitor round failed")
+
+
 # ---------------------------------------------------------------- one watcher across server processes
 def _is_leader():
     try:
@@ -133,6 +143,7 @@ def _loop():
         try:
             if _is_leader() and trading:
                 run_once(now)
+                _run_options(now)
         except Exception:                                 # never let the watcher die
             logger.exception("paper monitor round failed")
         finally:

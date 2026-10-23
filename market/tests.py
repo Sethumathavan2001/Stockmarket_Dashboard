@@ -86,7 +86,7 @@ class StockIndicesTests(TestCase):
         self.addCleanup(self.p.stop)
 
     def test_membership_from_constituent_lists(self):
-        fake = {"as_of": "2026-10-19T10:00:00+05:30", "failed": [],
+        fake = {"as_of": pd.Timestamp.now(tz="Asia/Kolkata").isoformat(), "failed": [],
                 "members": {"NIFTY 50": ["HDFCBANK", "TCS"], "NIFTY BANK": ["HDFCBANK"], "NIFTY 500": ["HDFCBANK", "HEXT"]}}
         with mock.patch.object(self.im, "_download", return_value=fake) as dl:
             d = self.client.get("/api/market/stock-indices/HDFCBANK.NS/").json()

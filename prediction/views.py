@@ -2,7 +2,8 @@
 Stock Prediction page and API.
 
   GET  /stock_prediction/                      the page (chart first, then tables)
-  GET  /api/predict/<code>/?timeframe=...      live prediction + chart data + model leaderboard
+  GET  /api/predict/<code>/?timeframe=...&news=1  live prediction + chart data + model leaderboard
+                                                 (news=1: tilt it by the stock's news since the last close)
   POST /api/train/<code>/                      train the model zoo for a stock (background)
   GET  /api/train/<code>/                      training progress
   GET  /api/predict/                           every trained stock (from the saved manifests)
@@ -48,7 +49,8 @@ def stock_prediction_view(request):
     trained = {m["company"] for m in engine.list_manifests()}
     return render(request, "prediction/stock_prediction.html", {
         "companies": [dict(c, trained=c["code"] in trained) for c in companies],
-        "initial": {"company": request.GET.get("company", ""), "timeframe": request.GET.get("timeframe", "intraday")},
+        "initial": {"company": request.GET.get("company", ""), "timeframe": request.GET.get("timeframe", "intraday"),
+                    "news": request.GET.get("news") == "1"},
         "model_names": engine.model_names(),
     })
 
@@ -100,7 +102,11 @@ def predict_company(request, company_code):
     if timeframe not in ds.TIMEFRAMES:
         return JsonResponse({"error": "timeframe must be 'intraday' or 'daily'."}, status=400)
     try:
-        data = engine.predict_stock(company, timeframe)
+        news = None
+        if request.GET.get("news") == "1":
+            from news.signal import news_signal
+            news = news_signal
+        data = engine.predict_stock(company, timeframe, news=news)
     except engine.NotTrained as exc:
         return JsonResponse({"error": str(exc), "not_trained": True}, status=404)
     except ValueError as exc:

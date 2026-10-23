@@ -334,7 +334,46 @@ class NotTrained(Exception):
     pass
 
 
-def predict_stock(company, timeframe):
+def news_applies(timeframe, last_time, now=None):
+    """News (since the last close) is only used when the forecast starts from current data:
+    intraday -> the last candle is from today; daily -> the last row is the latest session."""
+    from news.signal import last_close
+    from .market_time import IST
+    now = now or datetime.now(IST)
+    ts = pd.Timestamp(last_time)
+    if ts.tzinfo is not None:
+        ts = ts.tz_convert(IST)
+    if timeframe == "intraday":
+        return ts.date() == now.date()
+    return ts.date() >= last_close(now).date()
+
+
+def apply_news(forecast, signal, timeframe):
+    """
+    The Candle Predictor's news rule applied to one ML forecast: shift the predicted return by
+    bias x NEWS_TILT x (half-width of its 80 % range) and widen the range by 1 + NEWS_WIDEN x intensity.
+    The model's tested accuracy / IC / edge describe the model alone - the news part is a rule of thumb.
+    """
+    from patterns.engine import NEWS_TILT, NEWS_WIDEN
+    r = forecast.pop("_r")
+    bias, widen = float(signal["bias"]), 1 + NEWS_WIDEN * float(signal["intensity"])
+    tilt = bias * NEWS_TILT * (r["q90"] - r["q10"]) / 2
+    ret, price = r["ret"] + tilt, r["price"]
+    p_up = forecast["p_up"]
+    if r["calibration"]:
+        a, c0 = r["calibration"]
+        p_up = 1 / (1 + math.exp(-(a * ret * SCALE + c0)))
+    return {**forecast,
+            "predicted_return_pct": ret * 100, "predicted_price": price * (1 + ret),
+            "direction": "UP" if ret > 0 else "DOWN" if ret < 0 else "FLAT", "p_up": p_up,
+            "range_80": [price * (1 + ret + r["q10"] * widen), price * (1 + ret + r["q90"] * widen)],
+            "range_50": [price * (1 + ret + r["q25"] * widen), price * (1 + ret + r["q75"] * widen)],
+            "base": {k: forecast[k] for k in ("predicted_return_pct", "predicted_price", "direction", "p_up", "range_80")},
+            "news_tilt_pct": tilt * 100}
+
+
+def predict_stock(company, timeframe, news=None):
+    """news: optional callable(company) -> news signal (news/signal.py); used only on current data."""
     manifest = load_manifest(company.code)
     info = (manifest or {}).get("timeframes", {}).get(timeframe)
     if not info or "horizons" not in info:
@@ -374,7 +413,26 @@ def predict_stock(company, timeframe):
             "model": hinfo["best_name"], "edge": hinfo["edge"],
             "dir_acc": best["dir_acc"], "baseline_acc": best["baseline_acc"], "ic": best["ic"],
             "cost_pct": COST[timeframe] * 100,
+            "_r": {"ret": ret, "price": price, "q10": q10, "q25": q25, "q75": q75, "q90": q90,
+                   "calibration": b["calibration"]},
         })
+
+    news_info, news_status = None, None
+    if news is not None:
+        if not news_applies(timeframe, last_time):
+            news_status = ("News is used only when the prediction starts from current data - the last "
+                           f"{'candle is not from today' if timeframe == 'intraday' else 'row is not the latest session'}.")
+        else:
+            try:
+                from patterns.engine import NEWS_WIDEN
+                signal = news(company)
+                forecasts = [apply_news(f, signal, timeframe) for f in forecasts]
+                news_info = {**signal, "applied": True, "widen": round(1 + NEWS_WIDEN * float(signal["intensity"]), 2)}
+            except Exception as exc:                    # news sources down: keep the plain forecast
+                logger.warning("News signal failed for %s: %s", company.code, exc)
+                news_status = f"News unavailable ({exc}) - showing the prediction without news."
+    for f in forecasts:
+        f.pop("_r", None)
 
     if timeframe == "intraday":
         days = frame["timestamp"].dt.date
@@ -393,6 +451,7 @@ def predict_stock(company, timeframe):
         "data_to": info["data_to"], "feature_count": len(info["features"]),
         "leaderboards": {v["label"]: v["leaderboard"] for v in info["horizons"].values()},
         "cost_pct": COST[timeframe] * 100,
+        "news": news_info, "news_status": news_status,
     }
 
 

@@ -111,3 +111,34 @@ class PredictionEngineTests(TestCase):
         stocks = self.client.get("/api/predict/").json()["stocks"]
         self.assertEqual([s["company"] for s in stocks], ["TST.NS"])
         self.assertEqual(self.client.get("/stock_prediction/").status_code, 200)
+
+    def test_include_news_tilts_the_prediction(self):
+        engine.train_stock(self.company, timeframes=("daily",), only=["ridge"])
+        signal = {"bias": 0.8, "intensity": 0.6, "label": "Positive", "stock_bias": 0.9, "market_bias": 0.1,
+                  "fresh_count": 3, "positive": 3, "negative": 0, "items": [], "since": "2026-10-22T15:30:00+05:30"}
+        news = mock.Mock(return_value=signal)
+        plain = engine.predict_stock(self.company, "daily")
+        old = engine.predict_stock(self.company, "daily", news=news)          # data ends in 2025: not current
+        self.assertIsNone(old["news"])
+        self.assertIn("latest session", old["news_status"])
+        news.assert_not_called()
+        with mock.patch.object(engine, "news_applies", return_value=True):
+            out = engine.predict_stock(self.company, "daily", news=news)
+        self.assertEqual(out["news"]["widen"], 1.3)
+        for f0, f in zip(plain["forecasts"], out["forecasts"]):
+            self.assertAlmostEqual(f["base"]["predicted_return_pct"], f0["predicted_return_pct"])
+            self.assertGreater(f["news_tilt_pct"], 0)                         # positive news -> higher
+            self.assertAlmostEqual(f["predicted_return_pct"], f0["predicted_return_pct"] + f["news_tilt_pct"])
+            w0, w = f0["range_80"][1] - f0["range_80"][0], f["range_80"][1] - f["range_80"][0]
+            self.assertAlmostEqual(w / w0, 1.3, places=2)                     # widened by the intensity
+            self.assertNotIn("_r", f)
+        with mock.patch.object(engine, "news_applies", return_value=True),              mock.patch("news.signal.news_signal", return_value=signal):
+            d = self.client.get("/api/predict/TST.NS/?timeframe=daily&news=1").json()
+        self.assertEqual(d["news"]["label"], "Positive")
+
+    def test_news_applies_only_to_current_data(self):
+        now = datetime(2026, 10, 23, 11, 0, tzinfo=IST)                       # a Friday
+        self.assertTrue(engine.news_applies("intraday", pd.Timestamp("2026-10-23 10:55", tz=IST), now))
+        self.assertFalse(engine.news_applies("intraday", pd.Timestamp("2026-10-22 15:25", tz=IST), now))
+        self.assertTrue(engine.news_applies("daily", date(2026, 10, 22), now))   # previous session's close
+        self.assertFalse(engine.news_applies("daily", date(2026, 10, 20), now))

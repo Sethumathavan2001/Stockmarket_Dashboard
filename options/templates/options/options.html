@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Option Trading</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --navy-900:#0B2545; --navy-800:#123B7A; --blue-600:#2F6FED; --blue-50:#EEF3FF;
+    --bg:#FFFFFF; --panel:#F7F9FC; --border:#E3E8F0; --text:#101828; --text-muted:#64748B;
+    --green:#0EA968; --green-dark:#0A8A54; --green-bg:#E7F8F0; --red:#E5484D; --red-dark:#C93A3F; --red-bg:#FDECEC;
+    --amber:#B45309; --amber-bg:#FEF3E0; --itm:#FFF9EB; --purple:#7C3AED;
+    --radius:10px; --shadow:0 1px 2px rgba(16,24,40,.04),0 1px 3px rgba(16,24,40,.06);
+  }
+  *{ box-sizing:border-box; }
+  [hidden]{ display:none !important; }
+  body{ margin:0; font-family:'Inter',system-ui,sans-serif; background:var(--bg); color:var(--text); }
+  .mono, .num{ font-family:'JetBrains Mono',monospace; }
+  .wrap{ max-width:1440px; margin:0 auto; padding:0 20px 60px; }
+  .page-head{ display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px 16px; margin-top:20px; }
+  .page-head .title{ display:flex; flex-wrap:wrap; align-items:center; gap:4px 12px; font-size:18px; font-weight:700; }
+  .page-head .tag{ font-size:12.5px; font-weight:500; color:var(--text-muted); border-left:1px solid var(--border); padding-left:12px; }
+  .mkt{ font-size:12px; font-weight:700; padding:4px 10px; border-radius:999px; background:var(--panel); color:var(--text-muted); border:1px solid var(--border); }
+  .mkt.open{ background:var(--green-bg); color:var(--green-dark); border-color:transparent; }
+
+  /* toolbar */
+  .toolbar{ display:flex; flex-wrap:wrap; align-items:flex-end; gap:12px 22px; margin-top:14px; background:var(--panel);
+    border:1px solid var(--border); border-radius:var(--radius); padding:12px 16px; }
+  .field{ display:flex; flex-direction:column; gap:5px; }
+  .field > label, .lbl{ font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--text-muted); }
+  select, input[type=number], input[type=text]{ border:1px solid var(--border); border-radius:8px; background:#fff; padding:8px 10px;
+    font-size:14px; font-family:inherit; color:var(--text); }
+  input[type=number]{ font-family:'JetBrains Mono',monospace; }
+  #symbol{ min-width:220px; }
+  .spot{ display:flex; flex-direction:column; gap:2px; }
+  .spot b{ font-family:'JetBrains Mono',monospace; font-size:20px; }
+  .stats{ display:flex; flex-wrap:wrap; gap:6px 20px; }
+  .stat{ display:flex; flex-direction:column; gap:3px; }
+  .stat span:not(.lbl){ font-family:'JetBrains Mono',monospace; font-size:14px; font-weight:600; }
+  .updated{ margin-left:auto; font-size:12px; color:var(--text-muted); text-align:right; line-height:1.5; }
+  .updated.stale{ color:var(--amber); }
+
+  .notice{ margin-top:12px; padding:10px 14px; border-radius:8px; font-size:13.5px; background:var(--blue-50); color:var(--navy-800); line-height:1.5; }
+  .notice.warn{ background:var(--amber-bg); color:var(--amber); } .notice.error{ background:var(--red-bg); color:var(--red-dark); }
+
+  /* layout */
+  .grid{ display:grid; grid-template-columns:minmax(0,1fr) 340px; gap:16px; margin-top:16px; align-items:start; }
+  @media (max-width:1100px){ .grid{ grid-template-columns:1fr; } .ticket{ position:static !important; } }
+  .card{ border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); background:#fff; }
+  .card-head{ display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px 16px; padding:10px 14px; border-bottom:1px solid var(--border); }
+  .card-title{ font-size:11.5px; font-weight:700; text-transform:uppercase; letter-spacing:.07em; color:var(--text-muted); }
+  .seg{ display:inline-flex; background:#fff; border:1px solid var(--border); border-radius:8px; padding:2px; }
+  .seg button{ border:none; background:transparent; padding:5px 11px; border-radius:6px; font-size:12.5px; font-weight:600; color:var(--text-muted); cursor:pointer; font-family:inherit; }
+  .seg button.active{ background:var(--navy-800); color:#fff; }
+  .chk{ display:inline-flex; align-items:center; gap:5px; font-size:12.5px; font-weight:600; color:var(--text-muted); cursor:pointer; }
+  .chain-ctrl{ display:flex; flex-wrap:wrap; align-items:center; gap:10px; }
+
+  /* chain */
+  .chain-wrap{ overflow:auto; max-height:640px; }
+  table{ width:100%; border-collapse:collapse; font-size:12.5px; }
+  .chain thead{ position:sticky; top:0; z-index:3; }
+  .chain thead th{ background:var(--panel); font-size:10px; text-transform:uppercase; letter-spacing:.05em;
+    color:var(--text-muted); padding:7px 8px; border-bottom:1px solid var(--border); white-space:nowrap; text-align:right; }
+  .chain thead tr.sides th{ font-size:11px; letter-spacing:.08em; text-align:center; color:var(--navy-800); padding:6px 8px 2px; }
+  .chain td{ padding:6px 8px; border-bottom:1px solid #EEF2F7; text-align:right; white-space:nowrap; font-family:'JetBrains Mono',monospace; position:relative; }
+  .chain td.k{ text-align:center; font-weight:700; background:var(--panel); border-left:1px solid var(--border); border-right:1px solid var(--border); font-size:13px; }
+  .chain td.itm{ background:var(--itm); }
+  .chain tr.atm td.k{ background:var(--navy-800); color:#fff; }
+  .chain tr.spotline td{ padding:0; border:none; height:0; }
+  .chain tr.spotline td div{ position:relative; z-index:2; border-top:2px solid var(--blue-600); }
+  .chain tr.spotline td span{ position:absolute; left:50%; transform:translate(-50%,-55%); background:var(--blue-600); color:#fff; font-size:10.5px;
+    font-weight:700; padding:1px 8px; border-radius:999px; white-space:nowrap; font-family:'JetBrains Mono',monospace; }
+  .oi{ display:flex; flex-direction:column; align-items:flex-end; gap:2px; }
+  .oibar{ height:3px; border-radius:2px; background:#CBD5E1; }
+  .ce .oibar{ background:#F59E9E; } .pe .oibar{ background:#8FD9B6; }
+  .pe .oi{ align-items:flex-start; } .pe td, td.pe{ text-align:left; }
+  .sub{ font-size:10.5px; color:var(--text-muted); }
+  .up{ color:var(--green-dark); } .down{ color:var(--red-dark); } .muted{ color:var(--text-muted); }
+  .ltp{ font-weight:700; }
+  .bs{ position:absolute; top:50%; transform:translateY(-50%); display:none; gap:3px; z-index:1; }
+  td.ltpc.ce .bs{ left:4px; } td.ltpc.pe .bs{ right:4px; }
+  .chain tbody tr:hover .bs{ display:inline-flex; }
+  .bs button{ border:none; border-radius:4px; width:22px; height:20px; font-size:11px; font-weight:700; color:#fff; cursor:pointer; font-family:inherit; }
+  .bs .b{ background:var(--green); } .bs .s{ background:var(--red); }
+  .chain tbody tr:hover td{ background:#F3F7FF; } .chain tbody tr:hover td.itm{ background:#FFF2CF; }
+  tr.held td.k::after{ content:'●'; color:var(--purple); position:absolute; right:4px; top:4px; font-size:9px; }
+  .empty{ padding:40px 16px; text-align:center; color:var(--text-muted); font-size:14px; line-height:1.6; }
+
+  /* ticket */
+  .ticket{ position:sticky; top:12px; }
+  .tk-body{ padding:14px; display:grid; gap:12px; }
+  .tk-name{ font-size:16px; font-weight:700; }
+  .tk-q{ display:flex; gap:12px; font-size:12.5px; color:var(--text-muted); font-family:'JetBrains Mono',monospace; flex-wrap:wrap; }
+  .tk-q b{ color:var(--text); }
+  .tk-side{ display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+  .tk-side button{ border:1px solid var(--border); background:#fff; border-radius:8px; padding:9px; font-weight:700; font-size:14px; cursor:pointer; font-family:inherit; color:var(--text-muted); }
+  .tk-side button.buy.active{ background:var(--green); border-color:var(--green); color:#fff; }
+  .tk-side button.sell.active{ background:var(--red); border-color:var(--red); color:#fff; }
+  .row2{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .row2 input{ width:100%; }
+  .stepper{ display:flex; align-items:center; gap:0; }
+  .stepper button{ border:1px solid var(--border); background:#fff; width:34px; height:36px; font-size:16px; cursor:pointer; color:var(--navy-800); }
+  .stepper button:first-child{ border-radius:8px 0 0 8px; } .stepper button:last-child{ border-radius:0 8px 8px 0; }
+  .stepper input{ border-radius:0; border-left:none; border-right:none; width:64px; text-align:center; height:36px; }
+  .hint{ font-size:11.5px; color:var(--text-muted); }
+  .sum{ background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:10px 12px; display:grid; gap:4px; font-size:12.5px; }
+  .sum div{ display:flex; justify-content:space-between; gap:10px; } .sum span:last-child{ font-family:'JetBrains Mono',monospace; }
+  .sum .tot{ font-weight:700; border-top:1px solid var(--border); padding-top:5px; margin-top:2px; }
+  .btn{ border:none; border-radius:8px; padding:9px 14px; font-size:13.5px; font-weight:700; cursor:pointer; font-family:inherit; color:#fff; white-space:nowrap; }
+  .btn.buy{ background:var(--green); } .btn.sell{ background:var(--red); } .btn.navy{ background:var(--navy-800); }
+  .btn.ghost{ background:#fff; color:var(--navy-800); border:1px solid var(--border); font-weight:600; }
+  .btn.sm{ padding:5px 10px; font-size:12px; }
+  .btn:disabled{ opacity:.5; cursor:not-allowed; }
+  .btn.wide{ width:100%; padding:11px; font-size:15px; }
+  .tk-msg{ font-size:12.5px; line-height:1.45; }
+  .tk-msg.err{ color:var(--red-dark); } .tk-msg.warn{ color:var(--amber); }
+
+  /* bottom */
+  .tabs{ display:flex; gap:2px; flex-wrap:wrap; }
+  .tabs button{ border:none; background:transparent; padding:8px 12px; font-size:13px; font-weight:600; color:var(--text-muted); cursor:pointer; border-bottom:2px solid transparent; font-family:inherit; }
+  .tabs button.active{ color:var(--navy-800); border-bottom-color:var(--navy-800); }
+  .tabs .count{ font-size:11px; background:var(--panel); border:1px solid var(--border); border-radius:999px; padding:0 6px; margin-left:4px; }
+  .kpis{ display:flex; flex-wrap:wrap; gap:8px 26px; padding:12px 14px; border-bottom:1px solid var(--border); }
+  .kpi{ display:flex; flex-direction:column; gap:2px; }
+  .kpi b{ font-family:'JetBrains Mono',monospace; font-size:16px; }
+  .tbl-wrap{ overflow-x:auto; }
+  .tbl thead th{ text-align:left; font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--text-muted); padding:8px 10px; background:var(--panel); border-bottom:1px solid var(--border); white-space:nowrap; }
+  .tbl td{ padding:8px 10px; border-bottom:1px solid var(--border); white-space:nowrap; vertical-align:middle; }
+  .tbl td.num, .tbl th.num{ text-align:right; }
+  .tbl tr.closed td{ color:var(--text-muted); background:#FAFBFC; }
+  .pill{ display:inline-block; font-size:10.5px; font-weight:700; padding:2px 8px; border-radius:999px; font-family:'Inter',sans-serif; }
+  .pill.buy, .pill.COMPLETE{ background:var(--green-bg); color:var(--green-dark); } .pill.sell, .pill.REJECTED{ background:var(--red-bg); color:var(--red-dark); }
+  .pill.prod, .pill.CANCELLED{ background:var(--panel); color:var(--text-muted); border:1px solid var(--border); }
+  .pill.PENDING{ background:var(--amber-bg); color:var(--amber); }
+  .lv{ width:78px !important; padding:5px 6px !important; font-size:12.5px !important; }
+  .payoff{ padding:8px 14px 14px; border-top:1px solid var(--border); }
+  .payoff svg{ width:100%; height:260px; display:block; }
+  .legend{ display:flex; flex-wrap:wrap; gap:14px; font-size:12px; color:var(--text-muted); }
+  .legend i{ display:inline-block; width:16px; height:3px; border-radius:2px; vertical-align:middle; margin-right:5px; }
+  .note{ font-size:12px; color:var(--text-muted); line-height:1.6; padding:10px 14px 14px; }
+  .funds{ display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; padding:14px; }
+  .fund{ border:1px solid var(--border); border-radius:8px; padding:12px; } .fund b{ display:block; font-family:'JetBrains Mono',monospace; font-size:18px; margin-top:4px; }
+  .toast-box{ position:fixed; right:20px; bottom:20px; display:grid; gap:8px; z-index:50; }
+  .toast{ background:var(--navy-900); color:#fff; padding:10px 14px; border-radius:8px; font-size:13px; max-width:400px; box-shadow:0 8px 20px rgba(0,0,0,.18); }
+  .toast.error{ background:var(--red-dark); } .toast.success{ background:var(--green-dark); }
+</style>
+</head>
+<body>
+
+{% include 'market/_navbar.html' %}
+
+<div class="wrap">
+  <div class="page-head">
+    <div class="title">Option Trading <span class="tag">Live NSE option chain · lots, margin and charges like a real broker · separate wallet</span></div>
+    <span class="mkt" id="mkt">—</span>
+  </div>
+
+  <div class="toolbar">
+    <div class="field"><label for="symbol">Underlying</label><select id="symbol"><option>{{ initial.symbol }}</option></select></div>
+    <div class="field"><label for="expiry">Expiry</label><select id="expiry"></select></div>
+    <div class="spot"><span class="lbl" id="spotLbl">Spot</span><b id="spot">—</b></div>
+    <div class="stats">
+      <div class="stat"><span class="lbl">Lot</span><span id="stLot">—</span></div>
+      <div class="stat"><span class="lbl">ATM</span><span id="stAtm">—</span></div>
+      <div class="stat"><span class="lbl" title="Put OI ÷ Call OI">PCR</span><span id="stPcr">—</span></div>
+      <div class="stat"><span class="lbl" title="Strike where option buyers lose the most at expiry">Max pain</span><span id="stPain">—</span></div>
+      <div class="stat"><span class="lbl">Days to expiry</span><span id="stDte">—</span></div>
+    </div>
+    <div class="updated" id="updated"></div>
+  </div>
+  <div class="notice" id="notice" hidden></div>
+
+  <div class="grid">
+    <!-- CHAIN -->
+    <div class="card">
+      <div class="card-head">
+        <span class="card-title">Option chain</span>
+        <div class="chain-ctrl">
+          <span class="lbl">Strikes</span>
+          <div class="seg" id="strikeSeg"><button data-n="8">±8</button><button data-n="15" class="active">±15</button><button data-n="30">±30</button><button data-n="0">All</button></div>
+          <label class="chk"><input type="checkbox" id="greekChk"> Greeks</label>
+        </div>
+      </div>
+      <div class="chain-wrap" id="chainWrap">
+        <table class="chain" id="chain"><tbody><tr><td class="empty">Loading the option chain…</td></tr></tbody></table>
+      </div>
+      <div class="note">Shaded cells are in the money. Hover a row and press <b class="up">B</b> or <b class="down">S</b> to open the order ticket.
+        Market orders fill at the best <b>ask</b> (buy) or <b>bid</b> (sell), not at the LTP - the bid-ask spread is a real cost. Greeks: Black-Scholes on NSE's IV, 6.5 % rate.</div>
+    </div>
+
+    <!-- TICKET -->
+    <div class="card ticket" id="ticket">
+      <div class="card-head"><span class="card-title">Order</span><span class="hint" id="tkFunds"></span></div>
+      <div class="tk-body" id="tkEmpty"><div class="empty" style="padding:24px 6px">Pick a strike in the option chain - press <b class="up">B</b> to buy or <b class="down">S</b> to sell.</div></div>
+      <div class="tk-body" id="tkForm" hidden>
+        <div><div class="tk-name" id="tkName"></div><div class="tk-q" id="tkQ"></div></div>
+        <div class="tk-side"><button class="buy" data-side="BUY">BUY</button><button class="sell" data-side="SELL">SELL</button></div>
+        <div class="row2">
+          <div class="field"><label for="tkLots">Lots</label>
+            <div class="stepper"><button type="button" data-step="-1">−</button><input type="number" id="tkLots" min="1" max="100" value="1"><button type="button" data-step="1">+</button></div>
+            <span class="hint" id="tkQty"></span></div>
+          <div class="field"><span class="lbl">Product</span>
+            <div class="seg" id="tkProd"><button data-p="NRML" class="active" title="Carry until expiry">NRML</button><button data-p="MIS" title="Intraday - squared off at 15:20">MIS</button></div></div>
+        </div>
+        <div class="row2">
+          <div class="field"><span class="lbl">Order type</span>
+            <div class="seg" id="tkType"><button data-t="MARKET" class="active">Market</button><button data-t="LIMIT">Limit</button></div></div>
+          <div class="field"><label for="tkLimit">Price</label><input type="number" id="tkLimit" step="0.05" min="0.05" placeholder="Market" disabled></div>
+        </div>
+        <div class="row2">
+          <div class="field"><label for="tkSl">Stop loss <span class="hint">(premium)</span></label><input type="number" id="tkSl" step="0.05" min="0.05" placeholder="optional"></div>
+          <div class="field"><label for="tkTp">Target <span class="hint">(premium)</span></label><input type="number" id="tkTp" step="0.05" min="0.05" placeholder="optional"></div>
+        </div>
+        <div class="sum" id="tkSum"></div>
+        <div class="tk-msg" id="tkMsg"></div>
+        <button class="btn wide buy" id="tkPlace" type="button">Buy</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- POSITIONS / ORDERS / HISTORY / FUNDS -->
+  <div class="card" style="margin-top:16px">
+    <div class="card-head">
+      <div class="tabs" id="tabs">
+        <button data-tab="pos" class="active">Positions <span class="count" id="cPos">0</span></button>
+        <button data-tab="ord">Orders <span class="count" id="cOrd">0</span></button>
+        <button data-tab="hist">Trade history</button>
+        <button data-tab="funds">Funds</button>
+      </div>
+      <span class="hint" id="stateTime"></span>
+    </div>
+    <div id="tab-pos">
+      <div class="kpis" id="kpis"></div>
+      <div class="tbl-wrap"><table class="tbl" id="posTable"></table></div>
+      <div class="payoff" id="payoffBox" hidden>
+        <div class="card-head" style="padding:6px 0 8px;border:none">
+          <span class="card-title" id="payoffTitle">Payoff</span>
+          <div class="legend"><span><i style="background:var(--navy-800)"></i>At expiry</span><span><i style="background:var(--purple)"></i>Today (Black-Scholes)</span><span><i style="background:var(--blue-600)"></i>Spot</span></div>
+        </div>
+        <svg id="payoff" role="img" aria-label="Payoff chart"></svg>
+        <div class="hint" id="payoffNote"></div>
+      </div>
+    </div>
+    <div id="tab-ord" hidden><div class="tbl-wrap"><table class="tbl" id="ordTable"></table></div></div>
+    <div id="tab-hist" hidden><div class="kpis" id="histKpis"></div><div class="tbl-wrap"><table class="tbl" id="histTable"></table></div></div>
+    <div id="tab-funds" hidden>
+      <div class="funds" id="funds"></div>
+      <div style="display:flex;gap:10px;align-items:flex-end;padding:0 14px 14px;flex-wrap:wrap">
+        <div class="field"><label for="addAmt">Add funds (₹)</label><input type="number" id="addAmt" min="1" step="1000" value="100000"></div>
+        <button class="btn navy" id="addBtn" type="button">Add funds</button>
+      </div>
+    </div>
+    <div class="note">
+      <b>How this works (like a broker):</b> buying pays the premium; selling (writing) credits the premium and blocks margin - an
+      <b>estimate</b> of NSE's SPAN + exposure margin, released as you buy back. Zerodha's option charges are deducted on every order
+      (₹20 brokerage, STT 0.15 % on sell premium, NSE 0.03553 %, SEBI, stamp duty, 18 % GST). NRML positions carry to expiry and are
+      settled at intrinsic value against the underlying's closing price (STT 0.15 % on exercised ITM longs); MIS is squared off at 15:20.
+      Stop loss / target are on the premium and checked every 15 s by the server - with this page closed too - exiting at the bid / ask.
+      Limit orders fill when the bid / ask reaches your price; placed after hours they wait for 09:15 (like an AMO).
+      Not modelled: physical delivery of stock options (cash-settled here), freeze-quantity slicing, peak-margin penalties.
+    </div>
+  </div>
+</div>
+<div class="toast-box" id="toasts"></div>
+
+{{ initial|json_script:"initial" }}
+<script>
+(() => {
+'use strict';
+const URL_ = {
+  und: "{% url 'options:underlyings' %}", exp: "{% url 'options:expiries' 'SYM' %}", chain: "{% url 'options:chain' 'SYM' %}",
+  state: "{% url 'options:state' %}", preview: "{% url 'options:preview' %}", place: "{% url 'options:place' %}",
+  cancel: "{% url 'options:cancel' 0 %}", exit: "{% url 'options:exit' 0 %}", levels: "{% url 'options:levels' 0 %}", funds: "{% url 'options:funds' %}",
+};
+const withId = (u, id) => u.replace('/0/', `/${id}/`);
+const INITIAL = JSON.parse(document.getElementById('initial').textContent);
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+const nf = new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const nf0 = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 });
+const inr = (v) => v == null ? '—' : (v < 0 ? '−₹' : '₹') + nf.format(Math.abs(v));
+const pnl = (v) => v == null ? '—' : `<span class="${v > 0 ? 'up' : v < 0 ? 'down' : 'muted'}">${v > 0 ? '+' : v < 0 ? '−' : ''}₹${nf.format(Math.abs(v))}</span>`;
+const px = (v) => v == null || v === 0 ? '—' : nf.format(v);
+const big = (n) => n == null ? '—' : n >= 1e7 ? (n / 1e7).toFixed(2) + 'Cr' : n >= 1e5 ? (n / 1e5).toFixed(2) + 'L' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'K' : String(n);
+const strikeTxt = (k) => Number.isInteger(k) ? nf0.format(k) : nf.format(k);
+const hm = (iso) => iso ? new Date(iso).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' }) : '';
+const dmy = (iso) => iso ? new Date(iso).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' }) : '';
+const expTxt = (d) => new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
+const csrf = () => { const m = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/); return m ? decodeURIComponent(m[1]) : ''; };
+const store = { get(k, d) { try { return localStorage.getItem('opt:' + k) ?? d; } catch (e) { return d; } }, set(k, v) { try { localStorage.setItem('opt:' + k, v); } catch (e) {} } };
+function toast(msg, kind = 'info') { const t = document.createElement('div'); t.className = 'toast ' + kind; t.textContent = msg; $('toasts').appendChild(t); setTimeout(() => t.remove(), 5500); }
+function notice(msg, kind) { $('notice').hidden = !msg; $('notice').className = 'notice' + (kind ? ' ' + kind : ''); $('notice').textContent = msg || ''; }
+async function api(url, body) {
+  const r = await fetch(url, body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() }, body: JSON.stringify(body) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) { const e = new Error(d.error || `Request failed (${r.status})`); e.status = r.status; e.data = d; throw e; }
+  return d;
+}
+
+const S = { symbol: INITIAL.symbol || store.get('symbol', 'NIFTY'), expiry: null, chain: null, state: null, n: +store.get('strikes', 15),
+  greeks: store.get('greeks', '0') === '1', tk: null, side: 'BUY', product: 'NRML', type: 'MARKET', tab: 'pos', scrolled: false };
+
+/* ---------------- underlying / expiry ---------------- */
+async function loadUnderlyings() {
+  try {
+    const d = await api(URL_.und);
+    const idx = d.underlyings.filter((u) => u.kind === 'index'), stk = d.underlyings.filter((u) => u.kind === 'stock');
+    const opt = (u) => `<option value="${esc(u.symbol)}">${esc(u.symbol)}${u.kind === 'stock' ? ' · ' + esc(u.name) : ''} (lot ${u.lot})</option>`;
+    $('symbol').innerHTML = `<optgroup label="Indices">${idx.map(opt).join('')}</optgroup><optgroup label="Stocks (${stk.length})">${stk.map(opt).join('')}</optgroup>`;
+    if (![...$('symbol').options].some((o) => o.value === S.symbol)) S.symbol = 'NIFTY';
+    $('symbol').value = S.symbol;
+  } catch (e) { notice('Could not load the list of F&O underlyings: ' + e.message, 'error'); }
+}
+async function loadExpiries() {
+  $('expiry').innerHTML = '<option>Loading…</option>';
+  try {
+    const d = await api(URL_.exp.replace('SYM', encodeURIComponent(S.symbol)));
+    const keep = store.get('expiry:' + S.symbol, '');
+    $('expiry').innerHTML = d.expiries.map((e, i) => `<option value="${e}">${expTxt(e)}${i === 0 ? ' · nearest' : ''}</option>`).join('');
+    S.expiry = d.expiries.includes(keep) ? keep : d.expiries[0];
+    $('expiry').value = S.expiry;
+    S.scrolled = false;
+    await loadChain();
+  } catch (e) { $('expiry').innerHTML = ''; notice('Expiries unavailable: ' + e.message, 'error'); }
+}
+
+/* ---------------- chain ---------------- */
+let chainBusy = false;
+async function loadChain() {
+  if (!S.expiry || chainBusy) return;
+  chainBusy = true;
+  try {
+    const d = await api(`${URL_.chain.replace('SYM', encodeURIComponent(S.symbol))}?expiry=${S.expiry}`);
+    if (d.symbol !== S.symbol || d.expiry !== S.expiry) return;          // the user switched meanwhile
+    S.chain = d; notice('');
+    renderHeader(); renderChain(); refreshTicketQuote();
+  } catch (e) {
+    notice('Option chain unavailable: ' + e.message + (S.chain ? ' - showing the last prices.' : ''), S.chain ? 'warn' : 'error');
+  } finally { chainBusy = false; }
+}
+function renderHeader() {
+  const c = S.chain;
+  $('spotLbl').textContent = c.symbol + ' spot';
+  $('spot').textContent = nf.format(c.spot);
+  $('stLot').textContent = c.lot_size; $('stAtm').textContent = strikeTxt(c.atm);
+  $('stPcr').innerHTML = c.pcr == null ? '—' : `<span class="${c.pcr > 1 ? 'up' : c.pcr < 0.7 ? 'down' : ''}">${c.pcr.toFixed(2)}</span>`;
+  $('stPain').textContent = c.max_pain == null ? '—' : strikeTxt(c.max_pain);
+  $('stDte').textContent = c.days_to_expiry.toFixed(1);
+  $('updated').className = 'updated' + (c.stale ? ' stale' : '');
+  $('updated').innerHTML = `NSE data ${c.timestamp ? dmy(c.timestamp) : '—'}<br>${c.stale ? 'NSE not responding - last good copy' : 'fetched ' + hm(c.fetched_at)}`;
+  const m = c.market; $('mkt').textContent = m.open ? 'Market open' : 'Market ' + m.status.toLowerCase().replace('_', '-');
+  $('mkt').className = 'mkt' + (m.open ? ' open' : '');
+}
+function sideCells(x, side, k, spot, maxOi) {
+  const itm = side === 'CE' ? k < spot : k > spot;
+  const cls = `${side.toLowerCase()} ${itm ? 'itm' : ''}`;
+  if (!x) return (S.greeks ? 7 : 5);
+  const oiw = maxOi ? Math.max(2, Math.round(x.oi / maxOi * 70)) : 0;
+  const oi = `<td class="${cls}"><div class="oi"><span>${big(x.oi)}</span><span class="oibar" style="width:${oiw}px"></span><span class="sub ${x.chg_oi > 0 ? 'up' : x.chg_oi < 0 ? 'down' : ''}">${x.chg_oi > 0 ? '+' : ''}${big(Math.abs(x.chg_oi)) === '0' ? '0' : (x.chg_oi < 0 ? '−' : '') + big(Math.abs(x.chg_oi))}</span></div></td>`;
+  const vol = `<td class="${cls}">${big(x.vol)}</td>`;
+  const iv = `<td class="${cls}">${x.iv ? x.iv.toFixed(1) : '—'}</td>`;
+  const g = S.greeks ? `<td class="${cls}">${x.delta == null ? '—' : x.delta.toFixed(2)}</td><td class="${cls}">${x.theta == null ? '—' : x.theta.toFixed(1)}</td>` : '';
+  const bs = `<span class="bs"><button class="b" data-trade="BUY" data-k="${k}" data-t="${side}" title="Buy">B</button><button class="s" data-trade="SELL" data-k="${k}" data-t="${side}" title="Sell">S</button></span>`;
+  const ltp = `<td class="ltpc ${cls}">${bs}<span class="ltp">${px(x.ltp)}</span><div class="sub ${x.pchg > 0 ? 'up' : x.pchg < 0 ? 'down' : ''}">${x.ltp ? (x.pchg > 0 ? '+' : '') + x.pchg.toFixed(1) + '%' : ''}</div></td>`;
+  const ba = `<td class="${cls}"><span class="up">${px(x.bid)}</span><div class="sub">${px(x.ask)}</div></td>`;
+  return side === 'CE' ? oi + vol + iv + g + ba + ltp : ltp + ba + g + iv + vol + oi;
+}
+function renderChain() {
+  const c = S.chain;
+  if (!c.rows.length) { $('chain').innerHTML = '<tbody><tr><td class="empty">No contracts.</td></tr></tbody>'; return; }
+  let rows = c.rows;
+  const ai = rows.findIndex((r) => r.strike === c.atm);
+  if (S.n && ai >= 0) rows = rows.slice(Math.max(0, ai - S.n), ai + S.n + 1);
+  const maxOi = Math.max(1, ...rows.flatMap((r) => [(r.CE || {}).oi || 0, (r.PE || {}).oi || 0]));
+  const held = new Set((S.state ? S.state.positions : []).filter((p) => p.quantity && p.symbol === c.symbol && p.expiry === c.expiry).map((p) => p.strike));
+  const g = S.greeks ? '<th>Delta</th><th>Theta</th>' : '';
+  const ncols = S.greeks ? 7 : 5;
+  const head = `<thead><tr class="sides"><th colspan="${ncols}">CALLS</th><th></th><th colspan="${ncols}">PUTS</th></tr>
+    <tr class="cols"><th>OI · chg</th><th>Volume</th><th>IV</th>${g}<th>Bid · ask</th><th>LTP</th><th style="text-align:center">Strike</th>
+    <th style="text-align:left">LTP</th><th style="text-align:left">Bid · ask</th>${S.greeks ? '<th style="text-align:left">Delta</th><th style="text-align:left">Theta</th>' : ''}<th style="text-align:left">IV</th><th style="text-align:left">Volume</th><th style="text-align:left">OI · chg</th></tr></thead>`;
+  let body = '', spotDone = false;
+  for (const r of rows) {
+    if (!spotDone && r.strike > c.spot) {
+      body += `<tr class="spotline"><td colspan="${ncols * 2 + 1}"><div><span>${c.symbol} ${nf.format(c.spot)}</span></div></td></tr>`;
+      spotDone = true;
+    }
+    const ce = sideCells(r.CE, 'CE', r.strike, c.spot, maxOi), pe = sideCells(r.PE, 'PE', r.strike, c.spot, maxOi);
+    const blank = (n) => '<td></td>'.repeat(n);
+    body += `<tr class="${r.strike === c.atm ? 'atm' : ''} ${held.has(r.strike) ? 'held' : ''}" data-k="${r.strike}">${typeof ce === 'number' ? blank(ce) : ce}<td class="k">${strikeTxt(r.strike)}</td>${typeof pe === 'number' ? blank(pe) : pe}</tr>`;
+  }
+  $('chain').innerHTML = head + '<tbody>' + body + '</tbody>';
+  if (!S.scrolled) {
+    const atm = $('chain').querySelector('tr.atm');
+    if (atm) { const w = $('chainWrap'); w.scrollTop = atm.offsetTop - w.clientHeight / 2 + 20; S.scrolled = true; }
+  }
+}
+
+/* ---------------- ticket ---------------- */
+function rowOf(k) { return S.chain ? S.chain.rows.find((r) => r.strike === k) : null; }
+function openTicket(k, t, side) {
+  S.tk = { symbol: S.chain.symbol, expiry: S.chain.expiry, strike: k, option_type: t, lot: S.chain.lot_size };
+  S.side = side;
+  $('tkEmpty').hidden = true; $('tkForm').hidden = false;
+  $('tkSl').value = ''; $('tkTp').value = ''; $('tkMsg').textContent = '';
+  if (S.type === 'LIMIT') { const q = (rowOf(k) || {})[t]; $('tkLimit').value = q && q.ltp ? q.ltp.toFixed(2) : ''; }
+  renderTicket(); preview();
+  if (window.innerWidth < 1100) $('ticket').scrollIntoView({ behavior: 'smooth' });
+}
+function tkName() {
+  const d = new Date(S.tk.expiry + 'T00:00:00').toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }).toUpperCase();
+  return `${S.tk.symbol} ${d} ${strikeTxt(S.tk.strike)} ${S.tk.option_type}`;
+}
+function refreshTicketQuote() {
+  if (!S.tk || S.tk.symbol !== S.chain.symbol || S.tk.expiry !== S.chain.expiry) return;
+  const q = (rowOf(S.tk.strike) || {})[S.tk.option_type];
+  $('tkQ').innerHTML = q ? `LTP <b>${px(q.ltp)}</b> <span>Bid <b class="up">${px(q.bid)}</b> × ${nf0.format(q.bid_qty)}</span> <span>Ask <b class="down">${px(q.ask)}</b> × ${nf0.format(q.ask_qty)}</span> <span>IV ${q.iv ? q.iv.toFixed(1) : '—'}</span>`
+    : 'No quotes for this contract';
+}
+function renderTicket() {
+  if (!S.tk) return;
+  $('tkName').textContent = tkName();
+  document.querySelectorAll('#tkForm .tk-side button').forEach((b) => b.classList.toggle('active', b.dataset.side === S.side));
+  document.querySelectorAll('#tkProd button').forEach((b) => b.classList.toggle('active', b.dataset.p === S.product));
+  document.querySelectorAll('#tkType button').forEach((b) => b.classList.toggle('active', b.dataset.t === S.type));
+  $('tkLimit').disabled = S.type !== 'LIMIT';
+  if (S.type !== 'LIMIT') $('tkLimit').value = '';
+  const lots = Math.max(1, parseInt($('tkLots').value, 10) || 1);
+  $('tkQty').textContent = `${lots} × ${S.tk.lot} = ${nf0.format(lots * S.tk.lot)} qty`;
+  $('tkPlace').className = 'btn wide ' + (S.side === 'BUY' ? 'buy' : 'sell');
+  $('tkPlace').textContent = `${S.side === 'BUY' ? 'Buy' : 'Sell'} ${lots} lot${lots > 1 ? 's' : ''}${S.type === 'LIMIT' ? ' @ ' + ($('tkLimit').value || '—') : ' at market'}`;
+  refreshTicketQuote();
+}
+let pvTimer = null, pvSeq = 0;
+function preview() {
+  clearTimeout(pvTimer);
+  pvTimer = setTimeout(async () => {
+    if (!S.tk) return;
+    const seq = ++pvSeq;
+    const lots = Math.max(1, parseInt($('tkLots').value, 10) || 1);
+    try {
+      const d = await api(URL_.preview, { ...S.tk, side: S.side, lots, product: S.product, price: S.type === 'LIMIT' ? $('tkLimit').value || null : null });
+      if (seq !== pvSeq) return;
+      const c = d.charges;
+      $('tkSum').innerHTML =
+        `<div><span>Premium (${nf0.format(d.quantity)} × ${px(d.price)})</span><span>${inr(d.premium)}</span></div>` +
+        (d.margin ? `<div><span title="Estimate of NSE SPAN + exposure margin">Margin blocked (est.)</span><span>${inr(d.margin)}</span></div>` : '') +
+        `<div><span title="Brokerage ${inr(c.brokerage)} · STT ${inr(c.stt)} · NSE ${inr(c.exchange)} · SEBI ${inr(c.sebi)} · stamp ${inr(c.stamp)} · GST ${inr(c.gst)}">Charges</span><span>${inr(c.total)}</span></div>` +
+        (d.closing ? `<div><span>Closes</span><span>${nf0.format(d.closing)} qty of your position</span></div>` : '') +
+        `<div class="tot"><span>${d.opening ? 'Required' : 'Funds needed'}</span><span>${inr(d.required)}</span></div>` +
+        `<div><span>Available</span><span class="${d.ok ? '' : 'down'}">${inr(d.available)}</span></div>`;
+      $('tkMsg').className = 'tk-msg ' + (d.ok ? '' : 'err');
+      $('tkMsg').textContent = d.ok ? (S.side === 'SELL' && d.opening ? 'Selling (writing) an option: you receive the premium, margin is blocked, and the risk is not limited to the premium.' : '')
+        : 'Not enough funds for this order - add funds in the Funds tab or reduce the lots.';
+    } catch (e) { if (seq === pvSeq) { $('tkSum').innerHTML = ''; $('tkMsg').className = 'tk-msg err'; $('tkMsg').textContent = e.message; } }
+  }, 250);
+}
+async function placeOrder() {
+  if (!S.tk) return;
+  const lots = Math.max(1, parseInt($('tkLots').value, 10) || 1);
+  const body = { ...S.tk, side: S.side, lots, product: S.product, order_type: S.type,
+    limit_price: S.type === 'LIMIT' ? $('tkLimit').value : null, stop_loss: $('tkSl').value || null, target: $('tkTp').value || null,
+    client_order_id: (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random()) };
+  const b = $('tkPlace'); b.disabled = true; const label = b.textContent; b.textContent = 'Placing…';
+  try {
+    const d = await api(URL_.place, body);
+    const o = d.order;
+    if (o.status === 'COMPLETE') toast(`${o.side} ${o.lots} lot ${o.name} filled @ ₹${nf.format(o.price)} · charges ₹${nf.format(o.charges)}`, 'success');
+    else toast(`Limit order placed: ${o.side} ${o.lots} lot ${o.name} @ ₹${nf.format(o.limit_price)} - ${o.message}`);
+    $('tkMsg').textContent = '';
+    await loadState();
+  } catch (e) { $('tkMsg').className = 'tk-msg err'; $('tkMsg').textContent = e.message; toast(e.message, 'error'); }
+  finally { b.disabled = false; b.textContent = label; preview(); }
+}
+
+/* ---------------- state: positions / orders / history / funds ---------------- */
+let stateBusy = false;
+async function loadState() {
+  if (stateBusy) return; stateBusy = true;
+  try { S.state = await api(URL_.state); renderState(); } catch (e) { /* keep last */ } finally { stateBusy = false; }
+}
+const reasonTxt = { '': 'Manual', limit: 'Limit', stop_loss: 'Stop loss', target: 'Target', squareoff: '15:20 square-off', expiry: 'Expiry' };
+function renderState() {
+  const st = S.state, f = st.funds;
+  $('stateTime').textContent = 'updated ' + hm(st.market.now);
+  $('tkFunds').textContent = 'Available ' + inr(f.available);
+  const open = st.positions.filter((p) => p.quantity);
+  $('cPos').textContent = open.length; $('cOrd').textContent = st.pending.length;
+  const net = (k) => open.reduce((a, p) => a + (p[k] || 0), 0);
+  $('kpis').innerHTML = [
+    ['Open P&L (MTM)', pnl(f.unrealized)], ['Realized today', pnl(f.realized_today)], ['Charges today', inr(f.charges_today)],
+    ['Net today', pnl(f.unrealized + f.realized_today - f.charges_today)], ['Margin blocked', inr(f.blocked_margin)],
+    ['Net delta', `<span title="Position delta in units of the underlying">${open.length ? nf0.format(net('position_delta')) : '—'}</span>`],
+    ['Theta / day', open.length ? pnl(net('position_theta')) : '—'],
+  ].map(([k, v]) => `<div class="kpi"><span class="lbl">${k}</span><b>${v}</b></div>`).join('');
+  $('posTable').innerHTML = st.positions.length ? `<thead><tr><th>Contract</th><th class="num">Qty (lots)</th><th class="num">Avg</th><th class="num">LTP · bid / ask</th>
+      <th class="num">P&amp;L</th><th class="num">Delta · theta</th><th>Stop loss · target (premium)</th><th></th></tr></thead><tbody>` +
+    st.positions.map((p) => {
+      if (!p.quantity) return `<tr class="closed"><td><b>${esc(p.name)}</b> <span class="pill prod">${p.product}</span><div class="sub">closed</div></td><td class="num">0</td><td class="num">—</td><td class="num">${px(p.ltp)}</td><td class="num">${pnl(p.realized_pnl)}<div class="sub">realized</div></td><td></td><td></td><td></td></tr>`;
+      const long_ = p.quantity > 0, pct = p.avg_price ? (p.ltp / p.avg_price - 1) * 100 * (long_ ? 1 : -1) : null;
+      return `<tr>
+        <td><b>${esc(p.name)}</b> <span class="pill ${long_ ? 'buy' : 'sell'}">${long_ ? 'LONG' : 'SHORT'}</span> <span class="pill prod">${p.product}</span>
+          <div class="sub">${p.days_to_expiry.toFixed(1)} days to expiry${p.blocked_margin ? ' · margin ' + inr(p.blocked_margin) : ''}${p.stale ? ' · <span class="down">stale price</span>' : ''}</div></td>
+        <td class="num">${nf0.format(p.quantity)}<div class="sub">${(p.quantity / p.lot_size).toFixed(0)} lot</div></td>
+        <td class="num">${nf.format(p.avg_price)}</td>
+        <td class="num"><b>${px(p.ltp)}</b><div class="sub">${px(p.bid)} / ${px(p.ask)}</div></td>
+        <td class="num">${pnl(p.mtm)}<div class="sub">${pct == null || !isFinite(pct) ? '' : (pct > 0 ? '+' : '') + pct.toFixed(1) + '%'}${p.realized_pnl ? ' · booked ' + inr(p.realized_pnl) : ''}</div></td>
+        <td class="num">${p.position_delta == null ? '—' : nf0.format(p.position_delta)}<div class="sub">${p.position_theta == null ? '' : inr(p.position_theta) + '/day'}</div></td>
+        <td><input class="lv" type="number" step="0.05" placeholder="SL" value="${p.stop_loss ?? ''}" data-sl="${p.id}"> <input class="lv" type="number" step="0.05" placeholder="Target" value="${p.target ?? ''}" data-tp="${p.id}">
+          <button class="btn ghost sm" data-save="${p.id}">Save</button></td>
+        <td><button class="btn sm ${long_ ? 'sell' : 'buy'}" data-exit="${p.id}" ${st.market.open ? '' : 'disabled title="Market closed"'}>Exit</button></td></tr>`;
+    }).join('') + '</tbody>' : '<tbody><tr><td class="empty">No positions yet. Pick a strike in the option chain.</td></tr></tbody>';
+  drawPayoff();
+  // orders
+  const ord = [...st.pending, ...st.orders_today.filter((o) => o.status !== 'PENDING')];
+  $('ordTable').innerHTML = ord.length ? `<thead><tr><th>Time</th><th>Contract</th><th>Side</th><th class="num">Qty (lots)</th><th>Type</th><th class="num">Price</th><th>Status</th><th>Note</th><th></th></tr></thead><tbody>` +
+    ord.map((o) => `<tr><td class="mono">${dmy(o.created_at)}</td><td><b>${esc(o.name)}</b> <span class="pill prod">${o.product}</span></td>
+      <td><span class="pill ${o.side === 'BUY' ? 'buy' : 'sell'}">${o.side}</span></td><td class="num">${nf0.format(o.quantity)} (${o.lots})</td>
+      <td>${o.order_type}${o.limit_price ? ' @ ' + nf.format(o.limit_price) : ''}</td><td class="num">${o.price == null ? '—' : nf.format(o.price)}</td>
+      <td><span class="pill ${o.status}">${o.status}</span></td><td class="sub" style="white-space:normal;max-width:280px">${esc(o.message || reasonTxt[o.reason] || '')}</td>
+      <td>${o.status === 'PENDING' ? `<button class="btn ghost sm" data-cancel="${o.id}">Cancel</button>` : ''}</td></tr>`).join('') + '</tbody>'
+    : '<tbody><tr><td class="empty">No orders today.</td></tr></tbody>';
+  // history
+  const h = st.history;
+  const tot = h.reduce((a, o) => ({ r: a.r + o.realized_pnl, c: a.c + o.charges }), { r: 0, c: 0 });
+  $('histKpis').innerHTML = [['Realized P&L', pnl(tot.r)], ['Charges', inr(tot.c)], ['Net after charges', pnl(tot.r - tot.c)], ['Executed orders', String(h.length)]]
+    .map(([k, v]) => `<div class="kpi"><span class="lbl">${k}</span><b>${v}</b></div>`).join('');
+  $('histTable').innerHTML = h.length ? `<thead><tr><th>Filled</th><th>Contract</th><th>Side</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Underlying</th><th>Reason</th><th class="num">Realized</th><th class="num">Charges</th><th class="num">Net</th></tr></thead><tbody>` +
+    h.map((o) => `<tr><td class="mono">${dmy(o.filled_at)}</td><td><b>${esc(o.name)}</b> <span class="pill prod">${o.product}</span></td>
+      <td><span class="pill ${o.side === 'BUY' ? 'buy' : 'sell'}">${o.side}</span></td><td class="num">${nf0.format(o.quantity)}</td><td class="num">${nf.format(o.price)}</td>
+      <td class="num">${o.underlying_price == null ? '—' : nf.format(o.underlying_price)}</td><td title="${esc(o.message)}">${esc(reasonTxt[o.reason] || o.reason)}</td>
+      <td class="num">${o.realized_pnl ? pnl(o.realized_pnl) : '—'}</td><td class="num" title="${esc(Object.entries(o.charges_detail || {}).filter(([k]) => k !== 'total').map(([k, v]) => k + ' ₹' + v.toFixed(2)).join(' · '))}">${inr(o.charges)}</td>
+      <td class="num">${pnl(o.realized_pnl - o.charges)}</td></tr>`).join('') + '</tbody>' : '<tbody><tr><td class="empty">No executed orders yet.</td></tr></tbody>';
+  // funds
+  $('funds').innerHTML = [['Cash balance', inr(f.balance)], ['Margin blocked', inr(f.blocked_margin)], ['Available to trade', inr(f.available)],
+    ['Open P&L (MTM)', pnl(f.unrealized)], ['Account value', inr(f.balance + f.unrealized)]]
+    .map(([k, v]) => `<div class="fund"><span class="lbl">${k}</span><b>${v}</b></div>`).join('');
+  if (S.chain) renderChain();
+}
+
+/* ---------------- payoff (selected underlying) ---------------- */
+function ncdf(x) { const t = 1 / (1 + 0.2316419 * Math.abs(x)); const d = 0.3989423 * Math.exp(-x * x / 2);
+  const p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274)))); return x > 0 ? 1 - p : p; }
+function bs(spot, k, t, iv, type) {
+  const intr = type === 'CE' ? Math.max(0, spot - k) : Math.max(0, k - spot), s = (iv || 0) / 100, r = 0.065;
+  if (t <= 0 || s <= 0) return intr;
+  const sq = s * Math.sqrt(t), d1 = (Math.log(spot / k) + (r + s * s / 2) * t) / sq, d2 = d1 - sq;
+  return type === 'CE' ? spot * ncdf(d1) - k * Math.exp(-r * t) * ncdf(d2) : k * Math.exp(-r * t) * ncdf(-d2) - spot * ncdf(-d1);
+}
+function drawPayoff() {
+  const sym = S.chain ? S.chain.symbol : S.symbol;
+  const legs = (S.state ? S.state.positions : []).filter((p) => p.quantity && p.symbol === sym);
+  $('payoffBox').hidden = !legs.length;
+  if (!legs.length) return;
+  const spot = (S.chain && S.chain.symbol === sym ? S.chain.spot : legs[0].spot) || legs[0].strike;
+  const first = legs.reduce((a, p) => (p.expiry < a ? p.expiry : a), legs[0].expiry);
+  const yrs = (iso) => Math.max(0, (new Date(iso + 'T15:30:00+05:30') - Date.now()) / (365 * 864e5));
+  const tFirst = yrs(first);
+  // value of every leg at a price: at the first expiry (later expiries keep their time value) and today
+  const at = (S_, today) => legs.reduce((a, p) => {
+    const t = today ? yrs(p.expiry) : Math.max(0, yrs(p.expiry) - tFirst);
+    return a + (bs(S_, p.strike, t, p.iv, p.option_type) - p.avg_price) * p.quantity;
+  }, 0);
+  const lo = spot * 0.9, hi = spot * 1.1, N = 160, xs = [...Array(N + 1)].map((_, i) => lo + (hi - lo) * i / N);
+  const yE = xs.map((x) => at(x, false)), yT = xs.map((x) => at(x, true));
+  const svg = $('payoff'), W = svg.clientWidth || 800, H = 260, L = 64, R = 12, T = 10, B = 26;
+  const ymin = Math.min(0, ...yE, ...yT), ymax = Math.max(0, ...yE, ...yT), pad = (ymax - ymin) * 0.08 || 1;
+  const X = (v) => L + (v - lo) / (hi - lo) * (W - L - R), Y = (v) => T + (ymax + pad - v) / (ymax - ymin + 2 * pad) * (H - T - B);
+  const path = (ys) => ys.map((y, i) => `${i ? 'L' : 'M'}${X(xs[i]).toFixed(1)},${Y(y).toFixed(1)}`).join('');
+  const area = (sign) => `M${X(lo)},${Y(0)}` + yE.map((y, i) => `L${X(xs[i]).toFixed(1)},${Y(sign > 0 ? Math.max(0, y) : Math.min(0, y)).toFixed(1)}`).join('') + `L${X(hi)},${Y(0)}Z`;
+  const ticks = [...Array(6)].map((_, i) => ymin - pad + (ymax - ymin + 2 * pad) * i / 5);
+  const xt = [...Array(5)].map((_, i) => lo + (hi - lo) * i / 4);
+  const be = []; for (let i = 1; i < yE.length; i++) if ((yE[i - 1] < 0) !== (yE[i] < 0)) be.push(xs[i]);
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.innerHTML =
+    ticks.map((v) => `<line x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}" stroke="#EEF2F7"/><text x="${L - 6}" y="${Y(v) + 4}" text-anchor="end" font-size="10.5" fill="#64748B" font-family="JetBrains Mono">${v >= 0 ? '' : '−'}${big(Math.round(Math.abs(v)))}</text>`).join('') +
+    xt.map((v) => `<text x="${X(v)}" y="${H - 8}" text-anchor="middle" font-size="10.5" fill="#64748B" font-family="JetBrains Mono">${nf0.format(v)}</text>`).join('') +
+    `<path d="${area(1)}" fill="#0EA968" opacity=".12"/><path d="${area(-1)}" fill="#E5484D" opacity=".12"/>` +
+    `<line x1="${L}" x2="${W - R}" y1="${Y(0)}" y2="${Y(0)}" stroke="#94A3B8"/>` +
+    `<path d="${path(yT)}" fill="none" stroke="#7C3AED" stroke-width="1.6" stroke-dasharray="5 4"/>` +
+    `<path d="${path(yE)}" fill="none" stroke="#123B7A" stroke-width="2.2"/>` +
+    `<line x1="${X(spot)}" x2="${X(spot)}" y1="${T}" y2="${H - B}" stroke="#2F6FED" stroke-width="1.2"/>` +
+    `<text x="${X(spot) + 4}" y="${T + 11}" font-size="10.5" fill="#2F6FED" font-family="JetBrains Mono">spot ${nf0.format(spot)}</text>` +
+    be.map((v) => `<circle cx="${X(v)}" cy="${Y(0)}" r="3.5" fill="#fff" stroke="#123B7A" stroke-width="1.5"/><text x="${X(v)}" y="${Y(0) - 7}" text-anchor="middle" font-size="10" fill="#123B7A" font-family="JetBrains Mono">${nf0.format(v)}</text>`).join('');
+  $('payoffTitle').textContent = `Payoff · ${sym} · ${legs.length} leg${legs.length > 1 ? 's' : ''}`;
+  const mx = Math.max(...yE), mn = Math.min(...yE);
+  $('payoffNote').innerHTML = `Within ±10 % of spot at the ${expTxt(first)} expiry: best ${pnl(mx)}, worst ${pnl(mn)}${be.length ? ' · breakeven ' + be.map((v) => nf0.format(v)).join(', ') : ''}. ` +
+    `Charges not included. ${legs.some((p) => p.expiry !== first) ? 'Legs expiring later are valued with their remaining time value (Black-Scholes).' : ''}`;
+}
+
+/* ---------------- events ---------------- */
+$('symbol').addEventListener('change', () => { S.symbol = $('symbol').value; store.set('symbol', S.symbol); S.chain = null; history.replaceState(null, '', '?symbol=' + encodeURIComponent(S.symbol)); loadExpiries(); });
+$('expiry').addEventListener('change', () => { S.expiry = $('expiry').value; store.set('expiry:' + S.symbol, S.expiry); S.scrolled = false; loadChain(); });
+$('strikeSeg').addEventListener('click', (e) => { const b = e.target.closest('button[data-n]'); if (!b) return; S.n = +b.dataset.n; store.set('strikes', S.n);
+  $('strikeSeg').querySelectorAll('button').forEach((x) => x.classList.toggle('active', x === b)); S.scrolled = false; if (S.chain) renderChain(); });
+$('greekChk').checked = S.greeks;
+$('greekChk').addEventListener('change', () => { S.greeks = $('greekChk').checked; store.set('greeks', S.greeks ? '1' : '0'); if (S.chain) renderChain(); });
+$('strikeSeg').querySelectorAll('button').forEach((x) => x.classList.toggle('active', +x.dataset.n === S.n));
+$('chain').addEventListener('click', (e) => { const b = e.target.closest('button[data-trade]'); if (b) openTicket(+b.dataset.k, b.dataset.t, b.dataset.trade); });
+$('tkForm').addEventListener('click', (e) => {
+  const sd = e.target.closest('.tk-side button'); if (sd) { S.side = sd.dataset.side; renderTicket(); preview(); return; }
+  const pr = e.target.closest('#tkProd button'); if (pr) { S.product = pr.dataset.p; renderTicket(); preview(); return; }
+  const ty = e.target.closest('#tkType button'); if (ty) { S.type = ty.dataset.t; if (S.type === 'LIMIT' && !$('tkLimit').value) { const q = (rowOf(S.tk.strike) || {})[S.tk.option_type]; if (q && q.ltp) $('tkLimit').value = q.ltp.toFixed(2); } renderTicket(); preview(); return; }
+  const st = e.target.closest('button[data-step]'); if (st) { $('tkLots').value = Math.min(100, Math.max(1, (parseInt($('tkLots').value, 10) || 1) + +st.dataset.step)); renderTicket(); preview(); }
+});
+['tkLots', 'tkLimit'].forEach((id) => $(id).addEventListener('input', () => { renderTicket(); preview(); }));
+$('tkPlace').addEventListener('click', placeOrder);
+$('tabs').addEventListener('click', (e) => { const b = e.target.closest('button[data-tab]'); if (!b) return; S.tab = b.dataset.tab;
+  $('tabs').querySelectorAll('button').forEach((x) => x.classList.toggle('active', x === b));
+  ['pos', 'ord', 'hist', 'funds'].forEach((t) => { $('tab-' + t).hidden = t !== S.tab; }); if (S.tab === 'pos') drawPayoff(); });
+document.addEventListener('click', async (e) => {
+  const ex = e.target.closest('button[data-exit]'), ca = e.target.closest('button[data-cancel]'), sv = e.target.closest('button[data-save]');
+  try {
+    if (ex) { ex.disabled = true; const d = await api(withId(URL_.exit, ex.dataset.exit), {}); toast(`Exited ${d.order.name} @ ₹${nf.format(d.order.price)} · P&L ${d.order.realized_pnl >= 0 ? '+' : '−'}₹${nf.format(Math.abs(d.order.realized_pnl))}`, 'success'); }
+    else if (ca) { await api(withId(URL_.cancel, ca.dataset.cancel), {}); toast('Order cancelled'); }
+    else if (sv) { const id = sv.dataset.save; await api(withId(URL_.levels, id), { stop_loss: document.querySelector(`[data-sl="${id}"]`).value || null, target: document.querySelector(`[data-tp="${id}"]`).value || null }); toast('Stop loss / target saved - the server watches them', 'success'); }
+    else return;
+  } catch (err) { toast(err.message, 'error'); if (ex) ex.disabled = false; }
+  loadState();
+});
+$('addBtn').addEventListener('click', async () => { try { await api(URL_.funds, { amount: $('addAmt').value }); toast('Funds added', 'success'); loadState(); } catch (e) { toast(e.message, 'error'); } });
+window.addEventListener('resize', () => { if (S.tab === 'pos') drawPayoff(); });
+
+/* ---------------- boot + polling ---------------- */
+(async () => {
+  await loadUnderlyings();
+  await Promise.all([loadExpiries(), loadState()]);
+  const tick = () => (S.chain && S.chain.market && S.chain.market.open ? 3000 : 30000);
+  const loopChain = async () => { if (!document.hidden) await loadChain(); setTimeout(loopChain, tick()); };
+  const loopState = async () => { if (!document.hidden) await loadState(); setTimeout(loopState, tick() === 3000 ? 5000 : 30000); };
+  setTimeout(loopChain, tick()); setTimeout(loopState, 5000);
+})();
+})();
+</script>
+</body>
+</html>

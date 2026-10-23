@@ -939,7 +939,9 @@ def retrive_daily(request, code=None):
 from .analysis_engine import refresh_analysis, refresh_analysis_progress
 
 import requests
-def fetch_live(request):
+def live_snapshot(tolerant=False):
+    """Live page data: NSE top gainers / losers, OI spurts and the Chartink PDH / PDL scans.
+    tolerant=True returns an empty list for a source that fails instead of raising."""
     gain_loss_url = "https://www.nseindia.com/api/live-analysis-variations"
     open_intrest_url = "https://www.nseindia.com/api/live-analysis-oi-spurts-underlyings"
     chartlink = "https://chartink.com/screener/pdl-breakdown-stocks"
@@ -1028,11 +1030,18 @@ def fetch_live(request):
         pg = session.post(pdl_pdh_url,headers = chartlink_headers, json = payload, timeout = 30)
         data = pg.json()['data']
         return data
-    gainers = top_stocks("gainers")
-    loosers = top_stocks("loosers")
-    open_intrest = fetch_open_intrest()
-    pdh_data = fetch_pdh_pdl(pdh_payload)
-    pdl_data = fetch_pdh_pdl(pdl_payload)
+    def get(fn, *args):
+        if not tolerant:
+            return fn(*args)
+        try:
+            return fn(*args)
+        except Exception:
+            return []
+    gainers = get(top_stocks, "gainers")
+    loosers = get(top_stocks, "loosers")
+    open_intrest = get(fetch_open_intrest)
+    pdh_data = get(fetch_pdh_pdl, pdh_payload)
+    pdl_data = get(fetch_pdh_pdl, pdl_payload)
     return_data = {
         "gainers":gainers,
         "loosers":loosers,
@@ -1040,7 +1049,11 @@ def fetch_live(request):
         "pdh_data":pdh_data,
         "pdl_data":pdl_data
         }
-    return JsonResponse(return_data, safe=False)
+    return return_data
+
+
+def fetch_live(request):
+    return JsonResponse(live_snapshot(), safe=False)
 
 
 WEEKDAY_CHOICES = [
