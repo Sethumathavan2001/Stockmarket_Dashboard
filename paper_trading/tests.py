@@ -1728,6 +1728,9 @@ class ClaudeOrdersTests(BaseCase):
         self.patcher = mock.patch.object(claude_orders, "ORDERS_FILE", self.tmp)
         self.patcher.start()
         self.addCleanup(self.patcher.stop)
+        no_lists = mock.patch("paper_trading.surveillance.nse_lists", return_value={})     # no NSE download in tests
+        no_lists.start()
+        self.addCleanup(no_lists.stop)
         svc.add_to_wallet(svc.get_account(2), "100000")
 
     def write(self, session=None, **over):
@@ -1911,3 +1914,298 @@ class ClaudeBoardTests(BaseCase):
         self.assertFalse(st["refresh"]["running"])
         self.assertEqual(st["refresh"]["orders"], 0)
         self.assertIsNone(st["refresh"]["error"])
+
+
+class FakeAngel:
+    """Stands in for paper_trading.angel: an order book in memory, prices set by the test."""
+
+    def __init__(self):
+        self.price, self.orders, self.n = 100.0, {}, 0
+        self.fill_market, self.cancel_works = True, True
+
+    def _new(self, **o):
+        self.n += 1
+        oid = f"A{self.n}"
+        self.orders[oid] = o
+        return oid
+
+    def place_market(self, account, inst, side, qty, consent=False):
+        return self._new(kind="market", side=side, qty=qty, status="complete" if self.fill_market else "open",
+                         avg=self.price if self.fill_market else 0, consent=consent)
+
+    def place_stop(self, account, inst, side, qty, trigger, consent=False):
+        return self._new(kind="stop", side=side, qty=qty, status="trigger pending", avg=0, trigger=trigger,
+                         consent=consent), D(str(trigger))
+
+    def cancel(self, account, oid, variety):
+        if self.cancel_works and self.orders[oid]["status"] == "trigger pending":
+            self.orders[oid]["status"] = "cancelled"
+
+    def order_status(self, account, oid):
+        o = self.orders[oid]
+        return o["status"], o["avg"], o["qty"] if o["status"] == "complete" else 0, ""
+
+    def wait_for(self, account, oid, seconds=0, step=0):
+        return self.order_status(account, oid)
+
+    def patches(self, live=True, configured=True):
+        from . import angel
+        cfg = ({k: "x" for k in angel.KEYS}, [] if configured else ["ANGEL_VIVEK_API_KEY"])
+        return [mock.patch.object(angel, "config", return_value=cfg),
+                mock.patch.object(angel, "live_enabled", return_value=live),
+                mock.patch.object(angel, "instrument", return_value={"symbol": "TST-EQ", "token": "1", "tick": D("0.05")}),
+                mock.patch.object(angel, "ltp", side_effect=lambda a, i: self.price)] + \
+               [mock.patch.object(angel, n, getattr(self, n)) for n in ("place_market", "place_stop", "cancel", "order_status", "wait_for")]
+
+
+class BrokerTests(TestCase):
+    """Real Angel One trades from Claude Orders - against FakeAngel, never the real broker."""
+
+    MON_10 = datetime(2026, 10, 26, 10, 0, tzinfo=svc.IST)
+
+    def setUp(self):
+        from . import broker
+        self.b = broker
+        self.fake = FakeAngel()
+        self.start(self.fake.patches())
+        self.start([mock.patch.object(broker, "get_market_status", return_value="OPEN"),
+                    mock.patch("paper_trading.surveillance.nse_lists", return_value={})])
+
+    def start(self, ps):
+        for p in ps:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def place(self, side="BUY", sl=2, tp=3, now=None, **kw):
+        return self.b.place("vivek", rec_id="r1", code="TST.NS", side=side, quantity=10, stop_pct=sl, target_pct=tp,
+                            now=now or self.MON_10, **kw)
+
+    def test_refusals(self):
+        from . import angel
+        with mock.patch.object(angel, "live_enabled", return_value=False):
+            with self.assertRaisesMessage(self.b.BrokerError, "ANGEL_LIVE_TRADING=1"):
+                self.place()
+        with mock.patch.object(angel, "config", return_value=({}, ["ANGEL_VIVEK_PIN"])):
+            with self.assertRaisesMessage(self.b.BrokerError, "ANGEL_VIVEK_PIN"):
+                self.place()
+        with self.assertRaisesMessage(self.b.BrokerError, "09:15 and 15:00"):
+            self.place(now=datetime(2026, 10, 26, 15, 5, tzinfo=svc.IST))
+        with self.assertRaisesMessage(self.b.BrokerError, "already passed the recommendation's stop"):
+            self.place(guard=(101, 110))
+        with self.assertRaisesMessage(self.b.BrokerError, "between 0.05% and 20%"):
+            self.place(sl=25)
+        with mock.patch.object(angel, "max_order_value", return_value=500):
+            with self.assertRaisesMessage(self.b.BrokerError, "above the limit"):
+                self.place()
+        self.assertEqual(self.fake.orders, {})                              # nothing reached the broker
+
+    def test_entry_then_stop_order_at_broker_and_no_duplicate(self):
+        bo = self.place()
+        self.assertEqual((bo.status, bo.entry_price, bo.sl_trigger), ("open", D("100.00"), D("98")))
+        stop = self.fake.orders[bo.sl_order_id]
+        self.assertEqual((stop["kind"], stop["side"], stop["qty"]), ("stop", "SELL", 10))
+        with self.assertRaisesMessage(self.b.BrokerError, "Already placed today"):
+            self.place()
+
+    def test_target_cancels_the_stop_first_then_exits(self):
+        bo = self.place()
+        self.fake.price = 102.0
+        self.b.watch(self.MON_10)
+        bo.refresh_from_db()
+        self.assertEqual(bo.status, "open")
+        self.fake.price = 103.5
+        self.b.watch(self.MON_10)
+        bo.refresh_from_db()
+        self.assertEqual(self.fake.orders[bo.sl_order_id]["status"], "cancelled")
+        self.assertEqual((bo.status, bo.exit_reason, bo.exit_price, bo.pnl), ("closed", "target", D("103.50"), D("35.0000")))
+
+    def test_no_exit_while_the_stop_cannot_be_cancelled(self):
+        bo = self.place()
+        self.fake.cancel_works = False
+        self.fake.price = 104.0
+        self.b.watch(self.MON_10)
+        bo.refresh_from_db()
+        self.assertEqual((bo.status, bo.exit_order_id), ("open", ""))           # never two exits
+        self.assertIn("still 'trigger pending'", bo.message)
+
+    def test_stop_filled_at_broker_and_1515_exit(self):
+        bo = self.place()
+        self.fake.orders[bo.sl_order_id].update(status="complete", avg=97.9)
+        self.b.watch(self.MON_10)
+        bo.refresh_from_db()
+        self.assertEqual((bo.status, bo.exit_reason, bo.exit_price), ("closed", "stop_loss", D("97.90")))
+        bo2 = self.b.place("sethu", rec_id="r1", code="TST.NS", side="SELL", quantity=5, stop_pct=2, target_pct=3, now=self.MON_10)
+        self.assertEqual((bo2.stop, bo2.target), (D("102.00"), D("97.00")))
+        self.b.watch(datetime(2026, 10, 26, 15, 15, tzinfo=svc.IST))
+        bo2.refresh_from_db()
+        self.assertEqual((bo2.status, bo2.exit_reason), ("closed", "squareoff"))
+        self.assertEqual(self.fake.orders[bo2.exit_order_id]["side"], "BUY")
+
+    def test_pending_entry_finished_by_the_watcher(self):
+        self.fake.fill_market = False
+        bo = self.place()
+        self.assertEqual(bo.status, "pending")
+        self.fake.orders[bo.entry_order_id].update(status="complete", avg=100.2)
+        self.b.watch(self.MON_10)
+        bo.refresh_from_db()
+        self.assertEqual((bo.status, bo.entry_price), ("open", D("100.20")))
+        self.assertEqual((bo.stop, bo.target), (D("98.20"), D("103.21")))         # % from the actual fill
+        self.assertEqual(self.fake.orders[bo.sl_order_id]["trigger"], D("98.20"))
+
+
+class ClaudeOrdersAccountsTests(ClaudeOrdersTests):
+    """Claude Orders page: per-account placing (paper with edited levels, Angel One via broker.place)."""
+
+    def test_paper_with_edited_stop_and_target(self):
+        self.write()
+        with mock.patch.object(svc, "get_market_status", return_value="OPEN"), \
+             mock.patch.object(svc, "fetch_live_today", return_value=live_frame(1, close=100.2)):
+            r = self.post(reverse("paper_trading:claude_orders_place"),
+                          {"id": "20261019-1024-TST-BUY", "account": "paper", "quantity": 10, "stop_pct": 0.7, "target_pct": 1.8})
+        self.assertEqual(r.status_code, 200, r.content)
+        pos = PaperPosition.objects.get(account=svc.get_account(2), quantity=10)
+        self.assertEqual((pos.stop_loss, pos.target_price), (D("99.50"), D("102.00")))
+
+    def test_angel_account_goes_through_the_broker(self):
+        from . import broker
+        fake = FakeAngel()
+        fake.price = 100.2
+        now = datetime.combine(svc.today_ist(), time(10, 0), tzinfo=svc.IST)
+        for p in fake.patches() + [mock.patch.object(broker, "get_market_status", return_value="OPEN"),
+                                   mock.patch.object(broker, "now_ist", return_value=now)]:
+            p.start()
+            self.addCleanup(p.stop)
+        self.write()
+        r = self.post(reverse("paper_trading:claude_orders_place"),
+                      {"id": "20261019-1024-TST-BUY", "account": "vivek", "quantity": 7, "stop_pct": 1, "target_pct": 1.3})
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(r.json()["broker"]["status"], "open")
+        self.assertEqual((r.json()["broker"]["stop"], r.json()["broker"]["target"]), (99.2, 101.5))    # from the 100.2 fill
+        st = self.client.get(reverse("paper_trading:claude_orders_state")).json()
+        self.assertEqual(st["orders"][0]["broker"]["vivek"]["quantity"], 7)
+        self.assertIsNone(st["orders"][0]["broker"]["sethu"])
+        self.assertIsNone(st["orders"][0]["placed"])                                  # paper untouched
+        again = self.post(reverse("paper_trading:claude_orders_place"),
+                          {"id": "20261019-1024-TST-BUY", "account": "vivek", "quantity": 7})
+        self.assertEqual(again.status_code, 409)
+
+    def test_wallets(self):
+        from . import angel
+        with mock.patch.object(angel, "funds", side_effect=lambda acc, use_cache=True: {"configured": acc == "vivek", "available": 12345.0}):
+            w = self.client.get(reverse("paper_trading:claude_orders_wallets")).json()
+        self.assertEqual(w["vivek"]["available"], 12345.0)
+        self.assertFalse(w["sethu"]["configured"])
+        self.assertEqual(w["paper"]["available"], 100000.0)
+
+
+class SurveillanceTests(TestCase):
+    """Stocks Angel One calls "cautionary listings": NSE ASM / GSM lists and its own recent refusals."""
+
+    def test_caution_from_nse_lists_and_past_refusals(self):
+        from . import surveillance as sv
+        from .models import BrokerOrder
+        nse = {"GANDHAR": "Long Term Additional Surveillance Measure (LTASM) - Stage I"}
+        self.assertIn("LTASM", sv.caution("GANDHAR.NS", nse, {}))
+        self.assertIsNone(sv.caution("INFY.NS", nse, {}))
+        BrokerOrder.objects.create(account="vivek", session=svc.today_ist(), code="HEXT.NS", side="SELL", quantity=1,
+                                   stop=1, target=1, status="rejected",
+                                   message="Angel One: The order cannot be processed as the token is categorised under cautionary listings by the exchange.")
+        self.assertIn("flagged it", sv.caution("HEXT.NS", nse, None))
+
+    def test_broker_refuses_before_sending(self):
+        from . import broker, surveillance as sv
+        fake = FakeAngel()
+        for p in fake.patches() + [mock.patch.object(broker, "get_market_status", return_value="OPEN"),
+                                   mock.patch.object(sv, "nse_lists", return_value={"TST": "ASM Stage I"})]:
+            p.start()
+            self.addCleanup(p.stop)
+        now = datetime(2026, 10, 26, 10, 0, tzinfo=svc.IST)
+        with self.assertRaises(broker.BrokerError) as cm:                       # flagged: asks before sending
+            broker.place("vivek", rec_id="r", code="TST.NS", side="BUY", quantity=1, stop_pct=1, target_pct=2, now=now)
+        self.assertEqual(cm.exception.code, "consent_required")
+        self.assertEqual(fake.orders, {})
+        bo = broker.place("vivek", rec_id="r", code="TST.NS", side="BUY", quantity=1, stop_pct=1, target_pct=2,
+                          consent=True, now=now)
+        self.assertTrue(bo.scrip_consent)
+        self.assertEqual([o["consent"] for o in fake.orders.values()], [True, True])     # entry and stop-loss order
+
+    def test_scripconsent_in_the_request_and_first_ab4036_asks_for_consent(self):
+        from . import angel, broker
+        self.assertEqual(angel._base({"symbol": "X-EQ", "token": "1"}, "SELL", 5, consent=True)["scripconsent"], "yes")
+        self.assertNotIn("scripconsent", angel._base({"symbol": "X-EQ", "token": "1"}, "SELL", 5))
+        fake = FakeAngel()
+
+        def refuse(account, inst, side, qty, consent=False):
+            raise angel.AngelError("Angel One: The order cannot be processed as the token is categorised under "
+                                   "cautionary listings by the exchange. (AB4036)")
+        for p in [x for x in fake.patches() if getattr(x, "attribute", "") != "place_market"] + [
+                mock.patch.object(angel, "place_market", refuse),
+                mock.patch.object(broker, "get_market_status", return_value="OPEN"),
+                mock.patch("paper_trading.surveillance.nse_lists", return_value={})]:
+            p.start()
+            self.addCleanup(p.stop)
+        with self.assertRaises(broker.BrokerError) as cm:
+            broker.place("vivek", rec_id="r", code="ENRIN.NS", side="SELL", quantity=1, stop_pct=1, target_pct=2,
+                         now=datetime(2026, 10, 26, 10, 0, tzinfo=svc.IST))
+        self.assertEqual(cm.exception.code, "consent_required")
+
+
+class AngelRetryTests(TestCase):
+    """Network retries: logins / reads retry any network error, orders only when certainly never sent."""
+
+    def test_retry_rules(self):
+        import requests
+        from . import angel
+        calls = []
+
+        def flaky(exc, n):
+            def fn():
+                calls.append(1)
+                if len(calls) <= n:
+                    raise exc
+                return "ok"
+            return fn
+        with mock.patch.object(angel._time, "sleep"):
+            self.assertEqual(angel._retry(flaky(requests.exceptions.ConnectTimeout("x"), 2), safe_any=False), "ok")
+            calls.clear()
+            self.assertEqual(angel._retry(flaky(requests.exceptions.ReadTimeout("x"), 1), safe_any=True), "ok")
+            calls.clear()
+            with self.assertRaises(requests.exceptions.ReadTimeout):              # an order may have arrived
+                angel._retry(flaky(requests.exceptions.ReadTimeout("x"), 1), safe_any=False)
+            self.assertEqual(len(calls), 1)
+
+    def test_uncertain_order_is_reported_and_blocks_a_resend(self):
+        import requests
+        from . import angel, broker
+        fake = FakeAngel()
+        sc = mock.Mock()
+        sc.placeOrderFullResponse.side_effect = requests.exceptions.ReadTimeout("slow")
+        ps = [p for p in fake.patches() if getattr(p, "attribute", "") != "place_market"] + [
+            mock.patch.object(angel, "client", return_value=sc),
+            mock.patch.object(broker, "get_market_status", return_value="OPEN"),
+            mock.patch("paper_trading.surveillance.nse_lists", return_value={})]
+        for p in ps:
+            p.start()
+            self.addCleanup(p.stop)
+        now = datetime(2026, 10, 26, 10, 0, tzinfo=svc.IST)
+        with self.assertRaisesMessage(broker.BrokerError, "MAY have gone through"):
+            broker.place("vivek", rec_id="r", code="TST.NS", side="BUY", quantity=1, stop_pct=1, target_pct=2, now=now)
+        self.assertEqual(sc.placeOrderFullResponse.call_count, 1)               # not sent twice
+        with self.assertRaisesMessage(broker.BrokerError, "Already placed today"):
+            broker.place("vivek", rec_id="r", code="TST.NS", side="BUY", quantity=1, stop_pct=1, target_pct=2, now=now)
+
+
+class AngelSessionTests(TestCase):
+    def test_cautionary_rejection_is_not_a_session_error_and_is_sent_once(self):
+        from . import angel
+        self.assertFalse(angel._session_expired("The order cannot be processed as the token is categorised under "
+                                                "cautionary listings by the exchange.", "AB4036"))
+        self.assertTrue(angel._session_expired("Invalid Token", "AG8001"))
+        sc = mock.Mock()
+        sc.placeOrderFullResponse.return_value = {"status": False, "errorcode": "AB4036", "data": None,
+                                                  "message": "The order cannot be processed as the token is categorised "
+                                                             "under cautionary listings by the exchange."}
+        with mock.patch.object(angel, "client", return_value=sc):
+            with self.assertRaisesMessage(angel.AngelError, "AB4036"):
+                angel.place_market("vivek", {"symbol": "X-EQ", "token": "1", "tick": D("0.05")}, "SELL", 1)
+        self.assertEqual(sc.placeOrderFullResponse.call_count, 1)

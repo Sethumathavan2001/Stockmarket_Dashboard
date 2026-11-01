@@ -1,4 +1,5 @@
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
+from datetime import time as time_
 from decimal import Decimal
 from unittest import mock
 
@@ -217,3 +218,116 @@ class ApiTests(OptionsBase):
         self.assertEqual((p["quantity"], p["ltp"], p["mtm"]), (65, 140, (140 - 130.5) * 65))
         self.assertIsNotNone(p["greeks"]["delta"])
         self.assertEqual(len(st["history"]), 1)
+
+
+class ReplayTests(TestCase):
+    """Replay on a made-up Wed 5 Mar 2025 (NIFTY 22300 CE / PE, expiry Thu 6 Mar) and the expiry day after it."""
+
+    D1, D2, X = date(2025, 3, 5), date(2025, 3, 6), "2025-03-06"
+
+    def bhav(self, day):
+        from . import history as h
+        if day == self.D1:
+            rows = [[22300.0, "CE", 100.0, 180.0, 60.0, 150.0, 90.0, 150.0, 5000, 100, 1000, True],
+                    [22300.0, "PE", 110.0, 150.0, 40.0, 50.0, 120.0, 50.0, 5000, 100, 1000, True],
+                    [22900.0, "CE", 0.0, 0.0, 0.0, 2.0, 2.0, 1.0, 10, 0, 0, True]]          # no trades that day
+            under = 22300.0
+        elif day == self.D2:
+            rows = [[22300.0, "CE", 140.0, 200.0, 90.0, 100.0, 150.0, 100.0, 4000, -1000, 900, True],
+                    [22300.0, "PE", 40.0, 60.0, 0.05, 0.05, 50.0, 0.05, 4000, -1000, 900, True]]
+            under = 22400.0
+        else:
+            raise h.HistoryError("no file")
+        return {"day": day.isoformat(), "contracts": {"NIFTY": {self.X: rows}}, "underlying": {"NIFTY": under},
+                "lots": {"NIFTY": {self.X: 75}}}
+
+    def bars(self, symbol, day):
+        start, end = (22200.0, 22300.0) if day == self.D1 else (22300.0, 22400.0)
+        out, t = [], datetime(2025, 1, 1, 9, 15)
+        for i in range(75):
+            o = start + (end - start) * i / 75
+            c = start + (end - start) * (i + 1) / 75
+            out.append(((t + timedelta(minutes=5 * i)).time(), o, max(o, c) + 2, min(o, c) - 2, c))
+        return 5, out
+
+    def setUp(self):
+        from . import history as h
+        self.h = h
+        h._paths.clear(); h._ivs.clear(); h._mem.clear(); h._bar_cache.clear()
+        for p in (mock.patch.object(h, "bhavcopy", side_effect=self.bhav), mock.patch.object(h, "_bars", side_effect=self.bars)):
+            p.start()
+            self.addCleanup(p.stop)
+        self.acct = svc.get_account(replay=True)
+        self.live = svc.get_account()
+
+    def ce(self, hm):
+        now = datetime.combine(self.D1, datetime.strptime(hm, "%H:%M").time(), tzinfo=IST)
+        q, spot = self.h.quote("NIFTY", date(2025, 3, 6), 22300, "CE", now)
+        return q, spot
+
+    def test_prices_are_real_at_open_and_close_estimated_inside_the_range_between(self):
+        self.assertEqual(self.ce("09:15")[0]["ltp"], 100.0)
+        self.assertEqual(self.ce("15:30")[0]["ltp"], 150.0)
+        mids = [self.ce(t)[0]["ltp"] for t in ("10:00", "11:30", "13:00", "14:45")]
+        self.assertTrue(all(60.0 <= p <= 180.0 for p in mids), mids)
+        self.assertLess(mids[0], mids[-1])                                  # underlying rises through the day
+        self.assertAlmostEqual(self.ce("12:00")[1], 22200 + 100 * 165 / 375, places=1)
+        q, _ = self.h.quote("NIFTY", date(2025, 3, 6), 22900, "CE", datetime.combine(self.D1, time_(12), tzinfo=IST))
+        self.assertIsNone(q)                                                # did not trade -> not tradable
+
+    def test_replay_session_clock_orders_levels_and_expiry(self):
+        with self.assertRaisesMessage(svc.TradeError, "Pick a date"):
+            svc.place_order(self.acct, symbol="NIFTY", expiry=date(2025, 3, 6), strike=22300, option_type="CE", side="BUY", lots=1)
+        svc.replay_start(self.acct, self.D1)
+        o = svc.place_order(self.acct, symbol="NIFTY", expiry=date(2025, 3, 6), strike=22300, option_type="CE",
+                            side="BUY", lots=2, target=170)
+        self.assertEqual((o.status, o.price, o.quantity), ("COMPLETE", D("100"), 150))      # the real open
+        self.assertEqual(svc.to_ist(o.market_time).date(), self.D1)
+        with self.assertRaisesMessage(svc.TradeError, "did not trade"):
+            svc.place_order(self.acct, symbol="NIFTY", expiry=date(2025, 3, 6), strike=22900, option_type="CE", side="BUY", lots=1)
+        with self.assertRaisesMessage(svc.TradeError, "open replay positions"):
+            svc.replay_start(self.acct, self.D2)
+        ev = svc.replay_advance(self.acct, "60")
+        self.assertEqual(self.acct.replay_time.strftime("%H:%M"), "10:15")
+        self.assertEqual(ev["exits"], [])
+        ev = svc.replay_advance(self.acct, "close")
+        self.assertEqual(self.acct.replay_time.strftime("%H:%M"), "15:30")
+        p = OptionPosition.objects.get(account=self.acct)
+        self.assertEqual(p.quantity, 150)                                   # 170 target never reached (close 150)
+        with self.assertRaisesMessage(svc.TradeError, "day is over"):
+            svc.replay_advance(self.acct, "5")
+        svc.replay_advance(self.acct, "next_day")
+        self.assertEqual((self.acct.replay_date, self.acct.replay_time.strftime("%H:%M")), (self.D2, "09:15"))
+        ev = svc.replay_advance(self.acct, "close")                         # expiry day: settles at 15:30
+        [s] = ev["settled"]
+        self.assertEqual((s.price, s.realized_pnl), (D("100.00"), D("0.00")))     # 22400 - 22300 = 100, bought at 100
+        self.assertEqual(svc.to_ist(s.market_time).date(), self.D2)
+        self.assertFalse(OptionPosition.objects.filter(account=self.acct).exclude(quantity=0).exists())
+        self.assertFalse(self.live.orders.exists())                         # the live wallet is untouched
+        with self.assertRaisesMessage(svc.TradeError, "No later trading day"):
+            svc.replay_advance(self.acct, "next_day")
+        svc.replay_reset(self.acct)
+        self.acct.refresh_from_db()
+        self.assertEqual((self.acct.balance, self.acct.replay_date, self.acct.orders.count()), (svc.START_BALANCE, None, 0))
+
+    def test_replay_api(self):
+        r = self.client.post(reverse("options:replay_start"), {"date": self.D1.isoformat()}, content_type="application/json")
+        self.assertEqual(r.json()["time"], "09:15")
+        c = self.client.get(reverse("options:chain", args=["NIFTY"]), {"expiry": self.X, "mode": "replay"}).json()
+        self.assertTrue(c["replay"])
+        self.assertEqual(c["lot_size"], 75)
+        self.assertEqual(c["resolution"], "5-minute")
+        body = {"mode": "replay", "symbol": "NIFTY", "expiry": self.X, "strike": 22300, "option_type": "PE", "side": "SELL", "lots": 1}
+        r = self.client.post(reverse("options:place"), body, content_type="application/json")
+        self.assertEqual(r.json()["order"]["price"], 110.0)
+        st = self.client.get(reverse("options:state"), {"mode": "replay"}).json()
+        self.assertEqual((st["mode"], st["replay"]["date"], len(st["positions"])), ("replay", self.D1.isoformat(), 1))
+        self.assertEqual(self.client.get(reverse("options:state")).json()["positions"], [])     # live: separate
+        r = self.client.post(reverse("options:replay_advance"), {"to": "15"}, content_type="application/json")
+        self.assertEqual(r.json()["time"], "09:30")
+        sr = self.client.get(reverse("options:replay_series"),
+                             {"symbol": "NIFTY", "expiry": self.X, "strike": 22300, "option_type": "PE"}).json()
+        self.assertEqual(len(sr["underlying"]), 3)                          # 09:15, 09:20, 09:25 candles - not the future
+        self.assertEqual([x["x"][11:16] for x in sr["premium"]], ["09:15", "09:20", "09:25", "09:30"])
+        self.assertEqual(sr["premium"][0]["v"], 110.0)                      # the real open
+        self.assertEqual([(t["side"], t["price"], t["x"][11:16]) for t in sr["trades"]], [("SELL", 110.0, "09:15")])

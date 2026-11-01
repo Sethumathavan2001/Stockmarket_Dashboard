@@ -1,0 +1,297 @@
+"""
+Angel One (SmartAPI) for the Claude Orders page: two real broker accounts, "vivek" and "sethu".
+
+Credentials come from the environment / .env (never from the page):
+
+    ANGEL_VIVEK_API_KEY   ANGEL_VIVEK_CLIENT_ID   ANGEL_VIVEK_PIN   ANGEL_VIVEK_TOTP_SECRET
+    ANGEL_SETHU_API_KEY   ANGEL_SETHU_CLIENT_ID   ANGEL_SETHU_PIN   ANGEL_SETHU_TOTP_SECRET
+
+    ANGEL_LIVE_TRADING=1          real orders are only sent when this is set (wallets show without it)
+    ANGEL_MAX_ORDER_VALUE=200000  refuse a single order worth more than this (rupees)
+
+Login uses the TOTP secret (pyotp) - the session is kept in memory and renewed every few hours or when
+Angel One says it expired.  Instruments (symbol token, tick size) come from Angel One's scrip master,
+kept in logs/angel_scrips.json and refreshed daily.
+"""
+import json
+import logging
+import os
+import threading
+import time as _time
+from datetime import datetime
+from decimal import ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_UP, Decimal
+from pathlib import Path
+
+from django.conf import settings
+
+from prediction.market_time import IST
+
+logger = logging.getLogger(__name__)
+
+ACCOUNTS = {"vivek": "Vivek", "sethu": "Sethu"}
+KEYS = ("API_KEY", "CLIENT_ID", "PIN", "TOTP_SECRET")
+SCRIP_URL = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
+SCRIP_FILE = Path(settings.BASE_DIR) / "logs" / "angel_scrips.json"
+SESSION_HOURS = 6
+FUNDS_SECONDS = 30
+TIMEOUT = 20              # seconds per request (the SDK's own default, 7 s, fails on a slow moment)
+NET_TRIES = 3             # attempts on a network error (see _retry)
+
+_lock = threading.RLock()
+_sessions = {}            # account -> (SmartConnect, logged in at)
+_funds = {}               # account -> (fetched at, data)
+_scrips = {"data": None}
+
+
+class AngelError(Exception):
+    pass
+
+
+# ---------------------------------------------------------------- config
+def env_name(account, key):
+    return f"ANGEL_{account.upper()}_{key}"
+
+
+def config(account):
+    """(credentials dict, missing env names)."""
+    vals = {k: (os.environ.get(env_name(account, k)) or "").strip() for k in KEYS}
+    return vals, [env_name(account, k) for k, v in vals.items() if not v]
+
+
+def configured(account):
+    return account in ACCOUNTS and not config(account)[1]
+
+
+def live_enabled():
+    return (os.environ.get("ANGEL_LIVE_TRADING") or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def max_order_value():
+    try:
+        return float(os.environ.get("ANGEL_MAX_ORDER_VALUE") or 200000)
+    except ValueError:
+        return 200000.0
+
+
+# ---------------------------------------------------------------- network retries
+def _never_sent(exc):
+    """True when the request certainly did not reach Angel One (the connection was never made)."""
+    import requests
+    return isinstance(exc, requests.exceptions.ConnectTimeout) or (
+        isinstance(exc, requests.exceptions.ConnectionError) and "NewConnectionError" in str(exc))
+
+
+def _network(exc):
+    import requests
+    return isinstance(exc, (requests.exceptions.ConnectionError, requests.exceptions.Timeout))
+
+
+def _retry(fn, safe_any):
+    """Run fn() up to NET_TRIES times on network errors.  safe_any=True (logins, reads): retry any network
+    error.  False (placing / cancelling orders): retry only when the request was never sent - otherwise
+    Angel One may already have the order, and sending it again could double it."""
+    for attempt in range(NET_TRIES):
+        try:
+            return fn()
+        except Exception as exc:
+            again = _network(exc) if safe_any else _never_sent(exc)
+            if not again or attempt == NET_TRIES - 1:
+                raise
+            logger.warning("angel: network error (%s), retrying", type(exc).__name__)
+            _time.sleep(1.5 * (attempt + 1))
+
+
+# ---------------------------------------------------------------- session
+def _login(account):
+    import pyotp
+    from SmartApi import SmartConnect
+    cfg, missing = config(account)
+    if missing:
+        raise AngelError(f"Not configured - add {', '.join(missing)} to .env")
+
+    def attempt():
+        sc = SmartConnect(api_key=cfg["API_KEY"], timeout=TIMEOUT)
+        return sc, sc.generateSession(cfg["CLIENT_ID"], cfg["PIN"], pyotp.TOTP(cfg["TOTP_SECRET"]).now())
+    try:
+        sc, res = _retry(attempt, safe_any=True)
+    except Exception as exc:
+        hint = " - Angel One's server didn't answer in time; check the internet connection and try again." if _network(exc) else ""
+        raise AngelError(f"Angel One login failed: {type(exc).__name__}{hint}") from exc
+    if not res or not res.get("status"):
+        raise AngelError(f"Angel One login failed: {(res or {}).get('message') or 'no response'}")
+    return sc
+
+
+def client(account, fresh=False):
+    with _lock:
+        hit = _sessions.get(account)
+        if fresh or not hit or _time.time() - hit[1] > SESSION_HOURS * 3600:
+            _sessions[account] = (_login(account), _time.time())
+        return _sessions[account][0]
+
+
+SESSION_CODES = {"AG8001", "AG8002", "AG8003", "AB1010"}   # invalid / expired / missing token, session expired
+SESSION_TEXTS = ("invalid token", "token expired", "token is expired", "session expired", "invalid session")
+
+
+def _session_expired(text="", code=""):
+    """Only Angel One's real login-session errors - NOT any message containing "token": "the token is
+    categorised under cautionary listings" (AB4036) means the stock, and must never cause a re-send."""
+    return str(code).upper() in SESSION_CODES or any(t in str(text).lower() for t in SESSION_TEXTS)
+
+
+def _call(account, fn, order=False):
+    """Run fn(SmartConnect) with network retries; log in again once if the session expired.
+    order=True for calls that change orders: those are retried only when certainly not sent."""
+    for attempt in range(2):
+        sc = client(account, fresh=bool(attempt))
+        try:
+            res = _retry(lambda: fn(sc), safe_any=not order)
+        except Exception as exc:
+            if attempt == 0 and _session_expired(exc, getattr(exc, "code", "")):
+                continue
+            if order and _network(exc) and not _never_sent(exc):
+                raise AngelError("Angel One didn't confirm in time - the order MAY have gone through. Check the order "
+                                 "book in the Angel One app before trying again.") from exc
+            raise AngelError(f"Angel One: {type(exc).__name__}: {exc}") from exc
+        if isinstance(res, dict) and res.get("status") is False:
+            msg = str(res.get("message") or res.get("errorcode") or "request refused")
+            if attempt == 0 and _session_expired(msg, res.get("errorcode", "")):
+                continue
+            raise AngelError(f"Angel One: {msg}" + (f" ({res['errorcode']})" if res.get("errorcode") else ""))
+        return res
+    raise AngelError("Angel One session could not be renewed.")
+
+
+# ---------------------------------------------------------------- data
+def funds(account, use_cache=True):
+    """{"configured", "available", "net", "used", "error"} - the RMS limits (cash available to trade)."""
+    if not configured(account):
+        return {"configured": False, "missing": config(account)[1]}
+    hit = _funds.get(account)
+    if use_cache and hit and _time.time() - hit[0] < FUNDS_SECONDS:
+        return hit[1]
+    try:
+        d = (_call(account, lambda sc: sc.rmsLimit()) or {}).get("data") or {}
+        num = lambda k: float(d.get(k) or 0)
+        out = {"configured": True, "available": num("availablecash"), "net": num("net"),
+               "used": num("utiliseddebits"), "m2m": num("m2munrealized") + num("m2mrealized"), "error": None}
+    except AngelError as exc:
+        out = {"configured": True, "error": str(exc)}
+    _funds[account] = (_time.time(), out)
+    return out
+
+
+def _load_scrips():
+    import requests
+    r = requests.get(SCRIP_URL, timeout=90)
+    r.raise_for_status()
+    out = {}
+    for x in r.json():
+        if x.get("exch_seg") == "NSE" and str(x.get("symbol", "")).endswith("-EQ"):
+            tick = Decimal(str(x.get("tick_size") or "5")) / 100            # given in paise
+            out[x["name"]] = {"symbol": x["symbol"], "token": x["token"], "tick": str(tick if tick > 0 else Decimal("0.05"))}
+    return {"as_of": datetime.now(IST).date().isoformat(), "scrips": out}
+
+
+def instrument(code):
+    """NSE equity for a company code like "HDFCBANK.NS": {symbol, token, tick}."""
+    name = code.removesuffix(".NS")
+    with _lock:
+        data = _scrips["data"]
+        if data is None and SCRIP_FILE.exists():
+            try:
+                data = json.loads(SCRIP_FILE.read_text(encoding="utf-8"))
+            except ValueError:
+                data = None
+        if not data or data.get("as_of") != datetime.now(IST).date().isoformat():
+            try:
+                data = _load_scrips()
+                SCRIP_FILE.parent.mkdir(exist_ok=True)
+                SCRIP_FILE.write_text(json.dumps(data), encoding="utf-8")
+            except Exception as exc:
+                logger.warning("angel: scrip master not refreshed: %s", exc)
+                if not data:
+                    raise AngelError("Angel One instrument list unavailable - try again in a minute.") from exc
+        _scrips["data"] = data
+    inst = data["scrips"].get(name)
+    if not inst:
+        raise AngelError(f"{name} is not an NSE equity on Angel One.")
+    return {**inst, "tick": Decimal(inst["tick"])}
+
+
+def to_tick(price, tick, rounding=ROUND_HALF_UP):
+    tick = Decimal(str(tick)).normalize()                    # "0.050000" -> "0.05": no trailing zeros in prices
+    return ((Decimal(str(price)) / tick).quantize(Decimal("1"), rounding=rounding) * tick).quantize(Decimal("0.01"))
+
+
+def ltp(account, inst):
+    d = _call(account, lambda sc: sc.ltpData("NSE", inst["symbol"], inst["token"]))
+    try:
+        return float(d["data"]["ltp"])
+    except (KeyError, TypeError, ValueError):
+        raise AngelError("Angel One gave no last price.")
+
+
+# ---------------------------------------------------------------- orders
+def _order(account, params):
+    res = _call(account, lambda sc: sc.placeOrderFullResponse(dict(params)), order=True)
+    oid = ((res or {}).get("data") or {}).get("orderid")
+    if not oid:
+        raise AngelError(f"Angel One did not accept the order: {(res or {}).get('message') or res}")
+    return str(oid)
+
+
+CAUTION_CODE = "AB4036"   # "the token is categorised under cautionary listings by the exchange"
+
+
+def _base(inst, side, qty, consent=False):
+    """consent=True adds "scripconsent": "yes" - you accepted the exchange's cautionary warning for this stock,
+    which Angel One requires before it takes an API order in a cautionary-listed stock (AB4036)."""
+    p = {"tradingsymbol": inst["symbol"], "symboltoken": inst["token"], "transactiontype": side, "exchange": "NSE",
+         "producttype": "INTRADAY", "duration": "DAY", "quantity": str(int(qty)), "squareoff": "0", "stoploss": "0"}
+    if consent:
+        p["scripconsent"] = "yes"
+    return p
+
+
+def place_market(account, inst, side, qty, consent=False):
+    """Intraday market order -> Angel One order id."""
+    return _order(account, {**_base(inst, side, qty, consent), "variety": "NORMAL", "ordertype": "MARKET", "price": "0"})
+
+
+def place_stop(account, inst, side, qty, trigger, consent=False):
+    """Stop-loss LIMIT order that sits at Angel One: triggers at `trigger`, limit 1 % beyond it so it fills."""
+    tick = inst["tick"]
+    trig = to_tick(trigger, tick)
+    if side == "SELL":                                       # protecting a long
+        limit = to_tick(trig * Decimal("0.99"), tick, ROUND_FLOOR)
+    else:                                                    # protecting a short
+        limit = to_tick(trig * Decimal("1.01"), tick, ROUND_CEILING)
+    return _order(account, {**_base(inst, side, qty, consent), "variety": "STOPLOSS", "ordertype": "STOPLOSS_LIMIT",
+                            "triggerprice": str(trig), "price": str(limit)}), trig
+
+
+def cancel(account, order_id, variety):
+    return _call(account, lambda sc: sc.cancelOrder(order_id, variety), order=True)
+
+
+def order_status(account, order_id):
+    """(status, average price, quantity filled, text) from the order book - status is Angel One's, lower case:
+    complete / rejected / cancelled / open / trigger pending / ..."""
+    book = (_call(account, lambda sc: sc.orderBook()) or {}).get("data") or []
+    for o in book:
+        if str(o.get("orderid")) == str(order_id):
+            return (str(o.get("orderstatus") or o.get("status") or "").lower(), float(o.get("averageprice") or 0),
+                    int(float(o.get("filledshares") or 0)), str(o.get("text") or ""))
+    return ("unknown", 0.0, 0, "order not found in today's order book")
+
+
+def wait_for(account, order_id, seconds=6.0, step=0.7):
+    """Poll until the order is no longer pending (or time runs out)."""
+    end = _time.time() + seconds
+    st = order_status(account, order_id)
+    while st[0] not in ("complete", "rejected", "cancelled") and _time.time() < end:
+        _time.sleep(step)
+        st = order_status(account, order_id)
+    return st

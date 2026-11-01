@@ -1,16 +1,20 @@
 """
-Claude recommended orders: the BUY / SELL picks of the Intraday Signal Board, saved by Claude in
-claude_orders.json (next to this file), and placed on request into Paper Trading 2 (book 2).
+Claude recommended orders: the BUY / SELL picks of the Intraday Signal Board (claude_orders.json next to
+this file), placed on request into Paper Trading 2 (book 2) and / or the real Angel One accounts in
+angel.ACCOUNTS (Vivek, Sethu - see broker.py).
 
   GET  /claude-orders/                       the page
-  GET  /api/paper/claude-orders/             the orders + which were already placed today
-  POST /api/paper/claude-orders/place/       {"id": "...", "quantity": 100} -> a live market order in book 2
+  GET  /api/paper/claude-orders/             the orders + what was already placed today, per account
+  GET  /api/paper/claude-orders/wallets/     Paper Trading 2 balance and each Angel One account's funds
+  POST /api/paper/claude-orders/place/       {"id", "account": "paper" | "vivek" | "sethu", "quantity",
+                                              "stop_pct"?, "target_pct"?}
   POST /api/paper/claude-orders/refresh/     rebuild the list from current data (background, see claude_board)
 
-An order is placed at the LIVE price with its stop loss / target as percentages from the actual fill
-(so the reward-to-risk of the recommendation is kept even if the price moved), tagged reason="claude".
-Refused when: the recommendations are from an earlier day, it was already placed today, or the live
-price has already passed its stop or target since the recommendation.
+Stop loss / target are percentages from the actual fill (editable on the page; the recommendation's by
+default), so the reward-to-risk holds even if the price moved.  Paper: a live market order in book 2
+tagged reason="claude".  Refused when: the recommendations are from an earlier day, the stock + side was
+already placed today in that account, or the live price has already passed the recommendation's stop or
+target.
 """
 import json
 from decimal import Decimal
@@ -23,7 +27,7 @@ from django.views.decorators.http import require_GET, require_POST
 
 from market.models import Company
 
-from . import claude_board
+from . import angel, broker, claude_board, surveillance
 from . import services as svc
 from .models import PaperOrder
 
@@ -54,11 +58,19 @@ def placed_today(account):
 def _state(account):
     data = load_orders()
     placed = placed_today(account)
+    real = broker.placed_today(svc.today_ist())
+    nse, refused = surveillance.nse_lists(), surveillance.refused_recently()
     for o in data["orders"]:
+        o["caution"] = surveillance.caution(o["code"], nse, refused)
         hit = placed.get((o["code"], o["side"]))
         o["placed"] = None if not hit else {
             "order_id": hit.pk, "price": float(hit.price), "quantity": hit.quantity,
             "time": svc.to_ist(hit.created_at).isoformat()}
+        o["broker"] = {acc: (broker.serialize(real[(acc, o["code"], o["side"])]) if (acc, o["code"], o["side"]) in real
+                             else None) for acc in angel.ACCOUNTS}
+    data["accounts"] = [{"key": k, "name": v, "missing": angel.config(k)[1]} for k, v in angel.ACCOUNTS.items()]
+    data["live_trading"] = angel.live_enabled()
+    data["max_order_value"] = angel.max_order_value()
     data["today"] = svc.today_ist().isoformat()
     data["is_today"] = data["session"] == data["today"]
     data["balance"] = float(account.balance)
@@ -77,10 +89,24 @@ def state(request):
     return JsonResponse(_state(svc.get_account(BOOK)))
 
 
+@require_GET
+def wallets(request):
+    """Funds of each Angel One account (cached 30 s - the page polls this) and the paper wallet."""
+    out = {"paper": {"configured": True, "available": float(svc.get_account(BOOK).balance), "error": None}}
+    for acc in angel.ACCOUNTS:
+        out[acc] = angel.funds(acc, use_cache=request.GET.get("fresh") != "1")
+    return JsonResponse(out)
+
+
 @require_POST
 def refresh(request):
     started = claude_board.start_refresh(ORDERS_FILE)
     return JsonResponse({"started": started, "refresh": claude_board.progress()}, status=202 if started else 409)
+
+
+def _given(body, key, default):
+    v = body.get(key)
+    return default if v in (None, "") else v
 
 
 def _error(msg, status=400, code=None):
@@ -100,6 +126,19 @@ def place(request):
     if data["session"] != svc.today_ist().isoformat():
         return _error(f"These recommendations are from {data['session']}. Only today's can be placed - press Refresh "
                       "for a fresh list.")
+    acc = str(body.get("account") or "paper").lower()
+    if acc in angel.ACCOUNTS:
+        try:
+            bo = broker.place(acc, rec_id=rec["id"], code=rec["code"], side=rec["side"], quantity=body.get("quantity"),
+                              stop_pct=_given(body, "stop_pct", rec["stop_pct"]),
+                              target_pct=_given(body, "target_pct", rec["target_pct"]),
+                              guard=(rec["stop"], rec["target"]), consent=bool(body.get("consent")))
+        except broker.BrokerError as exc:
+            return _error(str(exc), 409 if exc.code else 400, exc.code)
+        angel._funds.pop(acc, None)                              # the wallet changed
+        return JsonResponse({"ok": bo.status not in ("rejected", "error"), "broker": broker.serialize(bo)})
+    if acc != "paper":
+        return _error("Unknown account.")
     company = Company.objects.filter(code=rec["code"]).first()
     if company is None:
         return _error(f"{rec['code']} is not in the company list.", 404)
@@ -112,6 +151,13 @@ def place(request):
                 return _error(f"Already placed today: {done.side} {done.quantity} {rec['code']} @ ₹{done.price:.2f}.",
                               409, "already_placed")
             price, market_time = svc.resolve_live_execution(company)
+            try:
+                sl_pct = Decimal(str(_given(body, "stop_pct", rec["stop_pct"])))
+                tp_pct = Decimal(str(_given(body, "target_pct", rec["target_pct"])))
+            except ArithmeticError:
+                return _error("Stop loss and target must be percentages.")
+            if not (broker.MIN_PCT <= sl_pct <= broker.MAX_PCT and broker.MIN_PCT <= tp_pct <= broker.MAX_PCT):
+                return _error(f"Stop loss and target must be between {broker.MIN_PCT}% and {broker.MAX_PCT}%.")
             p, stop, target = float(price), rec["stop"], rec["target"]
             if rec["side"] == "BUY" and p <= stop or rec["side"] == "SELL" and p >= stop:
                 return _error(f"The price (₹{p:.2f}) has already passed the stop loss (₹{stop:.2f}) since the "
@@ -122,7 +168,7 @@ def place(request):
             order, position, account = svc.execute_order(
                 account=account, company=company, side=rec["side"], quantity=quantity, price=price,
                 mode=svc.LIVE, replay_date=None, market_time=market_time, product=svc.INTRADAY,
-                levels={"sl_percent": Decimal(str(rec["stop_pct"])), "target_percent": Decimal(str(rec["target_pct"]))},
+                levels={"sl_percent": sl_pct, "target_percent": tp_pct},
                 reason=REASON,
             )
     except svc.TradeError as exc:

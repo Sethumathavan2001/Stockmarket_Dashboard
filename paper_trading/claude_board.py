@@ -302,7 +302,7 @@ def build():
     _set(done=len(cands), step="Writing orders")
     gen = datetime.now(IST).replace(microsecond=0)
     picks = sorted((s for s in scored if s.get("decision") in ("BUY", "SELL") and s.get("plan")),
-                   key=lambda s: (s["decision"] != "BUY", -abs(s["score"])))
+                   key=lambda s: (s["decision"] != "SELL", -abs(s["score"])))     # SELL first, then BUY
     counts = {k: sum(1 for s in scored if s.get("decision") == k) for k in ("BUY", "SELL", "WATCH", "SKIP")}
     return {
         "generated": gen.isoformat(),

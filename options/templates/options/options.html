@@ -24,6 +24,31 @@
   .page-head .tag{ font-size:12.5px; font-weight:500; color:var(--text-muted); border-left:1px solid var(--border); padding-left:12px; }
   .mkt{ font-size:12px; font-weight:700; padding:4px 10px; border-radius:999px; background:var(--panel); color:var(--text-muted); border:1px solid var(--border); }
   .mkt.open{ background:var(--green-bg); color:var(--green-dark); border-color:transparent; }
+  .head-r{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .mode-seg button{ padding:6px 14px; font-size:13px; }
+  .mode-seg button.replay.active{ background:var(--purple); }
+  .replay-bar{ display:flex; flex-wrap:wrap; align-items:flex-end; gap:12px 18px; margin-top:12px; padding:12px 16px; border-radius:var(--radius);
+    border:1px solid #DDD3FB; background:#F7F4FF; }
+  .clock{ display:flex; flex-direction:column; gap:2px; min-width:210px; }
+  .clock b{ font-family:'JetBrains Mono',monospace; font-size:20px; color:var(--purple); }
+  .clock span{ font-size:12px; color:var(--text-muted); }
+  .steps{ display:flex; flex-wrap:wrap; gap:6px; }
+  .btn.step{ background:#fff; color:var(--purple); border:1px solid #CDBEFA; font-weight:700; }
+  .btn.step:hover:not(:disabled){ background:#EFE9FF; }
+  .btn.purple{ background:var(--purple); }
+  input[type=date]{ border:1px solid var(--border); border-radius:8px; background:#fff; padding:7px 10px; font-size:14px; font-family:inherit; color:var(--text); }
+  .rb-note{ flex-basis:100%; font-size:12px; color:#5B4B8A; line-height:1.5; }
+  .busy{ opacity:.6; pointer-events:none; }
+  .play{ display:flex; align-items:center; gap:8px; }
+  .btn.playbtn{ background:var(--green); min-width:96px; }
+  .btn.playbtn.on{ background:var(--amber); }
+  .speed{ display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--text-muted); }
+  .speed select{ padding:6px 8px; font-size:13px; }
+  .rp-chart{ margin-top:12px; }
+  #rpChart{ height:300px; width:100%; }
+  .rp-chart .chart-wrap{ position:relative; padding:4px 6px 6px; }
+  .rp-legend{ display:flex; flex-wrap:wrap; gap:4px 16px; font-size:12px; color:var(--text-muted); }
+  .rp-legend i{ display:inline-block; width:14px; height:3px; border-radius:2px; vertical-align:middle; margin-right:5px; }
 
   /* toolbar */
   .toolbar{ display:flex; flex-wrap:wrap; align-items:flex-end; gap:12px 22px; margin-top:14px; background:var(--panel);
@@ -146,6 +171,7 @@
   .toast{ background:var(--navy-900); color:#fff; padding:10px 14px; border-radius:8px; font-size:13px; max-width:400px; box-shadow:0 8px 20px rgba(0,0,0,.18); }
   .toast.error{ background:var(--red-dark); } .toast.success{ background:var(--green-dark); }
 </style>
+<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
 </head>
 <body>
 
@@ -154,7 +180,40 @@
 <div class="wrap">
   <div class="page-head">
     <div class="title">Option Trading <span class="tag">Live NSE option chain · lots, margin and charges like a real broker · separate wallet</span></div>
-    <span class="mkt" id="mkt">—</span>
+    <div class="head-r">
+      <div class="seg mode-seg" id="modeSeg" role="tablist" aria-label="Trading mode">
+        <button data-mode="live" title="Today's live NSE prices">Live</button>
+        <button data-mode="replay" class="replay" title="Trade a past day on a replay clock">Replay (old dates)</button>
+      </div>
+      <span class="mkt" id="mkt">—</span>
+    </div>
+  </div>
+
+  <div class="replay-bar" id="replayBar" hidden>
+    <div class="field"><label for="rpDate">Replay date</label><input type="date" id="rpDate"></div>
+    <button class="btn purple" id="rpStart" type="button">Start this date</button>
+    <div class="clock"><span class="lbl">Replay clock</span><b id="rpClock">—</b><span id="rpRes"></span></div>
+    <div class="field"><span class="lbl">Play the day</span>
+      <div class="play">
+        <button class="btn playbtn sm" id="rpPlay" type="button" title="Move the clock 5 minutes at a time automatically">▶ Play</button>
+        <label class="speed">Speed <select id="rpSpeed" aria-label="Seconds per 5-minute step">
+          <option value="0.5">0.5 s / 5 min</option><option value="1">1 s / 5 min</option><option value="2" selected>2 s / 5 min</option>
+          <option value="5">5 s / 5 min</option><option value="10">10 s / 5 min</option></select></label>
+      </div></div>
+    <div class="field"><span class="lbl">Move the clock</span>
+      <div class="steps" id="rpSteps">
+        <button class="btn step sm" data-to="5">+5 min</button><button class="btn step sm" data-to="15">+15 min</button>
+        <button class="btn step sm" data-to="60">+1 hour</button><button class="btn step sm" data-to="close">To 15:30</button>
+        <button class="btn step sm" data-to="next_day">Next day ▸</button>
+        <button class="btn step sm" id="rpRestart" type="button" title="Back to 09:15 of this day (only with no open replay positions / orders)">↺ Restart day</button>
+      </div></div>
+    <button class="btn ghost sm" id="rpReset" type="button" title="Delete all replay positions and orders; wallet back to ₹5,00,000">Reset replay account</button>
+    <div class="rb-note" id="rpNote">Replay a past trading day (from 8 Jul 2024) with a separate ₹5,00,000 wallet: pick a date, trade, and move the clock -
+      limit orders, stop loss / target, the 15:20 MIS square-off and expiry settlement all run as the clock passes them.
+      <b>Option prices at 09:15 and 15:30 are NSE's real open and close</b>; in between they are estimated from the underlying's real
+      moves (Black-Scholes with the IV moving from the open's to the close's), never outside the contract's real high-low of that day.
+      OI and volume are end-of-day figures. There is no bid / ask book in history - orders fill at the estimated price.
+      Contracts that did not trade that day can't be traded.</div>
   </div>
 
   <div class="toolbar">
@@ -171,6 +230,16 @@
     <div class="updated" id="updated"></div>
   </div>
   <div class="notice" id="notice" hidden></div>
+
+  <div class="card rp-chart" id="rpChartCard" hidden>
+    <div class="card-head">
+      <span class="card-title" id="rpChartTitle">Replay chart</span>
+      <div class="rp-legend"><span><i style="background:#0EA968"></i>Underlying (real candles, right axis)</span>
+        <span><i style="background:var(--purple)"></i>Option premium (left axis)</span><span>▲▼ your fills</span></div>
+    </div>
+    <div class="chart-wrap"><div id="rpChart"></div></div>
+    <div class="note" id="rpChartNote" style="padding-top:2px">The chart follows the contract in the order ticket (else your open position, else the ATM call).</div>
+  </div>
 
   <div class="grid">
     <!-- CHAIN -->
@@ -273,6 +342,7 @@ const URL_ = {
   und: "{% url 'options:underlyings' %}", exp: "{% url 'options:expiries' 'SYM' %}", chain: "{% url 'options:chain' 'SYM' %}",
   state: "{% url 'options:state' %}", preview: "{% url 'options:preview' %}", place: "{% url 'options:place' %}",
   cancel: "{% url 'options:cancel' 0 %}", exit: "{% url 'options:exit' 0 %}", levels: "{% url 'options:levels' 0 %}", funds: "{% url 'options:funds' %}",
+  rpStart: "{% url 'options:replay_start' %}", rpAdvance: "{% url 'options:replay_advance' %}", rpReset: "{% url 'options:replay_reset' %}", rpSeries: "{% url 'options:replay_series' %}",
 };
 const withId = (u, id) => u.replace('/0/', `/${id}/`);
 const INITIAL = JSON.parse(document.getElementById('initial').textContent);
@@ -293,13 +363,18 @@ const store = { get(k, d) { try { return localStorage.getItem('opt:' + k) ?? d; 
 function toast(msg, kind = 'info') { const t = document.createElement('div'); t.className = 'toast ' + kind; t.textContent = msg; $('toasts').appendChild(t); setTimeout(() => t.remove(), 5500); }
 function notice(msg, kind) { $('notice').hidden = !msg; $('notice').className = 'notice' + (kind ? ' ' + kind : ''); $('notice').textContent = msg || ''; }
 async function api(url, body) {
+  if (S.mode === 'replay') {
+    if (body === undefined) url += (url.includes('?') ? '&' : '?') + 'mode=replay';
+    else body = { ...body, mode: 'replay' };
+  }
   const r = await fetch(url, body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() }, body: JSON.stringify(body) });
   const d = await r.json().catch(() => ({}));
   if (!r.ok) { const e = new Error(d.error || `Request failed (${r.status})`); e.status = r.status; e.data = d; throw e; }
   return d;
 }
 
-const S = { symbol: INITIAL.symbol || store.get('symbol', 'NIFTY'), expiry: null, chain: null, state: null, n: +store.get('strikes', 15),
+const S = { mode: INITIAL.mode === 'replay' || store.get('mode', 'live') === 'replay' ? 'replay' : 'live',
+  symbol: INITIAL.symbol || store.get('symbol', 'NIFTY'), expiry: null, chain: null, state: null, n: +store.get('strikes', 15),
   greeks: store.get('greeks', '0') === '1', tk: null, side: 'BUY', product: 'NRML', type: 'MARKET', tab: 'pos', scrolled: false };
 
 /* ---------------- underlying / expiry ---------------- */
@@ -317,7 +392,7 @@ async function loadExpiries() {
   $('expiry').innerHTML = '<option>Loading…</option>';
   try {
     const d = await api(URL_.exp.replace('SYM', encodeURIComponent(S.symbol)));
-    const keep = store.get('expiry:' + S.symbol, '');
+    const keep = store.get(S.mode + ':expiry:' + S.symbol, '');
     $('expiry').innerHTML = d.expiries.map((e, i) => `<option value="${e}">${expTxt(e)}${i === 0 ? ' · nearest' : ''}</option>`).join('');
     S.expiry = d.expiries.includes(keep) ? keep : d.expiries[0];
     $('expiry').value = S.expiry;
@@ -327,18 +402,20 @@ async function loadExpiries() {
 }
 
 /* ---------------- chain ---------------- */
-let chainBusy = false;
+let chainSeq = 0;
 async function loadChain() {
-  if (!S.expiry || chainBusy) return;
-  chainBusy = true;
+  if (!S.expiry) return;
+  const seq = ++chainSeq, mode = S.mode;
   try {
     const d = await api(`${URL_.chain.replace('SYM', encodeURIComponent(S.symbol))}?expiry=${S.expiry}`);
-    if (d.symbol !== S.symbol || d.expiry !== S.expiry) return;          // the user switched meanwhile
+    if (seq !== chainSeq || mode !== S.mode || d.symbol !== S.symbol || d.expiry !== S.expiry) return;   // superseded
     S.chain = d; notice('');
+    if (S.mode === 'replay') loadSeries();
     renderHeader(); renderChain(); refreshTicketQuote();
   } catch (e) {
+    if (seq !== chainSeq || mode !== S.mode) return;
     notice('Option chain unavailable: ' + e.message + (S.chain ? ' - showing the last prices.' : ''), S.chain ? 'warn' : 'error');
-  } finally { chainBusy = false; }
+  }
 }
 function renderHeader() {
   const c = S.chain;
@@ -349,8 +426,12 @@ function renderHeader() {
   $('stPain').textContent = c.max_pain == null ? '—' : strikeTxt(c.max_pain);
   $('stDte').textContent = c.days_to_expiry.toFixed(1);
   $('updated').className = 'updated' + (c.stale ? ' stale' : '');
-  $('updated').innerHTML = `NSE data ${c.timestamp ? dmy(c.timestamp) : '—'}<br>${c.stale ? 'NSE not responding - last good copy' : 'fetched ' + hm(c.fetched_at)}`;
-  const m = c.market; $('mkt').textContent = m.open ? 'Market open' : 'Market ' + m.status.toLowerCase().replace('_', '-');
+  $('updated').innerHTML = c.replay
+    ? `Replay · ${dmy(c.timestamp)}<br>${esc(c.symbol)}: ${esc(c.resolution)} underlying data`
+    : `NSE data ${c.timestamp ? dmy(c.timestamp) : '—'}<br>${c.stale ? 'NSE not responding - last good copy' : 'fetched ' + hm(c.fetched_at)}`;
+  if (c.replay) $('rpRes').textContent = `${c.symbol}: ${c.resolution} underlying data`;
+  const m = c.market;
+  $('mkt').textContent = c.replay ? (m.open ? 'Replay session open' : 'Replay day over') : m.open ? 'Market open' : 'Market ' + m.status.toLowerCase().replace('_', '-');
   $('mkt').className = 'mkt' + (m.open ? ' open' : '');
 }
 function sideCells(x, side, k, spot, maxOi) {
@@ -364,7 +445,8 @@ function sideCells(x, side, k, spot, maxOi) {
   const g = S.greeks ? `<td class="${cls}">${x.delta == null ? '—' : x.delta.toFixed(2)}</td><td class="${cls}">${x.theta == null ? '—' : x.theta.toFixed(1)}</td>` : '';
   const bs = `<span class="bs"><button class="b" data-trade="BUY" data-k="${k}" data-t="${side}" title="Buy">B</button><button class="s" data-trade="SELL" data-k="${k}" data-t="${side}" title="Sell">S</button></span>`;
   const ltp = `<td class="ltpc ${cls}">${bs}<span class="ltp">${px(x.ltp)}</span><div class="sub ${x.pchg > 0 ? 'up' : x.pchg < 0 ? 'down' : ''}">${x.ltp ? (x.pchg > 0 ? '+' : '') + x.pchg.toFixed(1) + '%' : ''}</div></td>`;
-  const ba = `<td class="${cls}"><span class="up">${px(x.bid)}</span><div class="sub">${px(x.ask)}</div></td>`;
+  const ba = S.chain.replay ? `<td class="${cls} muted" title="No order book in history - fills at the estimated price">—</td>`
+    : `<td class="${cls}"><span class="up">${px(x.bid)}</span><div class="sub">${px(x.ask)}</div></td>`;
   return side === 'CE' ? oi + vol + iv + g + ba + ltp : ltp + ba + g + iv + vol + oi;
 }
 function renderChain() {
@@ -405,7 +487,7 @@ function openTicket(k, t, side) {
   $('tkEmpty').hidden = true; $('tkForm').hidden = false;
   $('tkSl').value = ''; $('tkTp').value = ''; $('tkMsg').textContent = '';
   if (S.type === 'LIMIT') { const q = (rowOf(k) || {})[t]; $('tkLimit').value = q && q.ltp ? q.ltp.toFixed(2) : ''; }
-  renderTicket(); preview();
+  renderTicket(); preview(); loadSeries();
   if (window.innerWidth < 1100) $('ticket').scrollIntoView({ behavior: 'smooth' });
 }
 function tkName() {
@@ -415,6 +497,12 @@ function tkName() {
 function refreshTicketQuote() {
   if (!S.tk || S.tk.symbol !== S.chain.symbol || S.tk.expiry !== S.chain.expiry) return;
   const q = (rowOf(S.tk.strike) || {})[S.tk.option_type];
+  if (q && S.chain.replay) {
+    const d = q.day || {};
+    $('tkQ').innerHTML = `Price <b>${px(q.ltp)}</b> <span>(est. at ${hm(S.chain.timestamp).slice(0, 5)})</span> <span>IV ${q.iv ? q.iv.toFixed(1) : '—'}</span>`
+      + `<span>Day O ${px(d.open)} H ${px(d.high)} L ${px(d.low)} C ${px(d.close)}</span>`;
+    return;
+  }
   $('tkQ').innerHTML = q ? `LTP <b>${px(q.ltp)}</b> <span>Bid <b class="up">${px(q.bid)}</b> × ${nf0.format(q.bid_qty)}</span> <span>Ask <b class="down">${px(q.ask)}</b> × ${nf0.format(q.ask_qty)}</span> <span>IV ${q.iv ? q.iv.toFixed(1) : '—'}</span>`
     : 'No quotes for this contract';
 }
@@ -469,22 +557,27 @@ async function placeOrder() {
     if (o.status === 'COMPLETE') toast(`${o.side} ${o.lots} lot ${o.name} filled @ ₹${nf.format(o.price)} · charges ₹${nf.format(o.charges)}`, 'success');
     else toast(`Limit order placed: ${o.side} ${o.lots} lot ${o.name} @ ₹${nf.format(o.limit_price)} - ${o.message}`);
     $('tkMsg').textContent = '';
-    await loadState();
+    await loadState(); loadSeries();
   } catch (e) { $('tkMsg').className = 'tk-msg err'; $('tkMsg').textContent = e.message; toast(e.message, 'error'); }
   finally { b.disabled = false; b.textContent = label; preview(); }
 }
 
 /* ---------------- state: positions / orders / history / funds ---------------- */
-let stateBusy = false;
+let stateSeq = 0;
 async function loadState() {
-  if (stateBusy) return; stateBusy = true;
-  try { S.state = await api(URL_.state); renderState(); } catch (e) { /* keep last */ } finally { stateBusy = false; }
+  const seq = ++stateSeq, mode = S.mode;
+  try {
+    const d = await api(URL_.state);
+    if (seq !== stateSeq || mode !== S.mode) return;                    // a newer request / the mode changed
+    S.state = d; renderState();
+  } catch (e) { /* keep last */ }
 }
 const reasonTxt = { '': 'Manual', limit: 'Limit', stop_loss: 'Stop loss', target: 'Target', squareoff: '15:20 square-off', expiry: 'Expiry' };
 function renderState() {
   const st = S.state, f = st.funds;
-  $('stateTime').textContent = 'updated ' + hm(st.market.now);
-  $('tkFunds').textContent = 'Available ' + inr(f.available);
+  $('stateTime').textContent = st.mode === 'replay' ? (st.replay && st.replay.date ? 'replay clock ' + st.replay.time : '') : 'updated ' + hm(st.market.now);
+  renderReplay();
+  $('tkFunds').textContent = (st.mode === 'replay' ? 'Replay wallet · ' : 'Available ') + inr(f.available);
   const open = st.positions.filter((p) => p.quantity);
   $('cPos').textContent = open.length; $('cOrd').textContent = st.pending.length;
   const net = (k) => open.reduce((a, p) => a + (p[k] || 0), 0);
@@ -619,16 +712,169 @@ document.addEventListener('click', async (e) => {
   } catch (err) { toast(err.message, 'error'); if (ex) ex.disabled = false; }
   loadState();
 });
+/* ---------------- mode + replay clock ---------------- */
+function renderMode() {
+  $('modeSeg').querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.mode === S.mode));
+  $('replayBar').hidden = S.mode !== 'replay';
+  if (S.mode !== 'replay') { setPlaying(false); $('rpChartCard').hidden = true; }
+  document.querySelector('.page-head .tag').textContent = S.mode === 'replay'
+    ? 'Replay a past day · real NSE open / close, estimated in between · separate replay wallet'
+    : 'Live NSE option chain · lots, margin and charges like a real broker · separate wallet';
+}
+function renderReplay() {
+  const r = S.state && S.state.replay;
+  if (S.mode !== 'replay' || !r) return;
+  $('rpDate').min = r.first_day;
+  $('rpDate').max = new Date().toISOString().slice(0, 10);
+  if (!$('rpDate').value && r.date) $('rpDate').value = r.date;
+  $('rpClock').textContent = r.date ? `${new Date(r.date + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' })} · ${r.time}` : 'Not started';
+  $('rpSteps').querySelectorAll('button[data-to]').forEach((b) => { b.disabled = !r.date || playing || (r.time >= '15:30' && b.dataset.to !== 'next_day'); });
+  $('rpRestart').disabled = !r.date || playing || r.busy;
+  $('rpPlay').disabled = !r.date || (r.time >= '15:30' && !playing);
+  $('rpChartCard').hidden = !r.date;
+  $('rpStart').title = r.busy ? 'Close your replay positions / orders (or reset) before jumping to another date' : '';
+}
+async function reloadAll() {
+  S.chain = null; S.tk = null; $('tkEmpty').hidden = false; $('tkForm').hidden = true;
+  $('chain').innerHTML = `<tbody><tr><td class="empty">${S.mode === 'replay' ? 'Loading that day\'s option prices (the first load of a day downloads NSE\'s file)…' : 'Loading the option chain…'}</td></tr></tbody>`;
+  await loadState();
+  if (S.mode === 'replay' && !(S.state && S.state.replay && S.state.replay.date)) {
+    $('chain').innerHTML = '<tbody><tr><td class="empty">Pick a past date above and press <b>Start this date</b>.</td></tr></tbody>';
+    ['spot', 'stLot', 'stAtm', 'stPcr', 'stPain', 'stDte'].forEach((id) => { $(id).textContent = '—'; });
+    $('expiry').innerHTML = ''; $('updated').textContent = ''; return;
+  }
+  await loadUnderlyings();
+  await loadExpiries();
+}
+$('modeSeg').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-mode]'); if (!b || b.dataset.mode === S.mode) return;
+  S.mode = b.dataset.mode; store.set('mode', S.mode); notice('');
+  history.replaceState(null, '', `?symbol=${encodeURIComponent(S.symbol)}${S.mode === 'replay' ? '&mode=replay' : ''}`);
+  renderMode(); reloadAll();
+});
+async function clockAction(fn, label) {
+  $('replayBar').classList.add('busy');
+  try { await fn(); } catch (e) { toast(e.message, 'error'); notice(e.message, 'warn'); }
+  finally { $('replayBar').classList.remove('busy'); }
+}
+$('rpStart').addEventListener('click', () => clockAction(async () => {
+  if (!$('rpDate').value) throw new Error('Pick a date first.');
+  setPlaying(false);
+  $('rpStart').textContent = 'Loading…';
+  try { await api(URL_.rpStart, { date: $('rpDate').value }); } finally { $('rpStart').textContent = 'Start this date'; }
+  notice(''); toast('Replay started at 09:15', 'success'); await reloadAll();
+}));
+async function advance(to) {
+    const before = S.state && S.state.replay ? S.state.replay.date : null;
+    const d = await api(URL_.rpAdvance, { to });
+    const ev = d.events || {}, msgs = [];
+    (ev.fills || []).forEach((o) => msgs.push(`Limit filled: ${o.side} ${o.name} @ ₹${nf.format(o.price)}`));
+    (ev.exits || []).forEach((o) => msgs.push(`${reasonTxt[o.reason]}: ${o.name} @ ₹${nf.format(o.price)} (${o.realized_pnl >= 0 ? '+' : '−'}₹${nf.format(Math.abs(o.realized_pnl))})`));
+    (ev.squareoff || []).forEach((o) => msgs.push(`15:20 square-off: ${o.name} @ ₹${nf.format(o.price)}`));
+    (ev.settled || []).forEach((o) => msgs.push(`Expiry: ${o.name} - ${o.message}`));
+    if (ev.expired_orders) msgs.push(`${ev.expired_orders} unfilled limit order(s) expired at the close`);
+    msgs.forEach((m) => toast(m, 'success'));
+    if (d.date !== before) { notice(''); await reloadAll(); } else { await Promise.all([loadChain(), loadState()]); }
+    return d;
+}
+$('rpSteps').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-to]'); if (!b) return;
+  clockAction(() => advance(b.dataset.to));
+});
+
+/* playback: the clock moves 5 minutes every `speed` seconds (slower if the server needs longer) */
+let playing = false, playTimer = null;
+function setPlaying(on) {
+  playing = on; clearTimeout(playTimer);
+  $('rpPlay').textContent = on ? '⏸ Pause' : '▶ Play';
+  $('rpPlay').classList.toggle('on', on);
+  renderReplay();
+}
+async function playStep() {
+  if (!playing) return;
+  const t0 = performance.now();
+  try { await advance('5'); } catch (e) { setPlaying(false); toast(e.message, 'error'); return; }
+  const r = S.state && S.state.replay;
+  if (!r || r.time >= '15:30') { setPlaying(false); toast('15:30 - the day is over. Press Next day to carry on.'); return; }
+  if (playing) playTimer = setTimeout(playStep, Math.max(0, +$('rpSpeed').value * 1000 - (performance.now() - t0)));
+}
+$('rpPlay').addEventListener('click', () => { if (playing) setPlaying(false); else { setPlaying(true); playTimer = setTimeout(playStep, +$('rpSpeed').value * 1000); } });
+$('rpSpeed').value = store.get('speed', '2');
+$('rpSpeed').addEventListener('change', () => store.set('speed', $('rpSpeed').value));
+$('rpRestart').addEventListener('click', () => clockAction(async () => {
+  const r = S.state && S.state.replay; if (!r || !r.date) return;
+  await api(URL_.rpStart, { date: r.date }); toast('Back to 09:15'); await reloadAll();
+}));
+document.addEventListener('visibilitychange', () => { if (document.hidden && playing) setPlaying(false); });
+
+/* replay chart: real underlying candles + the contract's premium up to the clock, with your fills */
+const IST_SHIFT = 19800;
+const tsec = (iso) => Math.floor(new Date(iso).getTime() / 1000) + IST_SHIFT;
+let RC = null, seriesSeq = 0;
+function initReplayChart() {
+  if (RC) return;
+  const el = $('rpChart');
+  const chart = LightweightCharts.createChart(el, {
+    width: el.clientWidth, height: 300,
+    layout: { background: { type: 'solid', color: '#FFFFFF' }, textColor: '#64748B', fontFamily: 'JetBrains Mono, monospace', fontSize: 11 },
+    grid: { vertLines: { color: '#EEF2F7' }, horzLines: { color: '#EEF2F7' } },
+    leftPriceScale: { visible: true, borderColor: '#E3E8F0' }, rightPriceScale: { visible: true, borderColor: '#E3E8F0' },
+    timeScale: { borderColor: '#E3E8F0', timeVisible: true, secondsVisible: false, rightOffset: 3 },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+  });
+  const candles = chart.addCandlestickSeries({ priceScaleId: 'right', upColor: '#0EA968', downColor: '#E5484D', borderVisible: false, wickUpColor: '#0EA968', wickDownColor: '#E5484D' });
+  const prem = chart.addLineSeries({ priceScaleId: 'left', color: '#7C3AED', lineWidth: 2, priceLineVisible: false });
+  new ResizeObserver(() => chart.applyOptions({ width: el.clientWidth })).observe(el);
+  RC = { chart, candles, prem };
+}
+function chartContract() {
+  if (S.tk && S.chain && S.tk.symbol === S.chain.symbol && S.tk.expiry === S.chain.expiry) return S.tk;
+  const p = (S.state ? S.state.positions : []).find((x) => x.quantity && S.chain && x.symbol === S.chain.symbol);
+  if (p) return { symbol: p.symbol, expiry: p.expiry, strike: p.strike, option_type: p.option_type };
+  return S.chain && S.chain.atm != null ? { symbol: S.chain.symbol, expiry: S.chain.expiry, strike: S.chain.atm, option_type: 'CE' } : null;
+}
+async function loadSeries() {
+  if (S.mode !== 'replay' || typeof LightweightCharts === 'undefined') return;
+  const c = chartContract(); if (!c) return;
+  const seq = ++seriesSeq;
+  try {
+    const q = new URLSearchParams({ symbol: c.symbol, expiry: c.expiry, strike: c.strike, option_type: c.option_type });
+    const d = await api(`${URL_.rpSeries}?${q}`);
+    if (seq !== seriesSeq) return;
+    $('rpChartCard').hidden = false; initReplayChart();
+    RC.candles.setData(d.underlying.map((b) => ({ time: tsec(b.x), open: b.o, high: b.h, low: b.l, close: b.c })));
+    RC.prem.setData(d.premium.map((x) => ({ time: tsec(x.x), value: x.v })));
+    RC.prem.setMarkers(d.trades.map((t) => ({ time: tsec(t.x), position: t.side === 'BUY' ? 'belowBar' : 'aboveBar',
+      color: t.side === 'BUY' ? '#0A8A54' : '#C93A3F', shape: t.side === 'BUY' ? 'arrowUp' : 'arrowDown',
+      text: `${t.side} ${nf.format(t.price)}${t.reason && t.reason !== 'limit' ? ' · ' + (reasonTxt[t.reason] || t.reason) : ''}` }))
+      .sort((a, b) => a.time - b.time));
+    RC.chart.timeScale().fitContent();
+    const exp = new Date(c.expiry + 'T00:00:00').toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }).toUpperCase();
+    $('rpChartTitle').textContent = `Replay chart · ${c.symbol} ${exp} ${strikeTxt(+c.strike)} ${c.option_type}`;
+    const dd = d.day;
+    $('rpChartNote').innerHTML = (d.traded ? '' : '<b class="down">This contract did not trade that day.</b> ')
+      + `Underlying: ${esc(d.resolution)} candles (real). Premium: real at 09:15 and 15:30, estimated in between`
+      + (dd ? ` · day O ${px(dd.open)} H ${px(dd.high)} L ${px(dd.low)} C ${px(dd.close)}` : '')
+      + '. The chart follows the contract in the order ticket (else your open position, else the ATM call).';
+  } catch (e) { if (seq === seriesSeq) $('rpChartNote').textContent = 'Chart unavailable: ' + e.message; }
+}
+$('rpReset').addEventListener('click', () => clockAction(async () => {
+  setPlaying(false);
+  if (!confirm('Delete all replay positions, orders and history, and reset the replay wallet to ₹5,00,000?')) return;
+  await api(URL_.rpReset, {}); $('rpDate').value = ''; toast('Replay account reset'); await reloadAll();
+}));
+
 $('addBtn').addEventListener('click', async () => { try { await api(URL_.funds, { amount: $('addAmt').value }); toast('Funds added', 'success'); loadState(); } catch (e) { toast(e.message, 'error'); } });
 window.addEventListener('resize', () => { if (S.tab === 'pos') drawPayoff(); });
 
 /* ---------------- boot + polling ---------------- */
 (async () => {
-  await loadUnderlyings();
-  await Promise.all([loadExpiries(), loadState()]);
+  renderMode();
+  await reloadAll();
+  // live prices are polled; replay prices only change when the clock moves
   const tick = () => (S.chain && S.chain.market && S.chain.market.open ? 3000 : 30000);
-  const loopChain = async () => { if (!document.hidden) await loadChain(); setTimeout(loopChain, tick()); };
-  const loopState = async () => { if (!document.hidden) await loadState(); setTimeout(loopState, tick() === 3000 ? 5000 : 30000); };
+  const loopChain = async () => { if (!document.hidden && S.mode === 'live') await loadChain(); setTimeout(loopChain, tick()); };
+  const loopState = async () => { if (!document.hidden && S.mode === 'live') await loadState(); setTimeout(loopState, tick() === 3000 ? 5000 : 30000); };
   setTimeout(loopChain, tick()); setTimeout(loopState, 5000);
 })();
 })();

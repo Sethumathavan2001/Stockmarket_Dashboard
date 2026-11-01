@@ -12,26 +12,33 @@
     --bg:#FFFFFF; --panel:#F7F9FC; --border:#E3E8F0; --text:#101828; --text-muted:#64748B;
     --green:#0EA968; --green-dark:#0A8A54; --green-bg:#E7F8F0; --red:#E5484D; --red-dark:#C93A3F; --red-bg:#FDECEC;
     --amber:#B45309; --amber-bg:#FEF3E0; --purple:#7C3AED; --purple-bg:#F3EEFF; --claude:#C2410C;
+    --vivek:#0E7490; --vivek-bg:#E6F6F9; --sethu:#7C3AED; --sethu-bg:#F3EEFF;
     --radius:10px; --shadow:0 1px 2px rgba(16,24,40,.04),0 1px 3px rgba(16,24,40,.06);
   }
   *{ box-sizing:border-box; }
   [hidden]{ display:none !important; }
   body{ margin:0; font-family:'Inter',system-ui,sans-serif; background:var(--bg); color:var(--text); }
   .mono{ font-family:'JetBrains Mono',monospace; }
-  .wrap{ max-width:1320px; margin:0 auto; padding:0 24px 60px; }
+  .wrap{ max-width:1440px; margin:0 auto; padding:0 24px 60px; }
   .page-head{ display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px 16px; margin-top:20px; }
   .page-head .title{ display:flex; flex-wrap:wrap; align-items:center; gap:4px 12px; font-size:18px; font-weight:700; }
   .page-head .tag{ font-size:12.5px; font-weight:500; color:var(--text-muted); border-left:1px solid var(--border); padding-left:12px; }
-  .bar{ display:grid; grid-template-columns:minmax(0,1fr) auto; gap:14px 24px; align-items:center; margin-top:16px;
-    background:var(--panel); border:1px solid var(--border); border-radius:var(--radius); padding:14px 18px; }
+  .live-pill{ font-size:12px; font-weight:700; padding:4px 10px; border-radius:999px; background:var(--panel); color:var(--text-muted); border:1px solid var(--border); }
+  .live-pill.on{ background:var(--red-bg); color:var(--red-dark); border-color:transparent; }
+  .bar{ margin-top:16px; background:var(--panel); border:1px solid var(--border); border-radius:var(--radius); padding:14px 18px; display:grid; gap:12px; }
   .bar .meta{ font-size:13px; color:var(--text-muted); line-height:1.6; }
   .bar .meta b{ color:var(--text); }
   .bar a{ color:var(--blue-600); font-weight:600; text-decoration:none; }
-  .ctrl{ display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; }
+  .ctrl{ display:flex; flex-wrap:wrap; gap:12px 18px; align-items:flex-end; }
   .field{ display:flex; flex-direction:column; gap:5px; }
-  .field label{ font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--text-muted); }
-  .wallet{ font-family:'JetBrains Mono',monospace; font-size:18px; font-weight:700; }
-  input[type=number]{ border:1px solid var(--border); border-radius:8px; padding:8px 10px; font-size:14px; font-family:'JetBrains Mono',monospace; width:130px; background:#fff; }
+  .field label, .lbl{ font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--text-muted); }
+  .wallets{ display:flex; flex-wrap:wrap; gap:10px; }
+  .wcard{ border:1px solid var(--border); border-radius:8px; background:#fff; padding:8px 12px; min-width:170px; }
+  .wcard .amt{ font-family:'JetBrains Mono',monospace; font-size:17px; font-weight:700; margin-top:2px; }
+  .wcard .sub{ font-size:11px; color:var(--text-muted); margin-top:2px; max-width:220px; line-height:1.35; }
+  .wcard.vivek{ border-left:4px solid var(--vivek); } .wcard.sethu{ border-left:4px solid var(--sethu); } .wcard.paper{ border-left:4px solid var(--navy-800); }
+  input[type=number]{ border:1px solid var(--border); border-radius:8px; padding:7px 9px; font-size:13.5px; font-family:'JetBrains Mono',monospace; width:120px; background:#fff; }
+  input[type=number]:disabled{ background:var(--panel); color:var(--text-muted); }
   .notice{ margin-top:14px; padding:10px 14px; border-radius:8px; font-size:13.5px; background:var(--blue-50); color:var(--navy-800); line-height:1.5; }
   .notice.warn{ background:var(--amber-bg); color:var(--amber); }
   .notice.error{ background:var(--red-bg); color:var(--red-dark); }
@@ -40,33 +47,45 @@
   .card-title{ font-size:11.5px; font-weight:700; text-transform:uppercase; letter-spacing:.07em; color:var(--text-muted); }
   .table-wrap{ overflow-x:auto; }
   table{ width:100%; border-collapse:collapse; font-size:13px; }
-  thead th{ text-align:left; font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--text-muted); padding:9px 12px; background:var(--panel); border-bottom:1px solid var(--border); white-space:nowrap; }
-  tbody td{ padding:10px 12px; border-bottom:1px solid var(--border); vertical-align:top; }
+  thead th{ text-align:left; font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--text-muted); padding:9px 10px; background:var(--panel); border-bottom:1px solid var(--border); white-space:nowrap; }
+  tbody td{ padding:7px 10px; border-bottom:1px solid #EEF2F7; vertical-align:middle; }
+  tbody tr.last td{ border-bottom:2px solid var(--border); }
+  td.top{ vertical-align:top; padding-top:10px; }
   td.num, th.num{ text-align:right; font-family:'JetBrains Mono',monospace; white-space:nowrap; }
-  tr.buy td:first-child{ box-shadow:inset 4px 0 0 var(--green); }
-  tr.sell td:first-child{ box-shadow:inset 4px 0 0 var(--red); }
-  tr.done td{ background:#FAFCFB; }
+  td.stock.buy{ box-shadow:inset 4px 0 0 var(--green); } td.stock.sell{ box-shadow:inset 4px 0 0 var(--red); }
   .sym{ font-weight:700; font-size:14px; } .co{ font-size:11.5px; color:var(--text-muted); }
   .pill{ display:inline-block; font-size:11px; font-weight:700; padding:2px 9px; border-radius:999px; white-space:nowrap; }
   .pill.buy{ background:var(--green-bg); color:var(--green-dark); } .pill.sell{ background:var(--red-bg); color:var(--red-dark); }
   .pill.conv{ background:var(--panel); color:var(--text-muted); border:1px solid var(--border); }
   .pill.high{ background:var(--purple-bg); color:var(--purple); border-color:transparent; }
+  .acct{ display:inline-flex; align-items:center; gap:6px; font-weight:700; font-size:12.5px; white-space:nowrap; }
+  .acct i{ width:8px; height:8px; border-radius:50%; display:inline-block; }
+  .acct.paper i{ background:var(--navy-800); } .acct.vivek i{ background:var(--vivek); } .acct.sethu i{ background:var(--sethu); }
+  .real{ font-size:9.5px; font-weight:800; letter-spacing:.06em; padding:1px 5px; border-radius:4px; background:var(--red-bg); color:var(--red-dark); }
   .up{ color:var(--green-dark); } .down{ color:var(--red-dark); } .muted{ color:var(--text-muted); }
-  .qty{ width:96px !important; }
-  .btn{ border:none; border-radius:8px; padding:8px 14px; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit; white-space:nowrap; color:#fff; }
+  .in{ width:92px !important; padding:6px 8px !important; }
+  .in.q{ width:84px !important; }
+  .hint{ font-size:10.5px; color:var(--text-muted); margin-top:2px; font-family:'JetBrains Mono',monospace; }
+  .btn{ border:none; border-radius:8px; padding:7px 12px; font-size:12.5px; font-weight:700; cursor:pointer; font-family:inherit; white-space:nowrap; color:#fff; }
   .btn.buy{ background:var(--green); } .btn.sell{ background:var(--red); }
+  .btn.real.buy{ background:#fff; color:var(--green-dark); border:2px solid var(--green); }
+  .btn.real.sell{ background:#fff; color:var(--red-dark); border:2px solid var(--red); }
   .btn.ghost{ background:#fff; color:var(--navy-800); border:1px solid var(--border); font-weight:600; }
-  .btn:disabled{ opacity:.5; cursor:not-allowed; }
+  .btn:disabled{ opacity:.45; cursor:not-allowed; }
   .btn.refresh{ background:var(--navy-800); display:inline-flex; align-items:center; gap:7px; }
   .btn.refresh .spin{ width:12px; height:12px; border:2px solid rgba(255,255,255,.4); border-top-color:#fff; border-radius:50%; animation:spin .8s linear infinite; }
   @keyframes spin{ to{ transform:rotate(360deg); } }
   .progress{ margin-top:14px; padding:10px 14px; border-radius:8px; background:var(--blue-50); color:var(--navy-800); font-size:13px; }
   .progress .track{ height:6px; border-radius:3px; background:#fff; margin-top:8px; overflow:hidden; }
   .progress .fill{ height:100%; background:var(--blue-600); transition:width .4s; }
-  .status{ font-size:12px; margin-top:6px; line-height:1.45; max-width:260px; }
-  .status.ok{ color:var(--green-dark); } .status.err{ color:var(--red-dark); } .status.warn{ color:var(--amber); }
+  .status{ font-size:11.5px; margin-top:4px; line-height:1.4; max-width:300px; white-space:normal; }
+  .status.ok{ color:var(--green-dark); } .status.err{ color:var(--red-dark); } .status.warn{ color:var(--amber); } .status.info{ color:var(--text-muted); }
   .status a{ color:var(--blue-600); font-weight:600; text-decoration:none; }
-  .why{ font-size:12px; color:var(--text-muted); line-height:1.5; max-width:380px; }
+  .bstat{ display:inline-block; font-size:10.5px; font-weight:800; text-transform:uppercase; padding:1px 7px; border-radius:4px; margin-right:4px; }
+  .bstat.open, .bstat.pending, .bstat.placing{ background:var(--blue-50); color:var(--navy-800); }
+  .bstat.closed{ background:var(--green-bg); color:var(--green-dark); } .bstat.rejected, .bstat.error{ background:var(--red-bg); color:var(--red-dark); }
+  .caution{ margin-top:6px; font-size:11px; line-height:1.4; color:var(--amber); background:var(--amber-bg); border-radius:6px; padding:4px 7px; max-width:200px; }
+  .why{ font-size:12px; color:var(--text-muted); line-height:1.5; max-width:340px; }
   .why b{ color:var(--text); font-weight:600; }
   details summary{ cursor:pointer; font-size:12px; color:var(--blue-600); font-weight:600; margin-top:4px; }
   .news{ margin:4px 0 0; padding-left:16px; }
@@ -74,7 +93,7 @@
   .empty{ padding:40px 16px; text-align:center; color:var(--text-muted); font-size:14px; line-height:1.6; }
   .note{ font-size:12px; color:var(--text-muted); line-height:1.6; padding:10px 16px 14px; }
   .toast-box{ position:fixed; right:20px; bottom:20px; display:grid; gap:8px; z-index:50; }
-  .toast{ background:var(--navy-900); color:#fff; padding:10px 14px; border-radius:8px; font-size:13px; max-width:380px; box-shadow:0 8px 20px rgba(0,0,0,.18); }
+  .toast{ background:var(--navy-900); color:#fff; padding:10px 14px; border-radius:8px; font-size:13px; max-width:420px; box-shadow:0 8px 20px rgba(0,0,0,.18); }
   .toast.error{ background:var(--red-dark); } .toast.success{ background:var(--green-dark); }
 </style>
 </head>
@@ -84,14 +103,16 @@
 
 <div class="wrap">
   <div class="page-head">
-    <div class="title">Claude Orders <span class="tag">Intraday picks from Claude's signal board · one click places them in Paper Trading 2</span></div>
+    <div class="title">Claude Orders <span class="tag">Intraday picks from the signal board · place them in Paper Trading 2 or the real Angel One accounts</span></div>
+    <span class="live-pill" id="livePill">—</span>
   </div>
 
   <div class="bar">
     <div class="meta" id="meta"></div>
     <div class="ctrl">
-      <div class="field"><label for="amount">Amount per order (₹)</label><input type="number" id="amount" min="1000" step="1000" value="50000"></div>
-      <div class="field"><label>Paper Trading 2 wallet</label><div class="wallet" id="wallet">—</div></div>
+      <div class="field"><label for="lev" title="Angel One intraday margin: the wallet can take positions worth up to this many times its cash">Angel intraday leverage ×</label>
+        <input type="number" id="lev" min="1" max="5" step="0.5" value="5" style="width:90px"></div>
+      <div class="wallets" id="wallets"></div>
       <button class="btn refresh" id="refreshBtn" type="button" title="Re-run the signal board on current data (takes a few minutes)">↻ Refresh orders</button>
       <a class="btn ghost" href="{% url 'paper_trading:page2' %}">Open Paper Trading 2 →</a>
     </div>
@@ -102,15 +123,23 @@
   <div class="card">
     <div class="card-head"><span class="card-title">Recommended orders</span><span class="co" id="quoteTime"></span></div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Stock</th><th>Order</th><th class="num">At recommendation</th><th class="num">Live price</th>
-        <th class="num">Stop loss</th><th class="num">Target</th><th class="num">Quantity</th><th class="num">Value · risk</th><th>Why</th><th>Place</th></tr></thead>
+      <thead><tr><th>Stock</th><th>Order</th><th class="num">At rec. · live</th><th>Account</th><th class="num">Quantity</th>
+        <th class="num">Stop loss %</th><th class="num">Target %</th><th class="num">Value · risk</th><th>Place</th><th>Why</th></tr></thead>
       <tbody id="rows"></tbody>
     </table></div>
     <div class="note">
-      Each order is placed in <b>Paper Trading 2</b> as an Intraday market order at the live price. The stop loss and target are set as the
-      recommended percentages from your actual fill, so the 1 : 1.5 reward-to-risk is kept even if the price moved. An order can't be placed
-      twice in a day, and it is refused once the live price has already passed its stop or target. Paper Trading 2 squares Intraday
-      positions off at 3:20 PM. These are research picks with modest odds (51-57% in your own tests), not investment advice.
+      Each stock has three rows: <b>Paper Trading 2</b> (practice) and the two <b>real Angel One accounts</b>, Vivek and Sethu. Quantity,
+      stop loss and target are editable per row. <b>Default quantity splits each wallet across that side's orders</b>:
+      wallet × leverage ÷ number of SELL (or BUY) stocks in the list ÷ live price - leverage 1 for
+      Paper Trading 2 (it needs the full value in cash) and the "Angel intraday leverage" for Vivek and Sethu (Angel One
+      gives up to 5× intraday margin; for some stocks less, and then it refuses the order). SELL orders are listed first.
+      Stop loss and target are <b>percentages from your actual fill price</b> (the ₹ under each box is where they land at
+      today's live price), so the reward-to-risk holds even if the price has moved.
+      <b>Paper:</b> an Intraday market order in Paper Trading 2 with those levels, squared off at 15:20.
+      <b>Angel One (real money):</b> an INTRADAY market order; once filled, a stop-loss order is placed at Angel One (it works even if
+      this computer is off); the target and a 15:15 exit are watched by this server, which cancels the stop-loss order before exiting.
+      Real orders need ANGEL_LIVE_TRADING=1 in .env, are allowed 09:15-15:00, at most once per stock and side a day per account, and
+      each asks you to confirm. These are research picks with modest odds (51-57% in your own tests), not investment advice.
     </div>
   </div>
 </div>
@@ -121,33 +150,59 @@
 (() => {
 'use strict';
 const URLS = {
-  state: "{% url 'paper_trading:claude_orders_state' %}", place: "{% url 'paper_trading:claude_orders_place' %}", refresh: "{% url 'paper_trading:claude_orders_refresh' %}",
+  state: "{% url 'paper_trading:claude_orders_state' %}", place: "{% url 'paper_trading:claude_orders_place' %}",
+  refresh: "{% url 'paper_trading:claude_orders_refresh' %}", wallets: "{% url 'paper_trading:claude_orders_wallets' %}",
   quotes: "{% url 'paper_trading:quotes' %}", page2: "{% url 'paper_trading:page2_live' 'CODE_PLACEHOLDER' %}",
   candle: "{% url 'candle_predictor_page' %}",
 };
 let ST = JSON.parse(document.getElementById('state-data').textContent);
-const LTP = {}, QTY = {}, MSG = {};
+let W = {};                                   // wallets
+const LTP = {}, EDIT = {}, MSG = {};          // EDIT["<order id>|<account>"] = {qty, stop, target}
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const safe = (u) => (/^https?:\/\//i.test(u || '') ? u : null);
 const nf = new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const inr = (v) => '₹' + nf.format(v);
+const inr = (v) => v == null ? '—' : (v < 0 ? '−₹' : '₹') + nf.format(Math.abs(v));
 const hm = (iso) => new Date(iso).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' });
 const csrf = () => { const m = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/); return m ? decodeURIComponent(m[1]) : ''; };
-function toast(msg, kind = 'info') { const t = document.createElement('div'); t.className = 'toast ' + kind; t.textContent = msg; $('toasts').appendChild(t); setTimeout(() => t.remove(), 5000); }
+function toast(msg, kind = 'info') { const t = document.createElement('div'); t.className = 'toast ' + kind; t.textContent = msg; $('toasts').appendChild(t); setTimeout(() => t.remove(), 7000); }
 function notice(msg, kind) { $('notice').hidden = !msg; $('notice').className = 'notice' + (kind ? ' ' + kind : ''); $('notice').textContent = msg || ''; }
-try { const a = localStorage.getItem('claudeOrders:amount'); if (a) $('amount').value = a; } catch (e) {}
+try { const a = localStorage.getItem('claudeOrders:lev'); if (a) $('lev').value = a; } catch (e) {}
 
+const ACCOUNTS = () => [{ key: 'paper', name: 'Paper Trading 2', real: false },
+  ...(ST.accounts || []).map((a) => ({ key: a.key, name: a.name, real: true, missing: a.missing }))];
+
+/* ---------------- header: meta, wallets, refresh ---------------- */
 function renderMeta() {
   const g = ST.generated ? new Date(ST.generated) : null;
   $('meta').innerHTML = g
-    ? `<b>${ST.orders.length} orders</b> from ${safe(ST.source_url) ? `Claude's <a href="${esc(safe(ST.source_url))}" target="_blank" rel="noopener">${esc(ST.source || 'signal board')}</a>` : `the ${esc(ST.source || 'signal board')}`}${ST.checked ? ` (${ST.checked} stocks checked)` : ''}, made ${g.toLocaleString('en-IN', { weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' })} IST.<br>${esc(ST.method || '')}`
+    ? `<b>${ST.orders.length} orders</b> from the ${esc(ST.source || 'signal board')}${ST.checked ? ` (${ST.checked} stocks checked)` : ''}, made ${g.toLocaleString('en-IN', { weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' })} IST.<br>${esc(ST.method || '')}`
     : 'No recommendations yet. Press Refresh orders to build them from current data.';
-  $('wallet').textContent = inr(ST.balance || 0);
+  $('livePill').textContent = ST.live_trading ? 'Real Angel One orders: ON' : 'Real Angel One orders: OFF';
+  $('livePill').className = 'live-pill' + (ST.live_trading ? ' on' : '');
+  $('livePill').title = ST.live_trading ? `Real orders are enabled (max ₹${nf.format(ST.max_order_value)} per order)` : 'Set ANGEL_LIVE_TRADING=1 in .env and restart the server to allow real orders';
   if (ST.generated && !ST.is_today) notice(`These recommendations are from ${ST.session}. Only today's recommendations can be placed - press Refresh orders for a fresh list.`, 'warn');
   else if (ST.generated && !ST.orders.length) notice('No stock has enough agreeing signals right now - nothing to buy or sell. Try Refresh orders again later.');
   else notice('');
+  renderWallets();
   renderRefresh();
+}
+function renderWallets() {
+  const card = (key, title, sub) => {
+    const w = W[key] || {};
+    let amt = '—', note = sub;
+    if (key === 'paper') amt = inr(ST.balance || 0);
+    else if (w.configured === false) note = 'Not set up - add ' + esc(`ANGEL_${key.toUpperCase()}_*`) + ' to .env';
+    else if (w.error) note = '<span class="down">' + esc(w.error) + '</span>';
+    else if (w.available != null) { amt = inr(w.available); note = `Angel One · available cash${w.used ? ' · used ' + inr(w.used) : ''}`; }
+    else note = 'Loading…';
+    return `<div class="wcard ${key}"><div class="lbl">${esc(title)}</div><div class="amt">${amt}</div><div class="sub">${note}</div></div>`;
+  };
+  $('wallets').innerHTML = card('paper', 'Paper Trading 2 wallet', 'practice money') + card('vivek', 'Vivek wallet', '') + card('sethu', 'Sethu wallet', '');
+}
+async function loadWallets(fresh) {
+  try { const r = await fetch(URLS.wallets + (fresh ? '?fresh=1' : '')); W = await r.json(); } catch (e) {}
+  render();                                   // quantities are split from the wallets
 }
 
 let wasRunning = false, pollTimer = null;
@@ -164,7 +219,7 @@ function renderRefresh() {
   if (wasRunning && !R.running) {
     if (R.error) toast('Refresh failed - the previous list is kept. ' + R.error, 'error');
     else toast(`Orders refreshed: ${R.orders ?? 0} recommendation${R.orders === 1 ? '' : 's'}`, 'success');
-    Object.keys(QTY).forEach((k) => delete QTY[k]); Object.keys(MSG).forEach((k) => delete MSG[k]);
+    Object.keys(EDIT).forEach((k) => delete EDIT[k]); Object.keys(MSG).forEach((k) => delete MSG[k]);
     refreshQuotes();
   }
   wasRunning = !!R.running;
@@ -172,59 +227,103 @@ function renderRefresh() {
   if (R.running) pollTimer = setTimeout(refreshState, 3000);
 }
 
-function plannedQty(o) {
-  if (QTY[o.id]) return QTY[o.id];
-  const px = LTP[o.code] || o.price_at, amount = Math.max(0, parseFloat($('amount').value) || 0);
-  return Math.max(1, Math.floor(amount / px));
+/* ---------------- rows: one stock = paper + Vivek + Sethu ---------------- */
+// wallet split: each account's cash x leverage, shared equally by all of that side's stocks in the list
+function walletOf(acc) {
+  if (acc === 'paper') return ST.balance || 0;
+  const w = W[acc] || {};
+  return w.available != null && !w.error ? w.available : null;
 }
-function stateOf(o) {
-  if (o.placed) return 'placed';
-  const p = LTP[o.code]; if (p == null) return 'open';
+function leverage(acc) { return acc === 'paper' ? 1 : Math.min(5, Math.max(1, parseFloat($('lev').value) || 1)); }
+function split(o, acc) {
+  const cash = walletOf(acc);
+  if (cash == null) return null;
+  const n = Math.max(1, ST.orders.filter((x) => x.side === o.side).length);      // every SELL (or BUY) stock in the list
+  return { alloc: cash * leverage(acc) / n, n, cash };
+}
+function defaults(o, acc) {
+  const px = LTP[o.code] || o.price_at, sp = split(o, acc);
+  return { qty: sp ? Math.floor(sp.alloc / px) : 0, sl: o.stop_pct, tp: o.target_pct, split: sp };
+}
+function vals(o, acc) { return { ...defaults(o, acc), ...(EDIT[o.id + '|' + acc] || {}) }; }
+function priceState(o, stop, target) {
+  const p = LTP[o.code]; if (p == null) return '';
   const buy = o.side === 'BUY';
-  if (buy ? p <= o.stop : p >= o.stop) return 'stopped';
-  if (buy ? p >= o.target : p <= o.target) return 'reached';
-  return 'open';
+  if (buy ? p <= stop : p >= stop) return 'Price is already past the stop';
+  if (buy ? p >= target : p <= target) return 'Price is already past the target';
+  return '';
 }
-function row(o) {
-  const side = o.side.toLowerCase(), p = LTP[o.code], st = stateOf(o), q = plannedQty(o);
-  const move = p != null ? (p / o.price_at - 1) * 100 : null;
-  const value = q * (p || o.price_at), risk = value * o.stop_pct / 100;
-  const conv = `<span class="pill conv ${o.conviction === 'Higher' ? 'high' : ''}">${esc(o.conviction)}</span>`;
+// stop / target prices for an entry at p with sl / tp in %
+const levelsAt = (side, p, sl, tp) => side === 'BUY' ? [p * (1 - sl / 100), p * (1 + tp / 100)] : [p * (1 + sl / 100), p * (1 - tp / 100)];
+function accountRow(o, a, first, last) {
+  const side = o.side.toLowerCase(), key = o.id + '|' + a.key, p = LTP[o.code] || o.price_at;
+  const v = vals(o, a.key);
+  const paperDone = a.key === 'paper' && o.placed;
+  const bo = a.real ? (o.broker || {})[a.key] : null;
+  const done = paperDone || bo;
+  const qty = paperDone ? o.placed.quantity : bo ? bo.quantity : v.qty;
+  const sl = bo && bo.stop_pct != null ? bo.stop_pct : v.sl, tp = bo && bo.target_pct != null ? bo.target_pct : v.tp;
+  const [stop, target] = bo ? [bo.stop, bo.target] : levelsAt(o.side, p, sl, tp);
+  const value = qty * p, risk = qty * p * sl / 100;
+  const dis = done ? 'disabled' : '';
+  const label = `Place ${o.side}${a.real ? ' ' + a.name : ''}`;
+  let action;
+  if (paperDone) {
+    action = `<div class="status ok">✓ Placed ${o.placed.quantity} @ ${inr(o.placed.price)} at ${hm(o.placed.time)}<br><a href="${URLS.page2.replace('CODE_PLACEHOLDER', encodeURIComponent(o.code))}">Open in Paper Trading 2 →</a></div>`;
+  } else if (bo) {
+    const pnl = bo.pnl != null ? ` · P&amp;L <b class="${bo.pnl >= 0 ? 'up' : 'down'}">${inr(bo.pnl)}</b>` : '';
+    action = `<div class="status"><span class="bstat ${esc(bo.status)}">${esc(bo.status)}</span>${esc(bo.message)}${pnl}<div class="co">Angel order ${esc(bo.entry_order_id || '—')} · ${hm(bo.time)}</div></div>`;
+  } else {
+    let block = !ST.is_today ? 'From an earlier day' : priceState(o, o.stop, o.target);
+    if (!block && !(v.sl >= 0.05 && v.sl <= 20 && v.tp >= 0.05 && v.tp <= 20)) block = 'Stop loss and target must be 0.05-20 %';
+    if (!block && !(v.qty >= 1)) block = v.split ? 'Wallet share is less than one share' : 'Wallet not loaded yet';
+    if (!block && a.real && a.missing && a.missing.length) block = `Not set up - add ANGEL_${a.key.toUpperCase()}_* to .env`;
+    else if (!block && a.real && !ST.live_trading) block = 'Real orders are off - ANGEL_LIVE_TRADING=1 in .env';
+    action = `<button class="btn ${side} ${a.real ? 'real' : ''}" data-place="${esc(o.id)}" data-acc="${a.key}" ${block ? 'disabled' : ''}>${esc(label)}</button>`
+      + (block ? `<div class="status warn">${esc(block)}</div>` : '')
+      + (MSG[key] ? `<div class="status ${MSG[key][0]}">${esc(MSG[key][1])}</div>` : '');
+  }
   const why = o.reasons.map((r) => `<b>${esc(r.signal)}:</b> ${esc(r.detail)}`).join('<br>');
   const news = o.news.length ? `<details><summary>News (${o.news.length})</summary><ul class="news">${o.news.map((n) => {
     const u = safe(n.url); return `<li>${u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(n.title)}</a>` : esc(n.title)} <span class="co">· ${esc(n.source || '')}</span></li>`; }).join('')}</ul></details>` : '';
-  const link = URLS.page2.replace('CODE_PLACEHOLDER', encodeURIComponent(o.code));
-  let action;
-  if (st === 'placed') {
-    action = `<div class="status ok">✓ Placed ${o.placed.quantity} @ ${inr(o.placed.price)} at ${hm(o.placed.time)}<br><a href="${link}">Open in Paper Trading 2 →</a></div>`;
-  } else {
-    const blocked = !ST.is_today || st !== 'open';
-    const why2 = !ST.is_today ? 'From an earlier day' : st === 'stopped' ? 'Price already passed the stop - skip' : st === 'reached' ? 'Target already reached - move gone' : '';
-    action = `<button class="btn ${side}" data-place="${esc(o.id)}" ${blocked ? 'disabled' : ''}>Place ${o.side}</button>
-      ${why2 ? `<div class="status warn">${esc(why2)}</div>` : ''}${MSG[o.id] ? `<div class="status ${MSG[o.id][0]}">${esc(MSG[o.id][1])}</div>` : ''}
-      <div class="status"><a href="${link}">Paper Trading 2</a> · <a href="${URLS.candle}?company=${encodeURIComponent(o.code)}">Candle Predictor</a></div>`;
-  }
-  return `<tr class="${side} ${st === 'placed' ? 'done' : ''}">
-    <td><div class="sym">${esc(o.code.replace('.NS', ''))}</div><div class="co">${esc(o.name)}</div><div class="co">${esc(o.sector)}</div></td>
-    <td><span class="pill ${side}">${o.side}</span> ${conv}<div class="co" style="margin-top:4px">Intraday · square off by ${esc(o.square_off_by)}</div></td>
-    <td class="num">${inr(o.price_at)}<div class="co">${hm(o.price_time)}</div></td>
-    <td class="num">${p != null ? inr(p) : '—'}<div class="co ${move > 0 ? 'up' : move < 0 ? 'down' : ''}">${move != null ? (move > 0 ? '+' : '') + move.toFixed(2) + '% since' : ''}</div></td>
-    <td class="num down">${o.stop_pct.toFixed(2)}%<div class="co">${inr(o.stop)} at rec.</div></td>
-    <td class="num up">${o.target_pct.toFixed(2)}%<div class="co">${inr(o.target)} at rec.</div></td>
-    <td class="num">${st === 'placed' ? o.placed.quantity : `<input type="number" class="qty" data-qty="${esc(o.id)}" min="1" step="1" value="${q}" aria-label="Quantity for ${esc(o.code)}">`}</td>
+  const move = LTP[o.code] != null ? (LTP[o.code] / o.price_at - 1) * 100 : null;
+  const head = first ? `
+    <td class="stock top ${side}" rowspan="3"><div class="sym">${esc(o.code.replace('.NS', ''))}</div><div class="co">${esc(o.name)}</div><div class="co">${esc(o.sector)}</div>
+      ${o.caution ? `<div class="caution" title="${esc(o.caution)}">⚠ ${esc(o.caution)} Real orders ask for your consent to the exchange's caution.</div>` : ''}
+      <div class="status"><a href="${URLS.candle}?company=${encodeURIComponent(o.code)}">Candle Predictor</a></div></td>
+    <td class="top" rowspan="3"><span class="pill ${side}">${o.side}</span> <span class="pill conv ${o.conviction === 'Higher' ? 'high' : ''}">${esc(o.conviction)}</span>
+      <div class="co" style="margin-top:4px">Intraday · exit by ${esc(o.square_off_by)}</div><div class="co">rec. stop ${o.stop_pct.toFixed(2)}% · target ${o.target_pct.toFixed(2)}%</div></td>
+    <td class="num top" rowspan="3">${inr(o.price_at)}<div class="co">${hm(o.price_time)}</div>
+      <div style="margin-top:6px"><b>${LTP[o.code] != null ? inr(LTP[o.code]) : '—'}</b></div><div class="co ${move > 0 ? 'up' : move < 0 ? 'down' : ''}">${move != null ? (move > 0 ? '+' : '') + move.toFixed(2) + '% since' : 'live'}</div></td>` : '';
+  const tail = first ? `<td class="top" rowspan="3"><div class="why">${why}</div>${news}</td>` : '';
+  return `<tr class="${last ? 'last' : ''}">${head}
+    <td><span class="acct ${a.key}"><i></i>${esc(a.name)}</span> ${a.real ? '<span class="real">REAL</span>' : ''}</td>
+    <td class="num"><input type="number" class="in q" data-edit="${esc(key)}" data-f="qty" min="1" step="1" value="${qty}" ${dis} aria-label="Quantity, ${esc(a.name)}">
+      ${!done && v.split ? `<div class="hint" title="${esc(a.name)} wallet ${inr(v.split.cash)} × ${leverage(a.key)} ÷ ${v.split.n} ${o.side} orders">${inr(v.split.alloc)} ÷ ${nf.format(p)}</div>` : ''}</td>
+    <td class="num"><input type="number" class="in" data-edit="${esc(key)}" data-f="sl" step="0.05" min="0.05" max="20" value="${+(+sl).toFixed(3)}" ${dis} aria-label="Stop loss percent, ${esc(a.name)}">
+      <div class="hint down">${bo ? 'at ' : '≈ '}${inr(stop)}</div></td>
+    <td class="num"><input type="number" class="in" data-edit="${esc(key)}" data-f="tp" step="0.05" min="0.05" max="20" value="${+(+tp).toFixed(3)}" ${dis} aria-label="Target percent, ${esc(a.name)}">
+      <div class="hint up">${bo ? 'at ' : '≈ '}${inr(target)}</div></td>
     <td class="num">${inr(value)}<div class="co">risk ${inr(risk)}</div></td>
-    <td><div class="why">${why}</div>${news}</td>
-    <td>${action}</td>
-  </tr>`;
+    <td>${action}</td>${tail}</tr>`;
 }
+function rowsFor(o) {
+  const accs = ACCOUNTS();
+  return accs.map((a, i) => accountRow(o, a, i === 0, i === accs.length - 1)).join('');
+}
+let pendingRender = false;
 function render() {
   renderMeta();
-  $('rows').innerHTML = ST.orders.map(row).join('') || '<tr><td colspan="10" class="empty">No Claude recommendations yet.</td></tr>';
+  if (document.activeElement && document.activeElement.closest && document.activeElement.closest('#rows input')) { pendingRender = true; return; }
+  pendingRender = false;
+  const ordered = [...ST.orders.filter((o) => o.side === 'SELL'), ...ST.orders.filter((o) => o.side !== 'SELL')];
+  $('rows').innerHTML = ordered.map(rowsFor).join('') || '<tr><td colspan="10" class="empty">No recommendations yet.</td></tr>';
 }
+$('rows').addEventListener('focusout', () => setTimeout(() => { if (pendingRender) render(); }, 0));
 
 async function refreshQuotes() {
   const codes = [...new Set(ST.orders.map((o) => o.code))];
-  if (!codes.length) return;
+  if (!codes.length) { render(); return; }
   try {
     const r = await fetch(`${URLS.quotes}?companies=${encodeURIComponent(codes.join(','))}`);
     const d = await r.json();
@@ -237,12 +336,22 @@ async function refreshState() {
   try { const r = await fetch(URLS.state); ST = await r.json(); render(); } catch (e) {}
 }
 
+/* ---------------- edits ---------------- */
 document.addEventListener('input', (e) => {
-  const q = e.target.closest('[data-qty]');
-  if (q) { QTY[q.dataset.qty] = Math.max(1, parseInt(q.value, 10) || 1); return; }
-  if (e.target.id === 'amount') { try { localStorage.setItem('claudeOrders:amount', e.target.value); } catch (err) {} Object.keys(QTY).forEach((k) => delete QTY[k]); render(); }
+  const f = e.target.closest('[data-edit]');
+  if (f) {
+    const k = f.dataset.edit, v = parseFloat(f.value);
+    EDIT[k] = EDIT[k] || {};
+    if (!isNaN(v) && v > 0) EDIT[k][f.dataset.f] = f.dataset.f === 'qty' ? Math.floor(v) : v;
+    return;
+  }
+  if (e.target.id === 'lev') {
+    try { localStorage.setItem('claudeOrders:lev', e.target.value); } catch (err) {}
+    Object.values(EDIT).forEach((x) => delete x.qty); render();
+  }
 });
-document.addEventListener('change', (e) => { if (e.target.closest('[data-qty]')) render(); });
+document.addEventListener('change', (e) => { if (e.target.closest('[data-edit]')) { pendingRender = true; } });
+
 $('refreshBtn').addEventListener('click', async () => {
   $('refreshBtn').disabled = true;
   try {
@@ -253,25 +362,57 @@ $('refreshBtn').addEventListener('click', async () => {
   } catch (err) { toast('Could not start the refresh - network error.', 'error'); }
   renderRefresh();
 });
+
+/* ---------------- place ---------------- */
 document.addEventListener('click', async (e) => {
   const b = e.target.closest('button[data-place]'); if (!b) return;
   const o = ST.orders.find((x) => x.id === b.dataset.place); if (!o) return;
-  const qty = plannedQty(o);
-  b.disabled = true; b.textContent = 'Placing…';
+  const acc = ACCOUNTS().find((a) => a.key === b.dataset.acc); if (!acc) return;
+  const key = o.id + '|' + acc.key, v = vals(o, acc.key), p = LTP[o.code] || o.price_at;
+  if (!(v.qty >= 1)) { toast('Enter a quantity.', 'error'); return; }
+  let consent = false;
+  const askConsent = (why) => confirm(`CAUTIONARY STOCK - ${o.code.replace('.NS', '')}\n\n${why}\n\n`
+    + "The exchange cautions investors about stocks on this list (unusual price or volume moves, surveillance). "
+    + "Angel One takes the order only with your consent, sent as scripconsent = yes on this trade's entry, stop-loss and exit orders.\n\n"
+    + 'Do you understand the caution and consent to place this order?');
+  if (acc.real && o.caution) {
+    if (!askConsent(o.caution)) return;
+    consent = true;
+  }
+  if (acc.real) {
+    const ok = confirm(`REAL ORDER on Angel One - ${acc.name}'s account\n\n${o.side} ${v.qty} × ${o.code.replace('.NS', '')} at MARKET (about ₹${nf.format(p)})\n`
+      + `Value about ₹${nf.format(v.qty * p)}\nStop loss ${v.sl}% from the fill (about ₹${nf.format(levelsAt(o.side, p, v.sl, v.tp)[0])}) - order placed at Angel One\n`
+      + `Target ${v.tp}% from the fill (about ₹${nf.format(levelsAt(o.side, p, v.sl, v.tp)[1])}) - watched by this server; exit by 15:15\n\nPlace this real order?`);
+    if (!ok) return;
+  }
+  b.disabled = true; b.textContent = acc.real ? 'Sending to Angel One…' : 'Placing…';
+  const send = (withConsent) => fetch(URLS.place, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() },
+    body: JSON.stringify({ id: o.id, account: acc.key, quantity: v.qty, stop_pct: v.sl, target_pct: v.tp, consent: withConsent }) });
   try {
-    const r = await fetch(URLS.place, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() }, body: JSON.stringify({ id: o.id, quantity: qty }) });
-    const d = await r.json().catch(() => ({}));
-    if (!r.ok) { MSG[o.id] = ['err', d.error || `Failed (${r.status})`]; toast(`${o.code}: ${d.error || 'order failed'}`, 'error'); }
-    else { delete MSG[o.id]; toast(`Placed in Paper Trading 2: ${d.order.side} ${d.order.quantity} ${o.code} @ ${inr(d.order.price)}`, 'success'); }
-  } catch (err) { MSG[o.id] = ['err', 'Network error - try again.']; }
-  try { new BroadcastChannel('paper-trading-book-2').postMessage({ type: 'changed', at: Date.now() }); } catch (err) {}
+    let r = await send(consent);
+    let d = await r.json().catch(() => ({}));
+    if (!r.ok && d.code === 'consent_required' && !consent) {          // Angel One flagged it just now
+      if (askConsent(d.error)) { consent = true; r = await send(true); d = await r.json().catch(() => ({})); }
+    }
+    if (!r.ok) { MSG[key] = ['err', d.error || `Failed (${r.status})`]; toast(`${acc.name} · ${o.code}: ${d.error || 'order failed'}`, 'error'); }
+    else if (d.broker) {
+      delete MSG[key];
+      toast(`${acc.name} · ${o.code}: ${d.broker.message}`, d.ok ? 'success' : 'error');
+      loadWallets(true);
+    } else {
+      delete MSG[key];
+      toast(`Placed in Paper Trading 2: ${d.order.side} ${d.order.quantity} ${o.code} @ ${inr(d.order.price)}`, 'success');
+      try { new BroadcastChannel('paper-trading-book-2').postMessage({ type: 'changed', at: Date.now() }); } catch (err) {}
+    }
+  } catch (err) { MSG[key] = ['err', 'Network error - check the order book before trying again.']; }
   await refreshState();
 });
 
 render();
 refreshQuotes();
+loadWallets();
 setInterval(() => { if (!document.hidden) refreshQuotes(); }, 15000);
-setInterval(() => { if (!document.hidden) refreshState(); }, 60000);
+setInterval(() => { if (!document.hidden) { refreshState(); loadWallets(); } }, 60000);
 })();
 </script>
 </body>

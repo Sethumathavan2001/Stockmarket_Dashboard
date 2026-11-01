@@ -233,6 +233,13 @@
     font-family:'JetBrains Mono',monospace;
   }
 
+  /* ---------- Volume / MACD panels under each day's candles ---------- */
+  .sub-pane{ border-top:1px solid var(--border); }
+  .sub-title{ display:flex; flex-wrap:wrap; align-items:center; gap:4px 14px; padding:6px 18px 0; font-size:10.5px; font-weight:700;
+    text-transform:uppercase; letter-spacing:.05em; color:var(--text-muted); }
+  .sub-title i{ display:inline-block; width:12px; height:3px; border-radius:2px; vertical-align:middle; margin-right:5px; }
+  .sub-title span{ text-transform:none; letter-spacing:0; font-weight:600; font-family:'JetBrains Mono',monospace; }
+
   /* ApexCharts tooltip tweak */
   .apexcharts-tooltip{
     font-family:'JetBrains Mono',monospace !important;
@@ -297,6 +304,8 @@ const chartWrap = document.getElementById('chartWrap');
 
 let currentPage = 1;
 let activeCharts = [];
+const UP = '#0EA968', DOWN = '#E5484D', MACD_LINE = '#2F6FED', SIGNAL_LINE = '#CA8A04';
+const Y_WIDTH = 64;                                       // same y-axis width in all three panels so they line up
 let dayStates = [];
 
 showChartBtn.addEventListener('click', () => {
@@ -313,6 +322,20 @@ function destroyCharts(){
 function toSeriesData(candles){
   return candles.map(c => ({ x: new Date(c.x), y: [c.o, c.h, c.l, c.c] }));
 }
+
+function volumeData(candles){
+  return candles.map(c => ({ x: new Date(c.x).getTime(), y: c.volume || 0, fillColor: c.c >= c.o ? UP : DOWN }));
+}
+function macdSeries(candles){
+  const pts = (k) => candles.map(c => ({ x: new Date(c.x).getTime(), y: c[k] ?? null }));
+  return [
+    { name: 'Histogram', type: 'bar', data: candles.map(c => ({ x: new Date(c.x).getTime(), y: c.hist ?? null,
+        fillColor: (c.hist ?? 0) >= 0 ? 'rgba(14,169,104,.55)' : 'rgba(229,72,77,.55)' })) },
+    { name: 'MACD', type: 'line', data: pts('macd') },
+    { name: 'Signal', type: 'line', data: pts('signal') },
+  ];
+}
+const fmtVol = (v) => v == null ? '' : v >= 1e7 ? (v / 1e7).toFixed(2) + 'Cr' : v >= 1e5 ? (v / 1e5).toFixed(2) + 'L' : v >= 1e3 ? (v / 1e3).toFixed(1) + 'K' : String(Math.round(v));
 
 function buildPreviousDayAnnotations(prev){
   if (!prev) return { yaxis: [] };
@@ -339,6 +362,18 @@ function buildPreviousDayAnnotations(prev){
   };
 }
 
+function renderMacdLegend(idx){
+  const st = dayStates[idx]; if (!st) return;
+  const last = st.visibleCandles[st.visibleCandles.length - 1] || {};
+  const tot = st.visibleCandles.reduce((a, c) => a + (c.volume || 0), 0);
+  const vEl = document.getElementById(`volLegend${idx}`), mEl = document.getElementById(`macdLegend${idx}`);
+  if (vEl) vEl.textContent = `day so far ${fmtVol(tot)} · last ${fmtVol(last.volume)}`;
+  if (mEl && last.macd != null) {
+    const cross = last.macd >= last.signal ? 'MACD above signal' : 'MACD below signal';
+    mEl.innerHTML = `${last.macd.toFixed(2)} / ${last.signal.toFixed(2)} · hist <b style="color:${last.hist >= 0 ? UP : DOWN}">${last.hist >= 0 ? '+' : ''}${last.hist.toFixed(2)}</b> · ${cross}`;
+  }
+}
+
 function updateStepInfo(idx){
   const state = dayStates[idx];
   const infoEl = document.getElementById(`stepInfo${idx}`);
@@ -354,6 +389,9 @@ function applyReveal(idx, count){
   state.revealCount = revealCount;
   state.visibleCandles = state.allCandles.slice(0, revealCount);
   state.chart.updateSeries([{ data: toSeriesData(state.visibleCandles) }]);
+  state.volChart.updateSeries([{ name: 'Volume', data: volumeData(state.visibleCandles) }]);
+  state.macdChart.updateSeries(macdSeries(state.visibleCandles));
+  renderMacdLegend(idx);
   updateStepInfo(idx);
 }
 
@@ -455,6 +493,11 @@ async function loadChart(){
       </div>
       ${legendHtml}
       <div class="day-chart" id="dayChart${idx}"></div>
+      <div class="sub-pane"><div class="sub-title">Volume <span id="volLegend${idx}"></span></div><div id="volChart${idx}"></div></div>
+      <div class="sub-pane"><div class="sub-title">MACD (12, 26, 9)
+        <span><i style="background:${MACD_LINE}"></i>MACD</span><span><i style="background:${SIGNAL_LINE}"></i>Signal</span>
+        <span><i style="background:${UP}"></i>/<i style="background:${DOWN}"></i>Histogram</span><span id="macdLegend${idx}"></span></div>
+        <div id="macdChart${idx}"></div></div>
       <div class="day-controls">
         <button class="ctrl-btn primary" data-idx="${idx}" data-action="start">Start</button>
         <button class="ctrl-btn" data-idx="${idx}" data-action="next">Next</button>
@@ -467,8 +510,10 @@ async function loadChart(){
     const allCandles = day.candles;
     const annotations = buildPreviousDayAnnotations(prev);
 
+    const group = `day${idx}`;
     const chart = new ApexCharts(document.getElementById(`dayChart${idx}`), {
       chart:{
+        id:`candles${idx}`, group,
         type:'candlestick',
         height:340,
         toolbar:{ show:true, tools:{ zoom:true, pan:true, reset:true } },
@@ -476,7 +521,7 @@ async function loadChart(){
       },
       series:[{ data: toSeriesData(allCandles) }],
       xaxis:{ type:'datetime', labels:{ datetimeUTC:false } },
-      yaxis:{ tooltip:{ enabled:true }, labels:{ formatter:(v)=>v?.toFixed(2) } },
+      yaxis:{ tooltip:{ enabled:true }, labels:{ minWidth:Y_WIDTH, maxWidth:Y_WIDTH, formatter:(v)=>v?.toFixed(2) } },
       annotations,
       plotOptions:{
         candlestick:{
@@ -504,15 +549,47 @@ async function loadChart(){
       grid:{ borderColor:'#E3E8F0' },
     });
 
-    chart.render();
-    activeCharts.push(chart);
+    // Volume: green / red by the candle's direction
+    const volChart = new ApexCharts(document.getElementById(`volChart${idx}`), {
+      chart:{ id:`vol${idx}`, group, type:'bar', height:110, toolbar:{ show:false }, zoom:{ enabled:false },
+              animations:{ enabled:false }, fontFamily:'JetBrains Mono, monospace' },
+      series:[{ name:'Volume', data: volumeData(allCandles) }],
+      plotOptions:{ bar:{ columnWidth:'80%' } },
+      dataLabels:{ enabled:false },
+      xaxis:{ type:'datetime', labels:{ show:false, datetimeUTC:false }, axisTicks:{ show:false }, tooltip:{ enabled:false } },
+      yaxis:{ labels:{ minWidth:Y_WIDTH, maxWidth:Y_WIDTH, formatter: fmtVol } },
+      tooltip:{ x:{ format:'HH:mm' }, y:{ formatter: fmtVol } },
+      grid:{ borderColor:'#E3E8F0', padding:{ top:-10 } },
+      legend:{ show:false },
+    });
+
+    // MACD (12, 26, 9): histogram bars + MACD and signal lines
+    const macdChart = new ApexCharts(document.getElementById(`macdChart${idx}`), {
+      chart:{ id:`macd${idx}`, group, type:'line', height:160, toolbar:{ show:false }, zoom:{ enabled:false },
+              animations:{ enabled:false }, fontFamily:'JetBrains Mono, monospace' },
+      series: macdSeries(allCandles),
+      colors:['#94A3B8', MACD_LINE, SIGNAL_LINE],
+      stroke:{ width:[0, 2, 2], curve:'straight' },
+      plotOptions:{ bar:{ columnWidth:'80%' } },
+      dataLabels:{ enabled:false },
+      xaxis:{ type:'datetime', labels:{ datetimeUTC:false }, tooltip:{ enabled:false } },
+      yaxis:{ labels:{ minWidth:Y_WIDTH, maxWidth:Y_WIDTH, formatter:(v)=>v == null ? '' : v.toFixed(2) } },
+      tooltip:{ shared:true, x:{ format:'HH:mm' }, y:{ formatter:(v)=>v == null ? '—' : v.toFixed(3) } },
+      annotations:{ yaxis:[{ y:0, borderColor:'#94A3B8', strokeDashArray:3 }] },
+      grid:{ borderColor:'#E3E8F0', padding:{ top:-10 } },
+      legend:{ show:false },
+    });
+
+    chart.render(); volChart.render(); macdChart.render();
+    activeCharts.push(chart, volChart, macdChart);
     dayStates[idx] = {
-      chart,
+      chart, volChart, macdChart,
       allCandles,
       visibleCandles: allCandles,
       revealCount: allCandles.length,
     };
     updateStepInfo(idx);
+    renderMacdLegend(idx);
   });
 
   // pagination controls

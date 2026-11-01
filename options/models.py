@@ -9,10 +9,15 @@ PRODUCTS = [(NRML, "NRML - carry to expiry"), (MIS, "MIS - intraday, squared off
 
 
 class OptionAccount(models.Model):
-    """The option trading wallet. `balance` is cash; margin blocked by short positions sits on the positions."""
+    """
+    An option trading wallet: "options:1" trades live, "options:replay" trades past days on a replay clock
+    (replay_date + replay_time).  `balance` is cash; margin blocked by short positions sits on the positions.
+    """
 
     owner_key = models.CharField(max_length=120, unique=True)
     balance = models.DecimalField(max_digits=20, decimal_places=4, default=Decimal("0"))
+    replay_date = models.DateField(null=True, blank=True)
+    replay_time = models.TimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -75,6 +80,7 @@ class OptionOrder(models.Model):
     stop_loss = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)    # levels to set on fill
     target = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    market_time = models.DateTimeField(null=True, blank=True)        # market clock when placed (replay: the past)
     filled_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:

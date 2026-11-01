@@ -16,4 +16,8 @@ urlpatterns = [
     path("api/options/position/<int:position_id>/exit/", views.exit_position, name="exit"),
     path("api/options/position/<int:position_id>/levels/", views.levels, name="levels"),
     path("api/options/funds/", views.funds, name="funds"),
+    path("api/options/replay/start/", views.replay_start, name="replay_start"),
+    path("api/options/replay/advance/", views.replay_advance, name="replay_advance"),
+    path("api/options/replay/reset/", views.replay_reset, name="replay_reset"),
+    path("api/options/replay/series/", views.replay_series, name="replay_series"),
 ]

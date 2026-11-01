@@ -1132,6 +1132,33 @@ def _get_previous_day_ohlc(company_id, current_date):
     }
  
  
+MACD_FAST, MACD_SLOW, MACD_SIGNAL = 12, 26, 9
+MACD_WARMUP = 120          # earlier 5-min candles fed in first, so the day's first MACD values are settled
+
+
+def _ema(values, n):
+    k, out, e = 2 / (n + 1), [], None
+    for v in values:
+        e = v if e is None else v * k + e * (1 - k)
+        out.append(e)
+    return out
+
+
+def _day_macd(company_id, rows):
+    """MACD (12, 26, 9) for one day's 5-min rows, warmed up on the candles before the day (any weekday)."""
+    if not rows:
+        return []
+    warm = list(FiveMinuteData.objects.filter(company_id=company_id, timestamp__lt=rows[0].timestamp)
+                .order_by("-timestamp").values_list("close", flat=True)[:MACD_WARMUP])[::-1]
+    closes = [float(v) for v in warm if v is not None] + [float(r.close or 0) for r in rows]
+    fast, slow = _ema(closes, MACD_FAST), _ema(closes, MACD_SLOW)
+    macd = [f - s for f, s in zip(fast, slow)]
+    signal = _ema(macd, MACD_SIGNAL)
+    tail = slice(len(closes) - len(rows), None)
+    return [{"macd": round(m, 4), "signal": round(g, 4), "hist": round(m - g, 4)}
+            for m, g in zip(macd[tail], signal[tail])]
+
+
 def chart_data(request):
     """
     JSON endpoint that returns candlestick data grouped by trading day,
@@ -1205,6 +1232,9 @@ def chart_data(request):
         day_pct_change = None
         if day_open:
             day_pct_change = round(((day_close - day_open) / day_open) * 100, 2)
+
+        for c, m in zip(candles, _day_macd(company_id, rows)):
+            c.update(m)
  
         current_date = date.fromisoformat(day_key)
         previous_day = _get_previous_day_ohlc(company_id, current_date)

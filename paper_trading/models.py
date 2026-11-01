@@ -154,3 +154,44 @@ class PaperLimitOrder(models.Model):
 
     def __str__(self):
         return f"LIMIT {self.side} {self.quantity} {self.company_id} @ {self.limit_price} [{self.status}]"
+
+
+class BrokerOrder(models.Model):
+    """
+    A real Angel One trade placed from the Claude Orders page (accounts "vivek" / "sethu"):
+    market entry -> stop-loss order sitting at Angel One -> exit at target / 15:15 by the server watcher.
+    """
+    PLACING, PENDING, OPEN, CLOSED, REJECTED, ERROR = "placing", "pending", "open", "closed", "rejected", "error"
+
+    account = models.CharField(max_length=10)
+    session = models.DateField()
+    rec_id = models.CharField(max_length=80, blank=True, default="")
+    code = models.CharField(max_length=30)
+    side = models.CharField(max_length=4)                         # entry side: BUY / SELL
+    quantity = models.PositiveIntegerField()
+    stop_pct = models.DecimalField(max_digits=6, decimal_places=3, null=True, blank=True)      # % from the fill
+    target_pct = models.DecimalField(max_digits=6, decimal_places=3, null=True, blank=True)
+    stop = models.DecimalField(max_digits=14, decimal_places=2)            # prices: from the live price, then the fill
+    target = models.DecimalField(max_digits=14, decimal_places=2)
+    status = models.CharField(max_length=10, default=PLACING)
+    scrip_consent = models.BooleanField(default=False)   # you accepted the exchange's cautionary warning (AB4036)
+    entry_order_id = models.CharField(max_length=40, blank=True, default="")
+    entry_price = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    sl_order_id = models.CharField(max_length=40, blank=True, default="")
+    sl_trigger = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    exit_order_id = models.CharField(max_length=40, blank=True, default="")
+    exit_price = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    exit_reason = models.CharField(max_length=20, blank=True, default="")    # stop_loss / target / squareoff
+    message = models.CharField(max_length=400, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["account", "session", "status"])]
+
+    @property
+    def pnl(self):
+        if self.entry_price is None or self.exit_price is None:
+            return None
+        return (self.exit_price - self.entry_price) * self.quantity * (1 if self.side == "BUY" else -1)

@@ -1,8 +1,8 @@
 """
-Option paper trading, the way a broker does it.
+Option paper trading, the way a broker does it - live, or on a past day (Replay).
 
 Orders  BUY or SELL in whole lots, NRML (carry to expiry) or MIS (intraday, squared off at 15:20).
-        MARKET fills at the live best ask (buy) / best bid (sell) - not the LTP - and only while the market
+        MARKET fills at the best ask (buy) / best bid (sell) - not the LTP - and only while the market
         is open.  LIMIT fills when the ask / bid reaches the price; one placed outside market hours waits
         for the open (like an AMO).
 Money   Buying pays the premium.  Selling (writing) credits the premium and blocks margin - an estimate
@@ -10,32 +10,38 @@ Money   Buying pays the premium.  Selling (writing) credits the premium and bloc
         Every executed order pays Zerodha's option charges (charges()).
 Netting one position per contract + product; an opposite order closes it first (realized P&L) and any
         rest opens the other way.
-Watcher (monitor.py, every 15 s in market hours) fills limit orders, exits at stop loss / target
-        (checked on the premium's LTP, exit at the bid / ask), squares off MIS at 15:20, and settles
-        expired contracts at their intrinsic value against the underlying's closing price.
+Watcher (live: monitor.py every 15 s; replay: every 5-minute step of the clock) fills limit orders, exits
+        at stop loss / target (on the premium), squares off MIS at 15:20, and settles expired contracts
+        at their intrinsic value against the underlying's closing price.
+
+Two accounts with separate wallets: "options:1" (live NSE prices, LiveMarket) and "options:replay"
+(a past day on a replay clock, ReplayMarket - prices from options/history.py).
 """
 import logging
 import threading
-from datetime import date, datetime, time
+from datetime import datetime, time, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from functools import wraps
 
 from django.db import transaction
+from django.db.models import Q
 
 from prediction.market_time import IST, get_market_status
 
 from . import chain as ch
 from . import greeks
+from . import history as hist
 from .models import CE, MIS, NRML, PE, OptionAccount, OptionOrder, OptionPosition, contract_name
 
 logger = logging.getLogger(__name__)
 
 D = Decimal
 PAISE, TICK, CRORE = D("0.01"), D("0.05"), D("10000000")
-OWNER = "options:1"
+OWNER, REPLAY_OWNER = "options:1", "options:replay"
 START_BALANCE = D("500000")
 MAX_LOTS = 100
 SQUAREOFF = time(15, 20)
+DATA_ERRORS = (ch.ChainError, hist.HistoryError)
 
 # Zerodha, Equity F&O options (zerodha.com/charges, checked 23 Oct 2026)
 BROKERAGE = D("20")                 # flat per executed order
@@ -89,9 +95,73 @@ def to_tick(v):
     return (D(str(v)) / TICK).quantize(D("1"), ROUND_HALF_UP) * TICK
 
 
+# ---------------------------------------------------------------- markets: live NSE / replay clock
+class LiveMarket:
+    replay = False
+
+    def now(self):
+        return now_ist()
+
+    def is_open(self, now):
+        return market_open(now)
+
+    def status(self, now):
+        return get_market_status(now)
+
+    def quote(self, symbol, expiry, strike, option_type, now=None, max_age=ch.CHAIN_SECONDS):
+        q, spot, _ = ch.quote(symbol, expiry, strike, option_type, max_age=max_age)
+        return q, spot
+
+    def chain(self, symbol, expiry, now=None, max_age=5):
+        return ch.chain(symbol, expiry, max_age=max_age)
+
+    def lot_size(self, symbol, expiry, now=None):
+        return ch.lot_size(symbol, expiry)
+
+    def settle_price(self, symbol, day):
+        return ch.settlement_price(symbol, day)
+
+
+class ReplayMarket:
+    """A past trading day: the clock is the account's replay_date + replay_time, prices from history.py."""
+    replay = True
+
+    def __init__(self, account):
+        self.account = account
+
+    def now(self):
+        a = self.account
+        if not a.replay_date:
+            raise TradeError("Pick a date to replay first.")
+        return datetime.combine(a.replay_date, a.replay_time or hist.OPEN_T, tzinfo=IST)
+
+    def is_open(self, now):
+        return bool(self.account.replay_date) and hist.OPEN_T <= now.time() <= hist.CLOSE_T
+
+    def status(self, now):
+        return "OPEN" if self.is_open(now) else "CLOSED"
+
+    def quote(self, symbol, expiry, strike, option_type, now=None, max_age=None):
+        return hist.quote(symbol, expiry, strike, option_type, now or self.now())
+
+    def chain(self, symbol, expiry, now=None, max_age=None):
+        return hist.chain(symbol, expiry, now or self.now())
+
+    def lot_size(self, symbol, expiry, now=None):
+        return hist.lot_size(symbol, expiry, (now or self.now()).date())
+
+    def settle_price(self, symbol, day):
+        return hist.underlying_close(symbol, day)
+
+
+def market_for(account):
+    return ReplayMarket(account) if account.owner_key == REPLAY_OWNER else LiveMarket()
+
+
 # ---------------------------------------------------------------- account
-def get_account():
-    acct, created = OptionAccount.objects.get_or_create(owner_key=OWNER, defaults={"balance": START_BALANCE})
+def get_account(replay=False):
+    acct, _ = OptionAccount.objects.get_or_create(owner_key=REPLAY_OWNER if replay else OWNER,
+                                                  defaults={"balance": START_BALANCE})
     return acct
 
 
@@ -151,7 +221,7 @@ def _position(account, o):
     return pos
 
 
-def plan_fill(account, pos, side, qty, price, spot):
+def plan_fill(pos, side, qty, price, spot):
     """What this fill does to the wallet: (closing, opening, cash, margin_add, margin_release, realized, charges)."""
     sign = 1 if side == "BUY" else -1
     q0 = pos.quantity
@@ -186,7 +256,7 @@ def _check_funds(account, cash, margin_add, chg):
 def _apply(account, o, price, spot, when, reason=""):
     """Fill order `o` at `price`: position, wallet, margin, charges. Caller holds LOCK, inside a transaction."""
     pos = _position(account, o)
-    closing, opening, cash, m_add, m_rel, realized, chg = plan_fill(account, pos, o.side, o.quantity, price, spot)
+    closing, opening, cash, m_add, m_rel, realized, chg = plan_fill(pos, o.side, o.quantity, price, spot)
     if opening:                                             # closing an existing position is never refused
         _check_funds(account, cash, m_add, chg)
     price = D(str(price))
@@ -214,6 +284,7 @@ def _apply(account, o, price, spot, when, reason=""):
     account.balance += cash - chg["total"]
     account.save(update_fields=["balance"])
     o.status, o.price, o.filled_at = OptionOrder.COMPLETE, price, when
+    o.market_time = o.market_time or when
     o.underlying_price = q2(spot) if spot else None
     o.realized_pnl, o.charges = q2(realized), chg["total"]
     o.charges_detail = {k: float(v) for k, v in chg.items()}
@@ -231,14 +302,6 @@ def fill_price(side, q):
     return px if px and px > 0 else (q["ltp"] or None)
 
 
-def _validate_contract(symbol, expiry, strike, option_type, now):
-    if option_type not in (CE, PE):
-        raise TradeError("Option type must be CE or PE.")
-    if ch.expiry_dt(expiry) <= now:
-        raise TradeError(f"The {expiry:%d %b %Y} contracts have expired.")
-    return ch.lot_size(symbol, expiry)
-
-
 def _parse_level(raw, label):
     if raw in (None, ""):
         return None
@@ -251,10 +314,16 @@ def _parse_level(raw, label):
     return v
 
 
+def _virtual(o):
+    return OptionPosition(symbol=o.symbol, expiry=o.expiry, strike=o.strike, option_type=o.option_type,
+                          product=o.product, lot_size=o.lot_size, quantity=0, avg_price=D("0"), blocked_margin=D("0"))
+
+
 @serialized
 def place_order(account, *, symbol, expiry, strike, option_type, side, lots, product=NRML, order_type="MARKET",
-                limit_price=None, stop_loss=None, target=None, now=None):
-    now = now or now_ist()
+                limit_price=None, stop_loss=None, target=None, now=None, mkt=None):
+    mkt = mkt or market_for(account)
+    now = now or mkt.now()
     side, product, order_type = str(side).upper(), str(product).upper(), str(order_type).upper()
     if side not in ("BUY", "SELL"):
         raise TradeError("Side must be BUY or SELL.")
@@ -262,30 +331,36 @@ def place_order(account, *, symbol, expiry, strike, option_type, side, lots, pro
         raise TradeError("Product must be NRML or MIS.")
     if order_type not in (OptionOrder.MARKET, OptionOrder.LIMIT):
         raise TradeError("Order type must be MARKET or LIMIT.")
+    if option_type not in (CE, PE):
+        raise TradeError("Option type must be CE or PE.")
     try:
         lots = int(lots)
     except (TypeError, ValueError):
         raise TradeError("Lots must be a whole number.")
     if not 1 <= lots <= MAX_LOTS:
         raise TradeError(f"Lots must be between 1 and {MAX_LOTS}.")
+    if ch.expiry_dt(expiry) <= now:
+        raise TradeError(f"The {expiry:%d %b %Y} contracts have expired.")
     try:
-        lot = _validate_contract(symbol, expiry, strike, option_type, now)
-    except ch.ChainError as exc:
+        lot = mkt.lot_size(symbol, expiry, now)
+    except DATA_ERRORS as exc:
         raise TradeError(str(exc))
-    if product == MIS and now.time() >= SQUAREOFF and market_open(now):
+    is_open = mkt.is_open(now)
+    if product == MIS and now.time() >= SQUAREOFF and is_open:
         raise TradeError("MIS orders are closed after 15:20 - use NRML.")
     sl, tgt = _parse_level(stop_loss, "Stop loss"), _parse_level(target, "Target")
     o = OptionOrder(account=account, symbol=symbol, expiry=expiry, strike=D(str(strike)), option_type=option_type,
                     product=product, side=side, quantity=lots * lot, lot_size=lot, order_type=order_type,
-                    stop_loss=sl, target=tgt)
-    is_open = market_open(now)
+                    stop_loss=sl, target=tgt, market_time=now)
     if order_type == OptionOrder.MARKET and not is_open:
         raise TradeError("The market is closed - market orders can't be placed. Place a LIMIT order instead; it "
                          "waits for the market to open (like an AMO).")
     try:
-        q, spot, _ = ch.quote(symbol, expiry, strike, option_type)
-    except ch.ChainError as exc:
-        raise TradeError(f"No live option prices: {exc}")
+        q, spot = mkt.quote(symbol, expiry, strike, option_type, now=now)
+    except DATA_ERRORS as exc:
+        raise TradeError(f"No option prices: {exc}")
+    if q is None and mkt.replay:
+        raise TradeError(f"{o.name} did not trade on {now:%d %b %Y} - pick a contract with trades.")
     if q is None:
         raise TradeError(f"{o.name} is not listed on NSE.")
     if order_type == OptionOrder.LIMIT:
@@ -298,7 +373,7 @@ def place_order(account, *, symbol, expiry, strike, option_type, side, lots, pro
                                         option_type=option_type, product=product).first()
     est = o.limit_price or D(str(fill_price(side, q) or 0))
     if est > 0:                                             # reject now what could never fill
-        closing, opening, cash, m_add, _, _, chg = plan_fill(account, pos or _virtual(o), side, o.quantity, est, spot)
+        _, opening, cash, m_add, _, _, chg = plan_fill(pos or _virtual(o), side, o.quantity, est, spot)
         if opening:
             _check_funds(account, cash, m_add, chg)
 
@@ -318,11 +393,6 @@ def place_order(account, *, symbol, expiry, strike, option_type, side, lots, pro
         o.message = "Waiting for the market to open" if not is_open else "Open - waiting for the price"
         o.save()
         return o
-
-
-def _virtual(o):
-    return OptionPosition(symbol=o.symbol, expiry=o.expiry, strike=o.strike, option_type=o.option_type,
-                          product=o.product, lot_size=o.lot_size, quantity=0, avg_price=D("0"), blocked_margin=D("0"))
 
 
 def _marketable(side, q, limit):
@@ -361,46 +431,47 @@ def cancel_order(account, order_id):
 
 
 @serialized
-def exit_position(account, position_id, reason="", now=None, quote=None):
+def exit_position(account, position_id, reason="", now=None, quote=None, mkt=None):
     """Close the whole position at market (bid for a long, ask for a short)."""
-    now = now or now_ist()
+    mkt = mkt or market_for(account)
+    now = now or mkt.now()
     pos = account.positions.filter(pk=position_id).first()
     if pos is None:
         raise TradeError("Unknown position.")
     if pos.quantity == 0:
         raise AlreadyClosed("This position is already closed.")
-    if not market_open(now):
+    if not mkt.is_open(now):
         raise TradeError("The market is closed - positions can be exited from 09:15.")
     side = "SELL" if pos.quantity > 0 else "BUY"
     if quote is None:
         try:
-            quote, spot, _ = ch.quote(pos.symbol, pos.expiry, pos.strike, pos.option_type)
-        except ch.ChainError as exc:
-            raise TradeError(f"No live option prices: {exc}")
-    else:
-        quote, spot = quote
-    px = fill_price(side, quote)
+            quote = mkt.quote(pos.symbol, pos.expiry, pos.strike, pos.option_type, now=now)
+        except DATA_ERRORS as exc:
+            raise TradeError(f"No option prices: {exc}")
+    q, spot = quote
+    px = fill_price(side, q)
     if not px:
-        raise TradeError("No buyers / sellers for this contract right now.")
+        raise TradeError("No price for this contract right now" + (" (no trades that day)." if mkt.replay else "."))
     o = OptionOrder(account=account, symbol=pos.symbol, expiry=pos.expiry, strike=pos.strike,
                     option_type=pos.option_type, product=pos.product, side=side, quantity=abs(pos.quantity),
-                    lot_size=pos.lot_size, reason=reason)
+                    lot_size=pos.lot_size, reason=reason, market_time=now)
     with transaction.atomic():
         o.save()
         return _apply(account, o, px, spot, now, reason=reason)[0]
 
 
 @serialized
-def set_levels(account, position_id, stop_loss=None, target=None, now=None):
+def set_levels(account, position_id, stop_loss=None, target=None, mkt=None):
+    mkt = mkt or market_for(account)
     pos = account.positions.filter(pk=position_id).exclude(quantity=0).first()
     if pos is None:
         raise TradeError("No open position.")
     sl, tgt = _parse_level(stop_loss, "Stop loss"), _parse_level(target, "Target")
     ref = None
     try:
-        q, _, _ = ch.quote(pos.symbol, pos.expiry, pos.strike, pos.option_type)
+        q, _ = mkt.quote(pos.symbol, pos.expiry, pos.strike, pos.option_type)
         ref = D(str(q["ltp"])) if q and q["ltp"] else None
-    except ch.ChainError:
+    except DATA_ERRORS:
         pass
     _check_levels_side("BUY" if pos.quantity > 0 else "SELL", sl, tgt, ref or pos.avg_price)
     pos.stop_loss, pos.target = sl, tgt
@@ -409,18 +480,18 @@ def set_levels(account, position_id, stop_loss=None, target=None, now=None):
 
 
 # ---------------------------------------------------------------- watcher jobs
-def _quote_or_none(p):
+def _quote_or_none(p, mkt, now):
     try:
-        q, spot, _ = ch.quote(p.symbol, p.expiry, p.strike, p.option_type, max_age=10)
-        return q, spot
-    except ch.ChainError as exc:
+        return mkt.quote(p.symbol, p.expiry, p.strike, p.option_type, now=now, max_age=10)
+    except DATA_ERRORS as exc:
         logger.warning("options: no quote for %s: %s", contract_name(p.symbol, p.expiry, p.strike, p.option_type), exc)
         return None
 
 
-def process_pending(account, now=None):
+def process_pending(account, now=None, mkt=None):
     """Fill limit orders whose price was reached; cancel ones whose contract expired."""
-    now = now or now_ist()
+    mkt = mkt or market_for(account)
+    now = now or mkt.now()
     done = []
     for o in account.orders.filter(status=OptionOrder.PENDING).order_by("created_at"):
         if ch.expiry_dt(o.expiry) <= now:
@@ -431,9 +502,9 @@ def process_pending(account, now=None):
             o.status, o.message = OptionOrder.CANCELLED, "MIS order cancelled at 15:20"
             o.save(update_fields=["status", "message"])
             continue
-        if not market_open(now):
+        if not mkt.is_open(now):
             continue
-        qs = _quote_or_none(o)
+        qs = _quote_or_none(o, mkt, now)
         if not qs:
             continue
         px = _marketable(o.side, qs[0], o.limit_price)
@@ -462,42 +533,46 @@ def level_reason(pos, ltp):
     return None
 
 
-def check_levels(account, now=None):
-    now = now or now_ist()
+def check_levels(account, now=None, mkt=None):
+    mkt = mkt or market_for(account)
+    now = now or mkt.now()
     exits = []
-    if not market_open(now):
+    if not mkt.is_open(now):
         return exits
-    from django.db.models import Q
     for pos in account.positions.exclude(quantity=0).filter(Q(stop_loss__isnull=False) | Q(target__isnull=False)):
-        qs = _quote_or_none(pos)
+        if ch.expiry_dt(pos.expiry) <= now:
+            continue
+        qs = _quote_or_none(pos, mkt, now)
         reason = level_reason(pos, qs[0]["ltp"]) if qs and qs[0] else None
         if not reason:
             continue
         try:
-            exits.append(exit_position(account, pos.pk, reason=reason, now=now, quote=qs))
+            exits.append(exit_position(account, pos.pk, reason=reason, now=now, quote=qs, mkt=mkt))
         except TradeError as exc:
             logger.warning("options: %s exit failed: %s", pos.name, exc)
     return exits
 
 
-def squareoff_mis(account, now=None):
-    now = now or now_ist()
+def squareoff_mis(account, now=None, mkt=None):
+    mkt = mkt or market_for(account)
+    now = now or mkt.now()
     out = []
-    if not market_open(now) or now.time() < SQUAREOFF:
+    if not mkt.is_open(now) or now.time() < SQUAREOFF:
         return out
     for pos in account.positions.filter(product=MIS).exclude(quantity=0):
         try:
-            out.append(exit_position(account, pos.pk, reason="squareoff", now=now))
+            out.append(exit_position(account, pos.pk, reason="squareoff", now=now, mkt=mkt))
         except TradeError as exc:
             logger.warning("options: MIS square-off of %s failed: %s", pos.name, exc)
     return out
 
 
 @serialized
-def settle_expired(account, now=None, price_of=None):
+def settle_expired(account, now=None, price_of=None, mkt=None):
     """Settle open positions whose contracts expired, at intrinsic value against the underlying's close."""
-    now = now or now_ist()
-    price_of = price_of or ch.settlement_price
+    mkt = mkt or market_for(account)
+    now = now or mkt.now()
+    price_of = price_of or mkt.settle_price
     out = []
     for pos in account.positions.exclude(quantity=0):
         if ch.expiry_dt(pos.expiry) > now:
@@ -519,13 +594,14 @@ def settle_expired(account, now=None, price_of=None):
             chg = {k_: D("0") for k_ in ("brokerage", "stt", "exchange", "sebi", "stamp", "gst", "total")}
         realized = (intrinsic - pos.avg_price) * qty * (1 if long_ else -1)
         cash = value if long_ else -value
+        when = ch.expiry_dt(pos.expiry)
         with transaction.atomic():
             o = OptionOrder.objects.create(
                 account=account, symbol=pos.symbol, expiry=pos.expiry, strike=pos.strike, option_type=pos.option_type,
                 product=pos.product, side="SELL" if long_ else "BUY", quantity=qty, lot_size=pos.lot_size,
                 status=OptionOrder.COMPLETE, price=intrinsic, underlying_price=q2(D(str(spot))),
                 realized_pnl=q2(realized), charges=chg["total"], charges_detail={k_: float(v) for k_, v in chg.items()},
-                reason="expiry", filled_at=ch.expiry_dt(pos.expiry),
+                reason="expiry", filled_at=when, market_time=when,
                 message=(f"{'Exercised' if long_ else 'Assigned'} at ₹{intrinsic} (underlying closed ₹{spot:,.2f})"
                          if intrinsic > 0 else f"Expired worthless (underlying closed ₹{spot:,.2f})"))
             account.balance += cash - chg["total"]
@@ -540,11 +616,85 @@ def settle_expired(account, now=None, price_of=None):
 
 
 def run_once(now=None):
-    """One watcher round (called by the paper-trading monitor loop)."""
+    """One live watcher round (called by the paper-trading monitor loop)."""
     now = now or now_ist()
     account = get_account()
-    return {"settled": settle_expired(account, now), "limits": process_pending(account, now),
-            "levels": check_levels(account, now), "squareoff": squareoff_mis(account, now)}
+    mkt = LiveMarket()
+    return {"settled": settle_expired(account, now, mkt=mkt), "limits": process_pending(account, now, mkt),
+            "levels": check_levels(account, now, mkt), "squareoff": squareoff_mis(account, now, mkt)}
+
+
+# ---------------------------------------------------------------- replay clock
+def _replay_busy(account):
+    return account.positions.exclude(quantity=0).exists() or account.orders.filter(status=OptionOrder.PENDING).exists()
+
+
+@serialized
+def replay_start(account, day):
+    """Start replaying `day` at 09:15. Only with no open replay positions / orders (time only moves forward)."""
+    if _replay_busy(account):
+        raise TradeError("You have open replay positions or orders. Step forward with the clock (Next day), close "
+                         "them, or reset the replay account to start another date.")
+    try:
+        hist.bhavcopy(day)
+    except hist.HistoryError as exc:
+        raise TradeError(str(exc))
+    account.replay_date, account.replay_time = day, hist.OPEN_T
+    account.save(update_fields=["replay_date", "replay_time"])
+    return account
+
+
+def _replay_run(account, mkt, day, after, until):
+    """Walk the clock 5 minutes at a time, running the watcher at every step."""
+    ev = {"fills": [], "exits": [], "squareoff": [], "settled": [], "expired_orders": 0}
+    for t in hist.clock_points(day, after, until):
+        account.replay_time = t
+        account.save(update_fields=["replay_time"])
+        now = datetime.combine(day, t, tzinfo=IST)
+        ev["fills"] += process_pending(account, now, mkt)
+        ev["exits"] += check_levels(account, now, mkt)
+        ev["squareoff"] += squareoff_mis(account, now, mkt)
+        if t >= hist.CLOSE_T:
+            ev["settled"] += settle_expired(account, now, mkt=mkt)
+            ev["expired_orders"] += account.orders.filter(status=OptionOrder.PENDING).update(
+                status=OptionOrder.CANCELLED, message="Day order - not filled by the close")
+    return ev
+
+
+@serialized
+def replay_advance(account, to):
+    """Move the replay clock: "5" / "15" / "60" minutes, "close" (15:30) or "next_day" (next trading day 09:15)."""
+    mkt = ReplayMarket(account)
+    now = mkt.now()
+    day, t = now.date(), now.time()
+    if to == "next_day":
+        ev = _replay_run(account, mkt, day, t, hist.CLOSE_T) if t < hist.CLOSE_T else None
+        nxt = hist.next_trading_day(day)
+        if nxt is None:
+            raise TradeError("No later trading day with NSE data yet - this is the latest.")
+        account.replay_date, account.replay_time = nxt, hist.OPEN_T
+        account.save(update_fields=["replay_date", "replay_time"])
+        return ev or _replay_run(account, mkt, nxt, hist.OPEN_T, hist.OPEN_T)
+    if t >= hist.CLOSE_T:
+        raise TradeError("The day is over - go to the next day.")
+    if to == "close":
+        until = hist.CLOSE_T
+    else:
+        try:
+            mins = int(to)
+        except (TypeError, ValueError):
+            raise TradeError("Step must be 5, 15, 60, close or next_day.")
+        until = min((datetime.combine(day, t) + timedelta(minutes=mins)).time(), hist.CLOSE_T)
+    return _replay_run(account, mkt, day, t, until)
+
+
+@serialized
+def replay_reset(account):
+    account.orders.all().delete()
+    account.positions.all().delete()
+    account.balance, account.replay_date, account.replay_time = START_BALANCE, None, None
+    account.save()
+    return account
 
 
 # ---------------------------------------------------------------- page data
@@ -553,6 +703,7 @@ def _f(v):
 
 
 def serialize_order(o):
+    placed = o.market_time or o.created_at
     return {"id": o.pk, "name": o.name, "symbol": o.symbol, "expiry": o.expiry.isoformat(), "strike": float(o.strike),
             "option_type": o.option_type, "product": o.product, "side": o.side, "quantity": o.quantity,
             "lots": o.quantity // o.lot_size if o.lot_size else None, "lot_size": o.lot_size,
@@ -560,34 +711,45 @@ def serialize_order(o):
             "underlying_price": _f(o.underlying_price), "realized_pnl": _f(o.realized_pnl), "charges": _f(o.charges),
             "charges_detail": o.charges_detail, "reason": o.reason, "message": o.message,
             "stop_loss": _f(o.stop_loss), "target": _f(o.target),
-            "created_at": to_ist(o.created_at).isoformat(), "filled_at": to_ist(o.filled_at).isoformat() if o.filled_at else None}
+            "created_at": to_ist(placed).isoformat(), "filled_at": to_ist(o.filled_at).isoformat() if o.filled_at else None}
 
 
-def snapshot(account, now=None):
-    now = now or now_ist()
-    try:
-        settle_expired(account, now)
-    except Exception:
-        logger.exception("options: settlement failed")
-    day_start = datetime.combine(now.date(), time(0), tzinfo=IST)
-    positions = []
-    chains = {}
+def _on_day(day_start):
+    nxt = day_start + timedelta(days=1)
+    return (Q(market_time__gte=day_start, market_time__lt=nxt)
+            | Q(market_time__isnull=True, created_at__gte=day_start, created_at__lt=nxt))
+
+
+def snapshot(account, now=None, mkt=None):
+    mkt = mkt or market_for(account)
+    replay_clock = None
+    if mkt.replay and not account.replay_date:
+        now = None
+    else:
+        now = now or mkt.now()
+        try:
+            settle_expired(account, now, mkt=mkt)
+        except Exception:
+            logger.exception("options: settlement failed")
+    day_start = datetime.combine(now.date(), time(0), tzinfo=IST) if now else None
+    today = account.orders.filter(_on_day(day_start)) if now else account.orders.none()
+    traded = {(o.symbol, o.expiry, o.strike, o.option_type, o.product) for o in today}
+    positions, chains = [], {}
     for p in account.positions.all().order_by("expiry", "symbol", "strike"):
-        touched_today = p.updated_at and to_ist(p.updated_at) >= day_start
-        if p.quantity == 0 and not touched_today:
+        if p.quantity == 0 and (p.symbol, p.expiry, p.strike, p.option_type, p.product) not in traded:
             continue
         key = (p.symbol, p.expiry)
         if key not in chains:
             try:
-                chains[key] = ch.chain(p.symbol, p.expiry, max_age=5) if ch.expiry_dt(p.expiry) > now else None
-            except ch.ChainError:
+                chains[key] = mkt.chain(p.symbol, p.expiry, now=now) if now and ch.expiry_dt(p.expiry) > now else None
+            except DATA_ERRORS:
                 chains[key] = None
         c = chains[key]
         q, spot = None, (c or {}).get("spot")
         if c:
             q = next((r.get(p.option_type) for r in c["rows"] if abs(r["strike"] - float(p.strike)) < 1e-6), None)
         ltp = q["ltp"] if q else None
-        t = greeks.years_to(ch.expiry_dt(p.expiry), now)
+        t = greeks.years_to(ch.expiry_dt(p.expiry), now) if now else 0
         g = greeks.greeks(spot or 0, float(p.strike), t, (q or {}).get("iv"), p.option_type)
         qty = p.quantity
         mtm = (ltp - float(p.avg_price)) * qty if ltp is not None and qty else 0.0
@@ -603,13 +765,17 @@ def snapshot(account, now=None):
             "position_theta": g["theta"] * qty if g["theta"] is not None else None,
             "stale": bool(c and c.get("stale")),
         })
-    today = account.orders.filter(created_at__gte=day_start)
     filled_today = today.filter(status=OptionOrder.COMPLETE)
     pending = account.orders.filter(status=OptionOrder.PENDING)
     blocked = blocked_margin(account)
     unrealized = sum(p["mtm"] for p in positions if p["quantity"])
     history = account.orders.filter(status=OptionOrder.COMPLETE).order_by("-filled_at", "-id")[:300]
+    if mkt.replay:
+        replay_clock = {"date": account.replay_date.isoformat() if account.replay_date else None,
+                        "time": account.replay_time.strftime("%H:%M") if account.replay_time else None,
+                        "first_day": hist.FIRST_DAY.isoformat(), "busy": _replay_busy(account)}
     return {
+        "mode": "replay" if mkt.replay else "live",
         "funds": {"balance": float(account.balance), "blocked_margin": float(blocked),
                   "available": float(account.balance - blocked), "unrealized": unrealized,
                   "realized_today": float(sum((o.realized_pnl for o in filled_today), D("0"))),
@@ -619,22 +785,25 @@ def snapshot(account, now=None):
         "pending": [serialize_order(o) for o in pending],
         "orders_today": [serialize_order(o) for o in today[:200]],
         "history": [serialize_order(o) for o in history],
-        "market": {"status": get_market_status(now), "open": market_open(now), "now": now.isoformat(),
-                   "squareoff": SQUAREOFF.strftime("%H:%M")},
+        "market": {"status": mkt.status(now) if now else "CLOSED", "open": bool(now) and mkt.is_open(now),
+                   "now": (now or now_ist()).isoformat(), "squareoff": SQUAREOFF.strftime("%H:%M")},
+        "replay": replay_clock,
     }
 
 
-def preview(account, *, symbol, expiry, strike, option_type, side, lots, product=NRML, price=None):
+def preview(account, *, symbol, expiry, strike, option_type, side, lots, product=NRML, price=None, mkt=None):
     """Margin / premium / charges for the order ticket, before placing."""
-    lot = ch.lot_size(symbol, expiry)
+    mkt = mkt or market_for(account)
+    now = mkt.now()
+    lot = mkt.lot_size(symbol, expiry, now)
     qty = int(lots) * lot
-    q, spot, _ = ch.quote(symbol, expiry, strike, option_type)
+    q, spot = mkt.quote(symbol, expiry, strike, option_type, now=now)
     px = D(str(price)) if price else D(str(fill_price(side, q) or 0))
     pos = OptionPosition.objects.filter(account=account, symbol=symbol, expiry=expiry, strike=D(str(strike)),
                                         option_type=option_type, product=product).first()
     v = _virtual(OptionOrder(symbol=symbol, expiry=expiry, strike=D(str(strike)), option_type=option_type,
                              product=product, lot_size=lot))
-    closing, opening, cash, m_add, m_rel, realized, chg = plan_fill(account, pos or v, side, qty, px, spot)
+    closing, opening, cash, m_add, m_rel, realized, chg = plan_fill(pos or v, side, qty, px, spot)
     need = m_add + chg["total"] + max(D("0"), -cash)
     return {"quantity": qty, "lot_size": lot, "price": float(px), "premium": float(px * qty), "spot": spot,
             "margin": float(m_add), "charges": {k: float(x) for k, x in chg.items()}, "closing": closing,
