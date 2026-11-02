@@ -105,6 +105,7 @@ tbody tr:hover {
             {% if active_filter_count %}<span class="active-badge">{{ active_filter_count }} active</span>{% endif %}
         </button>
         <button class="btn btn-success" id="refreshBtn" onclick="refreshData()">🔄 Refresh</button>
+        <a class="btn btn-outline-primary" href="{% url 'market:analysis' %}">← Market Analysis</a>
     </div>
 
     <!-- refresh progress (the refresh runs on the server in the background) -->

@@ -37,3 +37,4 @@ smartapi-python==1.5.5
 pyotp==2.10.0
 logzero==1.7.0
 websocket-client==1.9.2
+psutil==7.2.2

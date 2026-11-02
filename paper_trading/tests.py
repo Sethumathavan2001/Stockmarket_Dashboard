@@ -2209,3 +2209,96 @@ class AngelSessionTests(TestCase):
             with self.assertRaisesMessage(angel.AngelError, "AB4036"):
                 angel.place_market("vivek", {"symbol": "X-EQ", "token": "1", "tick": D("0.05")}, "SELL", 1)
         self.assertEqual(sc.placeOrderFullResponse.call_count, 1)
+
+
+class SecureExitAndRouteTests(TestCase):
+    """Secure exit of real trades, and per-account network routing for Angel One."""
+
+    def setUp(self):
+        from . import broker
+        self.b = broker
+        self.fake = FakeAngel()
+        for p in self.fake.patches() + [mock.patch.object(broker, "get_market_status", return_value="OPEN"),
+                                        mock.patch("paper_trading.surveillance.nse_lists", return_value={})]:
+            p.start()
+            self.addCleanup(p.stop)
+        self.now = datetime.combine(svc.today_ist(), time(10, 0), tzinfo=svc.IST)
+
+    def place(self, acc):
+        return self.b.place(acc, rec_id="r", code="TST.NS", side="SELL", quantity=5, stop_pct=1, target_pct=2, now=self.now)
+
+    def test_exit_trade_cancels_the_stop_first_then_exits(self):
+        bo = self.place("vivek")
+        out = self.b.exit_trade(bo.pk)
+        self.assertEqual((out.status, out.exit_reason), ("closed", "manual"))
+        self.assertEqual(self.fake.orders[bo.sl_order_id]["status"], "cancelled")
+        self.assertEqual(self.fake.orders[out.exit_order_id]["side"], "BUY")
+        with self.assertRaisesMessage(self.b.BrokerError, "is not open"):
+            self.b.exit_trade(bo.pk)
+
+    def test_exit_all_by_account_and_api(self):
+        v, s = self.place("vivek"), self.place("sethu")
+        with mock.patch.object(self.b, "now_ist", return_value=self.now):
+            r = self.client.post(reverse("paper_trading:claude_orders_exit"), {"account": "vivek"}, content_type="application/json").json()
+        self.assertEqual([x["code"] for x in r["results"]], ["TST.NS"])
+        v.refresh_from_db(); s.refresh_from_db()
+        self.assertEqual((v.status, s.status), ("closed", "open"))               # Sethu untouched
+        with mock.patch.object(self.b, "now_ist", return_value=self.now):
+            r = self.client.post(reverse("paper_trading:claude_orders_exit"), {"account": "both"}, content_type="application/json").json()
+        s.refresh_from_db()
+        self.assertEqual(s.status, "closed")
+        self.assertEqual(self.client.post(reverse("paper_trading:claude_orders_exit"), {"account": "x"},
+                                          content_type="application/json").status_code, 400)
+
+    def test_route_binds_each_account_to_its_adapter(self):
+        import os
+        from . import netroute
+        ads = {"Wi-Fi": {"up": True, "ipv4": ["192.168.1.10"]}, "Ethernet 3": {"up": True, "ipv4": ["192.168.42.129"]}}
+        env = {"ANGEL_VIVEK_INTERFACE": "Wi-Fi", "ANGEL_SETHU_INTERFACE": "Ethernet 3"}
+        with mock.patch.object(netroute, "adapters", return_value=ads), mock.patch.dict(os.environ, env):
+            self.assertEqual(netroute.source_ip("vivek"), "192.168.1.10")
+            self.assertEqual(netroute.source_ip("sethu"), "192.168.42.129")
+            with netroute.via("sethu") as ip:
+                self.assertEqual(ip, "192.168.42.129")
+                ad = netroute._local.session.get_adapter("https://apiconnect.angelone.in")
+                self.assertEqual(ad.ip, "192.168.42.129")
+            self.assertIsNone(getattr(netroute._local, "session", None))      # restored after the block
+        with mock.patch.object(netroute, "adapters", return_value={"Wi-Fi": ads["Wi-Fi"]}), mock.patch.dict(os.environ, env):
+            with self.assertRaisesMessage(netroute.RouteError, "not connected"):  # phone unplugged: refuse
+                netroute.source_ip("sethu")
+        with mock.patch.dict(os.environ, {"ANGEL_SETHU_INTERFACE": "", "ANGEL_SETHU_SOURCE_IP": ""}):
+            self.assertIsNone(netroute.source_ip("sethu"))                       # not set: normal route
+
+
+class TurnoverParseTests(TestCase):
+    def test_both_nse_formats(self):
+        from .claude_board import turnover_lakh
+        self.assertEqual(turnover_lakh(2000), 2000.0)                 # old: a number in Rs lakh
+        self.assertAlmostEqual(turnover_lakh("3,812.46 Cr"), 381246.0, places=6)   # new: text in Rs crore
+        self.assertAlmostEqual(turnover_lakh("80.76 Cr"), 8076.0, places=6)
+        self.assertEqual(turnover_lakh("950.5 L"), 950.5)
+        self.assertEqual(turnover_lakh(None), 0.0)
+        self.assertEqual(turnover_lakh("-"), 0.0)
+
+
+class OrderValueLimitTests(TestCase):
+    def test_limit_values(self):
+        import os
+        from . import angel
+        for raw, want in (("unlimited", None), ("0", None), ("none", None), ("500000", 500000.0), ("", 200000.0), ("abc", 200000.0)):
+            with mock.patch.dict(os.environ, {"ANGEL_MAX_ORDER_VALUE": raw}):
+                self.assertEqual(angel.max_order_value(), want, raw)
+
+    def test_unlimited_lets_a_big_order_through(self):
+        import os
+        from . import broker
+        fake = FakeAngel()
+        fake.price = 2703.20
+        for p in fake.patches() + [mock.patch.object(broker, "get_market_status", return_value="OPEN"),
+                                   mock.patch("paper_trading.surveillance.nse_lists", return_value={}),
+                                   mock.patch.dict(os.environ, {"ANGEL_MAX_ORDER_VALUE": "unlimited"})]:
+            p.start()
+            self.addCleanup(p.stop)
+        bo = broker.place("vivek", rec_id="r", code="TST.NS", side="BUY", quantity=100, stop_pct=1, target_pct=2,
+                          now=datetime(2026, 10, 26, 10, 0, tzinfo=svc.IST))           # Rs 2,70,320
+        self.assertEqual(bo.status, "open")

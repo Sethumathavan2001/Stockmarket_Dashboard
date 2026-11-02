@@ -27,7 +27,7 @@ from django.views.decorators.http import require_GET, require_POST
 
 from market.models import Company
 
-from . import angel, broker, claude_board, surveillance
+from . import angel, broker, claude_board, netroute, surveillance
 from . import services as svc
 from .models import PaperOrder
 
@@ -95,7 +95,33 @@ def wallets(request):
     out = {"paper": {"configured": True, "available": float(svc.get_account(BOOK).balance), "error": None}}
     for acc in angel.ACCOUNTS:
         out[acc] = angel.funds(acc, use_cache=request.GET.get("fresh") != "1")
+        out[acc]["route"] = netroute.describe(acc)            # which connection / public IP Angel One sees
     return JsonResponse(out)
+
+
+@require_POST
+def exit_trades(request):
+    """Secure exit of real Angel One trades: {"id": <trade>} or {"account": "vivek" | "sethu" | "both"}."""
+    try:
+        body = json.loads(request.body or b"{}")
+    except ValueError:
+        body = {}
+    if body.get("id"):
+        try:
+            bo = broker.exit_trade(int(body["id"]))
+        except (broker.BrokerError, ValueError) as exc:
+            return _error(str(exc))
+        angel._funds.pop(bo.account, None)
+        return JsonResponse({"ok": bo.status == "closed", "results": [{**broker.serialize(bo), "error": None}]})
+    acc = str(body.get("account") or "")
+    accounts = list(angel.ACCOUNTS) if acc == "both" else [acc] if acc in angel.ACCOUNTS else None
+    if not accounts:
+        return _error("Choose an account.")
+    results = broker.exit_all(accounts)
+    for a in accounts:
+        angel._funds.pop(a, None)
+    return JsonResponse({"ok": all(err is None for _, err in results),
+                         "results": [{**broker.serialize(bo), "error": err} for bo, err in results]})
 
 
 @require_POST

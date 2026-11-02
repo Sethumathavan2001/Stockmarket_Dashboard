@@ -313,6 +313,13 @@ showChartBtn.addEventListener('click', () => {
   loadChart();
 });
 
+// /chart/?company=<id> (e.g. from the Analysis page) opens that stock straight away
+const initialCompany = new URLSearchParams(location.search).get('company');
+if (initialCompany && [...companySelect.options].some(o => o.value === initialCompany)) {
+  companySelect.value = initialCompany;
+  loadChart();
+}
+
 function destroyCharts(){
   activeCharts.forEach(c => c.destroy());
   activeCharts = [];

@@ -85,6 +85,15 @@
   .bstat.open, .bstat.pending, .bstat.placing{ background:var(--blue-50); color:var(--navy-800); }
   .bstat.closed{ background:var(--green-bg); color:var(--green-dark); } .bstat.rejected, .bstat.error{ background:var(--red-bg); color:var(--red-dark); }
   .caution{ margin-top:6px; font-size:11px; line-height:1.4; color:var(--amber); background:var(--amber-bg); border-radius:6px; padding:4px 7px; max-width:200px; }
+  .bulk{ display:grid; gap:8px; padding:12px 16px; border-bottom:1px solid var(--border); background:var(--panel); }
+  .bulk-row{ display:flex; flex-wrap:wrap; align-items:center; gap:6px 8px; }
+  .bulk-row .lbl{ width:92px; font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.05em; }
+  .bulk-row .lbl.sell{ color:var(--red-dark); } .bulk-row .lbl.buy{ color:var(--green-dark); } .bulk-row .lbl.exit{ color:var(--navy-800); }
+  .btn.exit{ background:#fff; color:var(--navy-800); border:2px solid var(--navy-800); }
+  .btn.exit.sm{ padding:4px 9px; font-size:11.5px; margin-top:5px; }
+  .bulk-msg{ font-size:12.5px; color:var(--navy-800); }
+  .route{ font-size:10.5px; margin-top:3px; font-family:'JetBrains Mono',monospace; color:var(--text-muted); }
+  .route.bad{ color:var(--red-dark); font-family:inherit; }
   .why{ font-size:12px; color:var(--text-muted); line-height:1.5; max-width:340px; }
   .why b{ color:var(--text); font-weight:600; }
   details summary{ cursor:pointer; font-size:12px; color:var(--blue-600); font-weight:600; margin-top:4px; }
@@ -122,6 +131,23 @@
 
   <div class="card">
     <div class="card-head"><span class="card-title">Recommended orders</span><span class="co" id="quoteTime"></span></div>
+    <div class="bulk" id="bulk">
+      <div class="bulk-row"><span class="lbl sell">Place all SELL</span>
+        <button class="btn sell" data-bulk="SELL" data-accs="paper">Paper Trading</button>
+        <button class="btn sell real" data-bulk="SELL" data-accs="vivek">Vivek</button>
+        <button class="btn sell real" data-bulk="SELL" data-accs="sethu">Sethu</button>
+        <button class="btn sell real" data-bulk="SELL" data-accs="vivek,sethu">Vivek + Sethu</button></div>
+      <div class="bulk-row"><span class="lbl buy">Place all BUY</span>
+        <button class="btn buy" data-bulk="BUY" data-accs="paper">Paper Trading</button>
+        <button class="btn buy real" data-bulk="BUY" data-accs="vivek">Vivek</button>
+        <button class="btn buy real" data-bulk="BUY" data-accs="sethu">Sethu</button>
+        <button class="btn buy real" data-bulk="BUY" data-accs="vivek,sethu">Vivek + Sethu</button></div>
+      <div class="bulk-row"><span class="lbl exit">Secure exit</span>
+        <button class="btn exit" data-exitall="vivek" title="Cancel the stop-loss orders and exit every open Angel One trade in Vivek's account">Exit all · Vivek</button>
+        <button class="btn exit" data-exitall="sethu" title="Same for Sethu's account">Exit all · Sethu</button>
+        <button class="btn exit" data-exitall="both">Exit all · both</button>
+        <span class="bulk-msg" id="bulkMsg"></span></div>
+    </div>
     <div class="table-wrap"><table>
       <thead><tr><th>Stock</th><th>Order</th><th class="num">At rec. · live</th><th>Account</th><th class="num">Quantity</th>
         <th class="num">Stop loss %</th><th class="num">Target %</th><th class="num">Value · risk</th><th>Place</th><th>Why</th></tr></thead>
@@ -152,6 +178,7 @@
 const URLS = {
   state: "{% url 'paper_trading:claude_orders_state' %}", place: "{% url 'paper_trading:claude_orders_place' %}",
   refresh: "{% url 'paper_trading:claude_orders_refresh' %}", wallets: "{% url 'paper_trading:claude_orders_wallets' %}",
+  exit: "{% url 'paper_trading:claude_orders_exit' %}",
   quotes: "{% url 'paper_trading:quotes' %}", page2: "{% url 'paper_trading:page2_live' 'CODE_PLACEHOLDER' %}",
   candle: "{% url 'candle_predictor_page' %}",
 };
@@ -180,7 +207,7 @@ function renderMeta() {
     : 'No recommendations yet. Press Refresh orders to build them from current data.';
   $('livePill').textContent = ST.live_trading ? 'Real Angel One orders: ON' : 'Real Angel One orders: OFF';
   $('livePill').className = 'live-pill' + (ST.live_trading ? ' on' : '');
-  $('livePill').title = ST.live_trading ? `Real orders are enabled (max ₹${nf.format(ST.max_order_value)} per order)` : 'Set ANGEL_LIVE_TRADING=1 in .env and restart the server to allow real orders';
+  $('livePill').title = ST.live_trading ? `Real orders are enabled (${ST.max_order_value == null ? 'no order value limit' : 'max ₹' + nf.format(ST.max_order_value) + ' per order'})` : 'Set ANGEL_LIVE_TRADING=1 in .env and restart the server to allow real orders';
   if (ST.generated && !ST.is_today) notice(`These recommendations are from ${ST.session}. Only today's recommendations can be placed - press Refresh orders for a fresh list.`, 'warn');
   else if (ST.generated && !ST.orders.length) notice('No stock has enough agreeing signals right now - nothing to buy or sell. Try Refresh orders again later.');
   else notice('');
@@ -196,7 +223,9 @@ function renderWallets() {
     else if (w.error) note = '<span class="down">' + esc(w.error) + '</span>';
     else if (w.available != null) { amt = inr(w.available); note = `Angel One · available cash${w.used ? ' · used ' + inr(w.used) : ''}`; }
     else note = 'Loading…';
-    return `<div class="wcard ${key}"><div class="lbl">${esc(title)}</div><div class="amt">${amt}</div><div class="sub">${note}</div></div>`;
+    const rt = w.route ? (w.route.error ? `<div class="route bad">⚠ ${esc(w.route.error)}</div>`
+      : `<div class="route" title="${esc(w.route.setting)}">via ${esc(w.route.local_ip || 'normal route')} → IP ${esc(w.route.public_ip || '?')}</div>`) : '';
+    return `<div class="wcard ${key}"><div class="lbl">${esc(title)}</div><div class="amt">${amt}</div><div class="sub">${note}</div>${rt}</div>`;
   };
   $('wallets').innerHTML = card('paper', 'Paper Trading 2 wallet', 'practice money') + card('vivek', 'Vivek wallet', '') + card('sethu', 'Sethu wallet', '');
 }
@@ -255,6 +284,17 @@ function priceState(o, stop, target) {
 }
 // stop / target prices for an entry at p with sl / tp in %
 const levelsAt = (side, p, sl, tp) => side === 'BUY' ? [p * (1 - sl / 100), p * (1 + tp / 100)] : [p * (1 + sl / 100), p * (1 - tp / 100)];
+// why this account can't place this order right now ('' = it can) - used by the row buttons and "Place all"
+function blockReason(o, a, v) {
+  if (a.key === 'paper' ? o.placed : (o.broker || {})[a.key]) return 'Already placed today';
+  let block = !ST.is_today ? 'From an earlier day' : priceState(o, o.stop, o.target);
+  if (!block && !(v.sl >= 0.05 && v.sl <= 20 && v.tp >= 0.05 && v.tp <= 20)) block = 'Stop loss and target must be 0.05-20 %';
+  if (!block && !(v.qty >= 1)) block = v.split ? 'Wallet share is less than one share' : 'Wallet not loaded yet';
+  if (!block && a.real && a.missing && a.missing.length) block = `Not set up - add ANGEL_${a.key.toUpperCase()}_* to .env`;
+  else if (!block && a.real && !ST.live_trading) block = 'Real orders are off - ANGEL_LIVE_TRADING=1 in .env';
+  if (!block && a.real && (W[a.key] || {}).route && W[a.key].route.error) block = W[a.key].route.error;
+  return block;
+}
 function accountRow(o, a, first, last) {
   const side = o.side.toLowerCase(), key = o.id + '|' + a.key, p = LTP[o.code] || o.price_at;
   const v = vals(o, a.key);
@@ -272,13 +312,11 @@ function accountRow(o, a, first, last) {
     action = `<div class="status ok">✓ Placed ${o.placed.quantity} @ ${inr(o.placed.price)} at ${hm(o.placed.time)}<br><a href="${URLS.page2.replace('CODE_PLACEHOLDER', encodeURIComponent(o.code))}">Open in Paper Trading 2 →</a></div>`;
   } else if (bo) {
     const pnl = bo.pnl != null ? ` · P&amp;L <b class="${bo.pnl >= 0 ? 'up' : 'down'}">${inr(bo.pnl)}</b>` : '';
-    action = `<div class="status"><span class="bstat ${esc(bo.status)}">${esc(bo.status)}</span>${esc(bo.message)}${pnl}<div class="co">Angel order ${esc(bo.entry_order_id || '—')} · ${hm(bo.time)}</div></div>`;
+    action = `<div class="status"><span class="bstat ${esc(bo.status)}">${esc(bo.status)}</span>${esc(bo.message)}${pnl}<div class="co">Angel order ${esc(bo.entry_order_id || '—')} · ${hm(bo.time)}</div>`
+      + (bo.status === 'open' && !bo.exit_order_id ? `<button class="btn exit sm" data-exit="${bo.id}" data-name="${esc(a.name)} · ${esc(o.code.replace('.NS', ''))}">Exit now</button>` : '')
+      + '</div>';
   } else {
-    let block = !ST.is_today ? 'From an earlier day' : priceState(o, o.stop, o.target);
-    if (!block && !(v.sl >= 0.05 && v.sl <= 20 && v.tp >= 0.05 && v.tp <= 20)) block = 'Stop loss and target must be 0.05-20 %';
-    if (!block && !(v.qty >= 1)) block = v.split ? 'Wallet share is less than one share' : 'Wallet not loaded yet';
-    if (!block && a.real && a.missing && a.missing.length) block = `Not set up - add ANGEL_${a.key.toUpperCase()}_* to .env`;
-    else if (!block && a.real && !ST.live_trading) block = 'Real orders are off - ANGEL_LIVE_TRADING=1 in .env';
+    const block = blockReason(o, a, v);
     action = `<button class="btn ${side} ${a.real ? 'real' : ''}" data-place="${esc(o.id)}" data-acc="${a.key}" ${block ? 'disabled' : ''}>${esc(label)}</button>`
       + (block ? `<div class="status warn">${esc(block)}</div>` : '')
       + (MSG[key] ? `<div class="status ${MSG[key][0]}">${esc(MSG[key][1])}</div>` : '');
@@ -364,6 +402,29 @@ $('refreshBtn').addEventListener('click', async () => {
 });
 
 /* ---------------- place ---------------- */
+const CAUTION_TEXT = "The exchange cautions investors about stocks on this list (unusual price or volume moves, surveillance). "
+  + "Angel One takes the order only with your consent, sent as scripconsent = yes on the trade's entry, stop-loss and exit orders.";
+const askConsentFor = (o, why) => confirm(`CAUTIONARY STOCK - ${o.code.replace('.NS', '')}\n\n${why}\n\n${CAUTION_TEXT}\n\n`
+  + 'Do you understand the caution and consent to place this order?');
+// send one order; asks for consent if Angel One flags the stock just now. -> {ok, d}
+async function sendOrder(o, acc, v, consent) {
+  const send = (withConsent) => fetch(URLS.place, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() },
+    body: JSON.stringify({ id: o.id, account: acc.key, quantity: v.qty, stop_pct: v.sl, target_pct: v.tp, consent: withConsent }) });
+  const key = o.id + '|' + acc.key;
+  try {
+    let r = await send(consent);
+    let d = await r.json().catch(() => ({}));
+    if (!r.ok && d.code === 'consent_required' && !consent && askConsentFor(o, d.error)) {
+      r = await send(true); d = await r.json().catch(() => ({}));
+    }
+    const ok = r.ok && (d.ok !== false);
+    if (!r.ok) MSG[key] = ['err', d.error || `Failed (${r.status})`]; else delete MSG[key];
+    return { ok, d, error: !r.ok ? (d.error || `Failed (${r.status})`) : (d.broker && d.ok === false ? d.broker.message : null) };
+  } catch (err) {
+    MSG[key] = ['err', 'Network error - check the order book before trying again.'];
+    return { ok: false, error: 'Network error - check the order book before trying again.' };
+  }
+}
 document.addEventListener('click', async (e) => {
   const b = e.target.closest('button[data-place]'); if (!b) return;
   const o = ST.orders.find((x) => x.id === b.dataset.place); if (!o) return;
@@ -371,10 +432,7 @@ document.addEventListener('click', async (e) => {
   const key = o.id + '|' + acc.key, v = vals(o, acc.key), p = LTP[o.code] || o.price_at;
   if (!(v.qty >= 1)) { toast('Enter a quantity.', 'error'); return; }
   let consent = false;
-  const askConsent = (why) => confirm(`CAUTIONARY STOCK - ${o.code.replace('.NS', '')}\n\n${why}\n\n`
-    + "The exchange cautions investors about stocks on this list (unusual price or volume moves, surveillance). "
-    + "Angel One takes the order only with your consent, sent as scripconsent = yes on this trade's entry, stop-loss and exit orders.\n\n"
-    + 'Do you understand the caution and consent to place this order?');
+  const askConsent = (why) => askConsentFor(o, why);
   if (acc.real && o.caution) {
     if (!askConsent(o.caution)) return;
     consent = true;
@@ -386,26 +444,104 @@ document.addEventListener('click', async (e) => {
     if (!ok) return;
   }
   b.disabled = true; b.textContent = acc.real ? 'Sending to Angel One…' : 'Placing…';
-  const send = (withConsent) => fetch(URLS.place, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() },
-    body: JSON.stringify({ id: o.id, account: acc.key, quantity: v.qty, stop_pct: v.sl, target_pct: v.tp, consent: withConsent }) });
-  try {
-    let r = await send(consent);
-    let d = await r.json().catch(() => ({}));
-    if (!r.ok && d.code === 'consent_required' && !consent) {          // Angel One flagged it just now
-      if (askConsent(d.error)) { consent = true; r = await send(true); d = await r.json().catch(() => ({})); }
-    }
-    if (!r.ok) { MSG[key] = ['err', d.error || `Failed (${r.status})`]; toast(`${acc.name} · ${o.code}: ${d.error || 'order failed'}`, 'error'); }
-    else if (d.broker) {
-      delete MSG[key];
-      toast(`${acc.name} · ${o.code}: ${d.broker.message}`, d.ok ? 'success' : 'error');
-      loadWallets(true);
-    } else {
-      delete MSG[key];
-      toast(`Placed in Paper Trading 2: ${d.order.side} ${d.order.quantity} ${o.code} @ ${inr(d.order.price)}`, 'success');
-      try { new BroadcastChannel('paper-trading-book-2').postMessage({ type: 'changed', at: Date.now() }); } catch (err) {}
-    }
-  } catch (err) { MSG[key] = ['err', 'Network error - check the order book before trying again.']; }
+  const res = await sendOrder(o, acc, v, consent);
+  if (res.error) toast(`${acc.name} · ${o.code}: ${res.error}`, 'error');
+  else if (res.d.broker) { toast(`${acc.name} · ${o.code}: ${res.d.broker.message}`, 'success'); loadWallets(true); }
+  else {
+    toast(`Placed in Paper Trading 2: ${res.d.order.side} ${res.d.order.quantity} ${o.code} @ ${inr(res.d.order.price)}`, 'success');
+    try { new BroadcastChannel('paper-trading-book-2').postMessage({ type: 'changed', at: Date.now() }); } catch (err) {}
+  }
   await refreshState();
+});
+
+/* ---------------- place all SELL / BUY for chosen accounts ---------------- */
+let bulkBusy = false;
+function setBulkBusy(on, msg) {
+  bulkBusy = on;
+  document.querySelectorAll('#bulk button').forEach((x) => { x.disabled = on; });
+  $('bulkMsg').textContent = msg || '';
+}
+$('bulk').addEventListener('click', async (e) => {
+  const b = e.target.closest('button[data-bulk]'); if (!b || bulkBusy) return;
+  const side = b.dataset.bulk, accKeys = b.dataset.accs.split(',');
+  const accs = ACCOUNTS().filter((a) => accKeys.includes(a.key));
+  let jobs = [], skipped = [];
+  for (const o of ST.orders.filter((x) => x.side === side)) {
+    for (const a of accs) {
+      const v = vals(o, a.key), why = blockReason(o, a, v);
+      if (why) skipped.push(`${a.name} · ${o.code.replace('.NS', '')}: ${why}`); else jobs.push({ o, a, v });
+    }
+  }
+  if (!jobs.length) { toast(`Nothing to place for ${side}. ` + (skipped[0] || ''), 'error'); return; }
+  const real = jobs.some((j) => j.a.real);
+  const lines = accs.map((a) => {
+    const js = jobs.filter((j) => j.a.key === a.key);
+    if (!js.length) return `${a.name}: nothing to place`;
+    const val = js.reduce((t, j) => t + j.v.qty * (LTP[j.o.code] || j.o.price_at), 0);
+    return `${a.name}${a.real ? ' (REAL, Angel One)' : ''}: ${js.length} order${js.length > 1 ? 's' : ''}, value about ₹${nf.format(val)}\n`
+      + js.map((j) => `   ${side} ${j.v.qty} × ${j.o.code.replace('.NS', '')}  ~₹${nf.format(LTP[j.o.code] || j.o.price_at)}  SL ${j.v.sl}% · TP ${j.v.tp}%`).join('\n');
+  }).join('\n\n');
+  const msg = `PLACE ALL ${side} ORDERS - ${jobs.length} order${jobs.length > 1 ? 's' : ''}\n\n${lines}`
+    + (skipped.length ? `\n\nSkipped (${skipped.length}):\n   ` + skipped.slice(0, 8).join('\n   ') + (skipped.length > 8 ? '\n   …' : '') : '')
+    + (real ? '\n\nReal orders: INTRADAY at market; each gets a stop-loss order at Angel One, the target and 15:15 exit are watched by this server.' : '')
+    + '\n\nPlace these orders?';
+  if (!confirm(msg)) return;
+  // cautionary stocks in real accounts: one consent for all of them (decline = skip them)
+  const flagged = jobs.filter((j) => j.a.real && j.o.caution);
+  let consentAll = false;
+  if (flagged.length) {
+    consentAll = confirm(`CAUTIONARY STOCKS (${flagged.length})\n\n` + flagged.map((j) => `${j.a.name} · ${j.o.code.replace('.NS', '')}: ${j.o.caution}`).join('\n')
+      + `\n\n${CAUTION_TEXT}\n\nOK = consent and place them too. Cancel = skip these and place the rest.`);
+    if (!consentAll) jobs = jobs.filter((j) => !(j.a.real && j.o.caution));
+  }
+  let ok = 0, failed = [];
+  setBulkBusy(true);
+  for (let i = 0; i < jobs.length; i++) {
+    const j = jobs[i];
+    $('bulkMsg').textContent = `Placing ${i + 1} of ${jobs.length}: ${j.a.name} · ${side} ${j.o.code.replace('.NS', '')}…`;
+    const res = await sendOrder(j.o, j.a, j.v, consentAll && j.a.real && !!j.o.caution);
+    if (res.error) failed.push(`${j.a.name} · ${j.o.code.replace('.NS', '')}: ${res.error}`); else ok += 1;
+  }
+  setBulkBusy(false, `${side}: ${ok} placed${failed.length ? `, ${failed.length} failed` : ''}${skipped.length ? `, ${skipped.length} skipped` : ''}.`);
+  toast(`Place all ${side}: ${ok} of ${jobs.length} placed.`, failed.length ? 'error' : 'success');
+  failed.slice(0, 4).forEach((f) => toast(f, 'error'));
+  try { new BroadcastChannel('paper-trading-book-2').postMessage({ type: 'changed', at: Date.now() }); } catch (err) {}
+  await refreshState(); loadWallets(true);
+});
+
+/* ---------------- secure exit: one trade, or every open trade of an account ---------------- */
+async function postExit(body) {
+  const r = await fetch(URLS.exit, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() }, body: JSON.stringify(body) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error || `Failed (${r.status})`);
+  return d;
+}
+function exitToasts(d) {
+  (d.results || []).forEach((x) => toast(`${x.account} · ${x.code.replace('.NS', '')}: ${x.error || x.message}`, x.error ? 'error' : 'success'));
+}
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest('button[data-exit]'); if (!b) return;
+  if (!confirm(`SECURE EXIT - ${b.dataset.name}\n\nCancels this trade's stop-loss order at Angel One and, once Angel One confirms, exits it at market.\n\nExit now?`)) return;
+  b.disabled = true; b.textContent = 'Exiting…';
+  try { exitToasts(await postExit({ id: +b.dataset.exit })); } catch (err) { toast(err.message, 'error'); }
+  await refreshState(); loadWallets(true);
+});
+$('bulk').addEventListener('click', async (e) => {
+  const b = e.target.closest('button[data-exitall]'); if (!b || bulkBusy) return;
+  const accs = b.dataset.exitall === 'both' ? ['vivek', 'sethu'] : [b.dataset.exitall];
+  const open = ST.orders.flatMap((o) => accs.map((a) => (o.broker || {})[a]).filter((x) => x && x.status === 'open'));
+  const names = accs.map((a) => a[0].toUpperCase() + a.slice(1)).join(' + ');
+  if (!open.length && !confirm(`No open trades from this page are shown for ${names}. Check with the server anyway?`)) return;
+  if (open.length && !confirm(`SECURE EXIT - ${names}\n\n` + open.map((x) => `   ${x.account} · ${x.side} ${x.quantity} ${x.code.replace('.NS', '')} (entry ₹${x.entry_price})`).join('\n')
+    + '\n\nFor each: cancel its stop-loss order at Angel One, then exit at market once the cancel is confirmed.\n'
+    + 'Only trades placed from this page are exited - positions you opened in the Angel One app are not touched.\n\nExit all?')) return;
+  setBulkBusy(true, `Exiting ${names}…`);
+  try {
+    const d = await postExit({ account: b.dataset.exitall });
+    exitToasts(d);
+    setBulkBusy(false, d.results.length ? `Exit ${names}: ${d.results.filter((x) => !x.error).length} of ${d.results.length} done.` : `No open trades in ${names}.`);
+  } catch (err) { setBulkBusy(false, ''); toast(err.message, 'error'); }
+  await refreshState(); loadWallets(true);
 });
 
 render();

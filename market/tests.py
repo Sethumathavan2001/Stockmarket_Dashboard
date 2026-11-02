@@ -1,3 +1,4 @@
+import json
 from unittest import mock
 
 import pandas as pd
@@ -95,3 +96,53 @@ class StockIndicesTests(TestCase):
         self.assertEqual([i["name"] for i in d["indices"]], ["NIFTY 50", "NIFTY 500", "NIFTY BANK"])
         self.assertEqual({i["name"]: i["key"] for i in d["indices"]}["NIFTY BANK"], "banknifty")
         self.assertTrue(self.im.STORE.exists())                                  # kept on disk for restarts
+
+
+class AnalysisScreenerTests(TestCase):
+    """Analysis page indicators (market/screener.py) and its data endpoint."""
+
+    def frame(self, closes, vol=1000):
+        d = pd.bdate_range("2025-01-01", periods=len(closes)).date
+        c = pd.Series(closes, dtype=float)
+        return pd.DataFrame({"date": d, "open": c.shift(1).fillna(c.iloc[0]), "high": c * 1.01, "low": c * 0.99,
+                             "close": c, "volume": [vol] * (len(c) - 1) + [vol * 4]})
+
+    def test_uptrend_scores_high_and_downtrend_low(self):
+        from . import screener
+        up = screener.stock_metrics(self.frame([100 * 1.004 ** i for i in range(300)]), nifty_r3m=2.0)
+        self.assertEqual(up["r1d"], 0.4)
+        self.assertGreater(up["vs50"], 0)
+        self.assertGreater(up["vs200"], 0)
+        self.assertGreater(up["rsi"], 70)                     # rises every day
+        self.assertEqual(up["streak"], 299)
+        self.assertEqual(up["vol_x"], 4.0)                    # last day 4x the 20-day average
+        self.assertTrue(up["new_hi"])
+        self.assertAlmostEqual(up["rs3m"], up["r3m"] - 2.0, places=1)
+        self.assertGreaterEqual(up["score"], 70)
+        down = screener.stock_metrics(self.frame([300 * 0.996 ** i for i in range(300)]), nifty_r3m=None)
+        self.assertLess(down["rsi"], 30)
+        self.assertTrue(down["new_lo"])
+        self.assertIsNone(down["rs3m"])
+        self.assertLessEqual(down["score"], 15)
+
+    def test_golden_cross_is_found_with_its_age(self):
+        from . import screener
+        closes = [200 * 0.995 ** i for i in range(220)] + [66 * 1.03 ** i for i in range(60)]
+        m = screener.stock_metrics(self.frame(closes), nifty_r3m=0)
+        self.assertIsNotNone(m["cross"])
+        self.assertGreater(m["cross"], 0)                     # 50-day crossed above the 200-day
+        a = pd.Series([1, 1, 1, 3.0]); b = pd.Series([2, 2, 2, 2.0])
+        self.assertEqual(screener._cross_age(a, b), 1)        # crossed above on the last bar = today
+        self.assertEqual(screener._cross_age(b, a), -1)
+
+    def test_data_endpoint(self):
+        import tempfile
+        from pathlib import Path
+        from . import screener
+        tmp = Path(tempfile.mkdtemp()) / "snap.json"
+        with mock.patch.object(screener, "SNAPSHOT", tmp):
+            self.assertEqual(self.client.get("/analysis/data/").status_code, 404)
+            tmp.write_text(json.dumps({"as_of": "2026-10-30", "breadth": {}, "sectors": [], "stocks": []}))
+            self.assertEqual(self.client.get("/analysis/data/").json()["as_of"], "2026-10-30")
+            self.assertEqual(self.client.get("/analysis/").status_code, 200)
+        self.assertEqual(self.client.get("/analysis/levels/").status_code, 200)

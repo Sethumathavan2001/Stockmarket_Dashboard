@@ -77,6 +77,22 @@ def _run(orders_file):
 
 
 # ---------------------------------------------------------------- 1. candidates
+def turnover_lakh(v):
+    """NSE's turnover in Rs lakh, whichever way NSE sends it: a number in lakh (2000), or text such as
+    "3,812.46 Cr" / "80.76 Cr" / "950.2 L" (the format since Nov 2026).  Unreadable -> 0."""
+    if v is None:
+        return 0.0
+    if isinstance(v, (int, float)):
+        return float(v)
+    t = str(v).replace(",", "").strip().lower()
+    scale = 100.0 if t.endswith(("cr", "crore", "crores")) else 1.0       # 1 crore = 100 lakh
+    num = "".join(ch for ch in t if ch.isdigit() or ch == ".")
+    try:
+        return float(num) * scale if num else 0.0
+    except ValueError:
+        return 0.0
+
+
 
 def candidates(live):
     from market.models import Company
@@ -95,7 +111,7 @@ def candidates(live):
             why[c] = []
         why[c].append(reason)
 
-    liquid = lambda r: (r.get("turnover") or 0) >= TURNOVER_MIN
+    liquid = lambda r: turnover_lakh(r.get("turnover")) >= TURNOVER_MIN
     for r in sorted(filter(liquid, live.get("gainers", [])), key=lambda r: -r["net_price"])[:TOP_MOVERS]:
         add(r["symbol"], f"Live: top gainer {r['net_price']:+.2f}%")
     for r in sorted(filter(liquid, live.get("loosers", [])), key=lambda r: r["net_price"])[:TOP_MOVERS]:

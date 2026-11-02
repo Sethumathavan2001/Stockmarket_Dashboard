@@ -6,8 +6,10 @@ Credentials come from the environment / .env (never from the page):
     ANGEL_VIVEK_API_KEY   ANGEL_VIVEK_CLIENT_ID   ANGEL_VIVEK_PIN   ANGEL_VIVEK_TOTP_SECRET
     ANGEL_SETHU_API_KEY   ANGEL_SETHU_CLIENT_ID   ANGEL_SETHU_PIN   ANGEL_SETHU_TOTP_SECRET
 
+    ANGEL_VIVEK_INTERFACE=Wi-Fi   which internet connection each account uses (netroute.py) - its IP must
+    ANGEL_SETHU_INTERFACE=...     be the one registered in that account's SmartAPI app
     ANGEL_LIVE_TRADING=1          real orders are only sent when this is set (wallets show without it)
-    ANGEL_MAX_ORDER_VALUE=200000  refuse a single order worth more than this (rupees)
+    ANGEL_MAX_ORDER_VALUE=200000  refuse a single order worth more than this (rupees); 0 / unlimited = no limit
 
 Login uses the TOTP secret (pyotp) - the session is kept in memory and renewed every few hours or when
 Angel One says it expired.  Instruments (symbol token, tick size) come from Angel One's scrip master,
@@ -25,6 +27,8 @@ from pathlib import Path
 from django.conf import settings
 
 from prediction.market_time import IST
+
+from . import netroute
 
 logger = logging.getLogger(__name__)
 
@@ -67,8 +71,12 @@ def live_enabled():
 
 
 def max_order_value():
+    """Largest single order in rupees, or None for no limit (ANGEL_MAX_ORDER_VALUE=0 / unlimited / none)."""
+    raw = (os.environ.get("ANGEL_MAX_ORDER_VALUE") or "").strip().lower()
+    if raw in ("0", "unlimited", "none", "no", "off"):
+        return None
     try:
-        return float(os.environ.get("ANGEL_MAX_ORDER_VALUE") or 200000)
+        return float(raw) if raw else 200000.0
     except ValueError:
         return 200000.0
 
@@ -109,11 +117,23 @@ def _login(account):
     if missing:
         raise AngelError(f"Not configured - add {', '.join(missing)} to .env")
 
+    try:
+        public = netroute.public_ip(account)                 # also checks the account's connection is there
+    except netroute.RouteError as exc:
+        raise AngelError(str(exc)) from exc
+    except Exception:
+        public = None
+
     def attempt():
-        sc = SmartConnect(api_key=cfg["API_KEY"], timeout=TIMEOUT)
-        return sc, sc.generateSession(cfg["CLIENT_ID"], cfg["PIN"], pyotp.TOTP(cfg["TOTP_SECRET"]).now())
+        with netroute.via(account):                          # out through this account's own connection
+            sc = SmartConnect(api_key=cfg["API_KEY"], timeout=TIMEOUT)
+            if public:
+                sc.clientPublicIp = public                   # the SDK otherwise sends a fixed made-up IP
+            return sc, sc.generateSession(cfg["CLIENT_ID"], cfg["PIN"], pyotp.TOTP(cfg["TOTP_SECRET"]).now())
     try:
         sc, res = _retry(attempt, safe_any=True)
+    except netroute.RouteError as exc:
+        raise AngelError(str(exc)) from exc
     except Exception as exc:
         hint = " - Angel One's server didn't answer in time; check the internet connection and try again." if _network(exc) else ""
         raise AngelError(f"Angel One login failed: {type(exc).__name__}{hint}") from exc
@@ -140,13 +160,20 @@ def _session_expired(text="", code=""):
     return str(code).upper() in SESSION_CODES or any(t in str(text).lower() for t in SESSION_TEXTS)
 
 
+def _via(account, fn, sc):
+    with netroute.via(account):                              # every request leaves through the account's connection
+        return fn(sc)
+
+
 def _call(account, fn, order=False):
     """Run fn(SmartConnect) with network retries; log in again once if the session expired.
     order=True for calls that change orders: those are retried only when certainly not sent."""
     for attempt in range(2):
         sc = client(account, fresh=bool(attempt))
         try:
-            res = _retry(lambda: fn(sc), safe_any=not order)
+            res = _retry(lambda: _via(account, fn, sc), safe_any=not order)
+        except netroute.RouteError as exc:                   # connection missing: nothing was sent
+            raise AngelError(str(exc)) from exc
         except Exception as exc:
             if attempt == 0 and _session_expired(exc, getattr(exc, "code", "")):
                 continue

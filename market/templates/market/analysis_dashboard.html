@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Market Analysis</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --navy-900:#0B2545; --navy-800:#123B7A; --blue-600:#2F6FED; --blue-50:#EEF3FF;
+    --bg:#FFFFFF; --panel:#F7F9FC; --border:#E3E8F0; --text:#101828; --text-muted:#64748B;
+    --green:#0EA968; --green-dark:#0A8A54; --green-bg:#E7F8F0; --red:#E5484D; --red-dark:#C93A3F; --red-bg:#FDECEC;
+    --amber:#B45309; --amber-bg:#FEF3E0; --purple:#7C3AED; --purple-bg:#F3EEFF;
+    --radius:10px; --shadow:0 1px 2px rgba(16,24,40,.04),0 1px 3px rgba(16,24,40,.06);
+  }
+  *{ box-sizing:border-box; }
+  [hidden]{ display:none !important; }
+  body{ margin:0; font-family:'Inter',system-ui,sans-serif; background:var(--bg); color:var(--text); }
+  .mono, .num{ font-family:'JetBrains Mono',monospace; }
+  .wrap{ max-width:1480px; margin:0 auto; padding:0 20px 60px; }
+  .page-head{ display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px 16px; margin-top:20px; }
+  .page-head .title{ display:flex; flex-wrap:wrap; align-items:center; gap:4px 12px; font-size:18px; font-weight:700; }
+  .page-head .tag{ font-size:12.5px; font-weight:500; color:var(--text-muted); border-left:1px solid var(--border); padding-left:12px; }
+  .head-r{ display:flex; flex-wrap:wrap; align-items:center; gap:10px; font-size:12.5px; color:var(--text-muted); }
+  .btn{ border:none; border-radius:8px; padding:8px 14px; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit; color:#fff; background:var(--navy-800); white-space:nowrap; text-decoration:none; display:inline-flex; align-items:center; gap:6px; }
+  .btn.ghost{ background:#fff; color:var(--navy-800); border:1px solid var(--border); font-weight:600; }
+  .btn.sm{ padding:5px 10px; font-size:12px; }
+  .btn:disabled{ opacity:.5; cursor:not-allowed; }
+  .progress{ margin-top:12px; padding:10px 14px; border-radius:8px; background:var(--blue-50); color:var(--navy-800); font-size:13px; }
+  .progress .track{ height:6px; border-radius:3px; background:#fff; margin-top:8px; overflow:hidden; }
+  .progress .fill{ height:100%; background:var(--blue-600); transition:width .4s; }
+  .notice{ margin-top:12px; padding:10px 14px; border-radius:8px; font-size:13.5px; background:var(--amber-bg); color:var(--amber); line-height:1.5; }
+  .mood{ margin-top:14px; font-size:14px; line-height:1.5; padding:12px 16px; border-radius:var(--radius); border:1px solid var(--border); background:var(--panel); }
+  .mood b{ font-weight:700; }
+  .card{ border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); background:#fff; margin-top:16px; }
+  .card-head{ display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px 16px; padding:11px 16px; border-bottom:1px solid var(--border); }
+  .card-title{ font-size:11.5px; font-weight:700; text-transform:uppercase; letter-spacing:.07em; color:var(--text-muted); }
+  .sub{ font-size:12px; color:var(--text-muted); }
+  .up{ color:var(--green-dark); } .down{ color:var(--red-dark); } .muted{ color:var(--text-muted); }
+
+  /* breadth */
+  .kpis{ display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px; margin-top:14px; }
+  .kpi{ border:1px solid var(--border); border-radius:var(--radius); padding:12px 14px; background:#fff; box-shadow:var(--shadow); }
+  .kpi .lbl{ font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--text-muted); }
+  .kpi .val{ font-family:'JetBrains Mono',monospace; font-size:20px; font-weight:700; margin-top:4px; }
+  .kpi .val small{ font-size:12.5px; font-weight:600; }
+  .kpi .note{ font-size:11.5px; color:var(--text-muted); margin-top:6px; line-height:1.4; }
+  .bar2{ display:flex; height:7px; border-radius:4px; overflow:hidden; margin-top:8px; background:#EEF2F7; }
+  .bar2 i{ display:block; height:100%; }
+  .meters{ display:grid; gap:5px; margin-top:6px; }
+  .meter{ display:grid; grid-template-columns:44px 1fr 44px; align-items:center; gap:6px; font-size:11.5px; font-family:'JetBrains Mono',monospace; }
+  .meter .t{ height:6px; border-radius:3px; background:#EEF2F7; overflow:hidden; }
+  .meter .t i{ display:block; height:100%; background:var(--blue-600); }
+
+  /* sectors */
+  .seg{ display:inline-flex; background:#fff; border:1px solid var(--border); border-radius:8px; padding:2px; }
+  .seg button{ border:none; background:transparent; padding:5px 11px; border-radius:6px; font-size:12.5px; font-weight:600; color:var(--text-muted); cursor:pointer; font-family:inherit; }
+  .seg button.active{ background:var(--navy-800); color:#fff; }
+  .heat{ display:grid; grid-template-columns:repeat(auto-fill,minmax(170px,1fr)); gap:8px; padding:14px; }
+  .tile{ border-radius:8px; padding:10px 12px; cursor:pointer; border:2px solid transparent; transition:transform .1s; }
+  .tile:hover{ transform:translateY(-1px); }
+  .tile.sel{ border-color:var(--navy-900); }
+  .tile .nm{ font-weight:700; font-size:13px; }
+  .tile .rt{ font-family:'JetBrains Mono',monospace; font-size:18px; font-weight:700; margin:2px 0; }
+  .tile .mt{ font-size:11px; opacity:.85; line-height:1.4; }
+
+  /* leaders */
+  .leaders{ display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:12px; margin-top:16px; }
+  .leaders .card{ margin-top:0; }
+  .lrow{ display:grid; grid-template-columns:minmax(0,1fr) auto auto; gap:10px; align-items:center; padding:7px 14px; border-bottom:1px solid #F1F4F8; font-size:12.5px; cursor:pointer; }
+  .lrow:hover{ background:var(--panel); }
+  .lrow:last-child{ border-bottom:none; }
+  .lrow .c{ font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lrow .c small{ display:block; font-weight:500; color:var(--text-muted); font-size:11px; overflow:hidden; text-overflow:ellipsis; }
+  .lrow .n{ font-family:'JetBrains Mono',monospace; text-align:right; }
+
+  /* screener */
+  .presets{ display:flex; flex-wrap:wrap; gap:6px; padding:12px 16px 4px; }
+  .chip{ border:1px solid var(--border); background:#fff; border-radius:999px; padding:5px 11px; font-size:12.5px; font-weight:600; color:var(--navy-800); cursor:pointer; font-family:inherit; }
+  .chip .ct{ font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--text-muted); margin-left:4px; }
+  .chip.active{ background:var(--navy-800); border-color:var(--navy-800); color:#fff; }
+  .chip.active .ct{ color:#C9D6F0; }
+  .filters{ display:flex; flex-wrap:wrap; gap:10px 14px; align-items:flex-end; padding:10px 16px 12px; border-bottom:1px solid var(--border); }
+  .field{ display:flex; flex-direction:column; gap:4px; }
+  .field label{ font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--text-muted); }
+  input, select{ border:1px solid var(--border); border-radius:8px; padding:7px 9px; font-size:13px; font-family:inherit; background:#fff; color:var(--text); }
+  input[type=number]{ width:78px; font-family:'JetBrains Mono',monospace; }
+  .chk{ display:inline-flex; align-items:center; gap:6px; font-size:12.5px; font-weight:600; color:var(--text-muted); padding-bottom:7px; }
+  .tbl-wrap{ overflow-x:auto; }
+  table{ width:100%; border-collapse:collapse; font-size:12.5px; }
+  thead th{ position:sticky; top:0; background:var(--panel); text-align:right; font-size:10px; text-transform:uppercase; letter-spacing:.05em; color:var(--text-muted); padding:8px 8px; border-bottom:1px solid var(--border); white-space:nowrap; cursor:pointer; user-select:none; }
+  thead th.l{ text-align:left; }
+  thead th.sorted{ color:var(--navy-800); }
+  tbody td{ padding:6px 8px; border-bottom:1px solid #F1F4F8; text-align:right; white-space:nowrap; font-family:'JetBrains Mono',monospace; }
+  tbody td.l{ text-align:left; font-family:'Inter',sans-serif; }
+  tbody tr.row{ cursor:pointer; }
+  tbody tr.row:hover td{ background:#F6F9FF; }
+  .stk b{ font-size:13px; } .stk small{ display:block; color:var(--text-muted); font-size:11px; max-width:190px; overflow:hidden; text-overflow:ellipsis; }
+  .rc{ border-radius:4px; padding:1px 5px; }
+  .tag{ display:inline-block; font-size:10.5px; font-weight:700; padding:1px 7px; border-radius:999px; font-family:'Inter',sans-serif; }
+  .tag.bull{ background:var(--green-bg); color:var(--green-dark); } .tag.bear{ background:var(--red-bg); color:var(--red-dark); } .tag.flat{ background:var(--panel); color:var(--text-muted); }
+  .dots{ display:inline-flex; gap:3px; }
+  .dots i{ width:9px; height:9px; border-radius:50%; display:inline-block; }
+  .rng{ display:inline-block; position:relative; width:84px; height:6px; border-radius:3px; background:linear-gradient(90deg,#FBD5D6,#EEF2F7 50%,#CDEFDF); vertical-align:middle; }
+  .rng i{ position:absolute; top:-3px; width:3px; height:12px; border-radius:2px; background:var(--navy-900); transform:translateX(-1px); }
+  .score{ display:inline-grid; grid-template-columns:30px 46px; align-items:center; gap:5px; }
+  .score .t{ height:6px; border-radius:3px; background:#EEF2F7; overflow:hidden; }
+  .score .t i{ display:block; height:100%; }
+  tr.detail td{ background:#FAFBFD; padding:12px 16px; text-align:left; font-family:'Inter',sans-serif; white-space:normal; }
+  .dgrid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:8px 18px; font-size:12.5px; }
+  .dgrid div span{ display:block; font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:var(--text-muted); }
+  .dgrid div b{ font-family:'JetBrains Mono',monospace; }
+  .links{ margin-top:10px; display:flex; flex-wrap:wrap; gap:8px; }
+  .links a{ font-size:12.5px; font-weight:600; color:var(--blue-600); text-decoration:none; border:1px solid var(--border); border-radius:6px; padding:4px 10px; background:#fff; }
+  .pager{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 16px; font-size:12.5px; color:var(--text-muted); flex-wrap:wrap; }
+  .empty{ padding:40px 16px; text-align:center; color:var(--text-muted); font-size:14px; }
+  .note{ font-size:12px; color:var(--text-muted); line-height:1.6; padding:10px 16px 14px; }
+</style>
+</head>
+<body>
+
+{% include 'market/_navbar.html' %}
+
+<div class="wrap">
+  <div class="page-head">
+    <div class="title">Market Analysis <span class="tag">Breadth · sectors · leaders · screener for every NSE stock in your database</span></div>
+    <div class="head-r">
+      <span id="asOf"></span>
+      <button class="btn" id="refreshBtn" type="button" title="Recompute from the daily data (a few minutes)">↻ Refresh</button>
+      <a class="btn ghost" href="{% url 'market:analysis_levels' %}">Classic lows &amp; highs →</a>
+    </div>
+  </div>
+  <div class="progress" id="progress" hidden><div id="progressText"></div><div class="track"><div class="fill" id="progressFill" style="width:0"></div></div></div>
+  <div class="notice" id="notice" {% if has_snapshot %}hidden{% endif %}>No analysis yet - press <b>Refresh</b> to build it from your daily data (a few minutes).</div>
+
+  <div id="app" hidden>
+    <div class="mood" id="mood"></div>
+    <div class="kpis" id="kpis"></div>
+
+    <div class="card">
+      <div class="card-head">
+        <span class="card-title">Sectors <span class="sub" style="text-transform:none;letter-spacing:0;font-weight:500">· median return, click a sector to screen it</span></span>
+        <div class="seg" id="sectorPeriod"><button data-p="r1d" class="active">1D</button><button data-p="r1w">1W</button><button data-p="r1m">1M</button><button data-p="r3m">3M</button><button data-p="r1y">1Y</button></div>
+      </div>
+      <div class="heat" id="heat"></div>
+    </div>
+
+    <div class="leaders" id="leaders"></div>
+
+    <div class="card" id="screener">
+      <div class="card-head">
+        <span class="card-title">Screener</span>
+        <div class="head-r"><span id="count"></span><button class="btn ghost sm" id="csvBtn" type="button">⬇ CSV</button></div>
+      </div>
+      <div class="presets" id="presets"></div>
+      <div class="filters">
+        <div class="field"><label for="q">Search</label><input id="q" type="search" placeholder="Symbol or name" style="width:180px"></div>
+        <div class="field"><label for="sector">Sector</label><select id="sector"><option value="">All sectors</option></select></div>
+        <div class="field"><label for="liq">Min turnover</label><select id="liq">
+          <option value="0">Any</option><option value="1" selected>₹1 cr / day</option><option value="5">₹5 cr</option><option value="25">₹25 cr</option><option value="100">₹100 cr</option></select></div>
+        <div class="field"><label>Price ₹</label><div style="display:flex;gap:4px"><input type="number" id="pmin" placeholder="min"><input type="number" id="pmax" placeholder="max"></div></div>
+        <div class="field"><label>RSI</label><div style="display:flex;gap:4px"><input type="number" id="rmin" placeholder="min" min="0" max="100"><input type="number" id="rmax" placeholder="max" min="0" max="100"></div></div>
+        <div class="field"><label for="smin">Min score</label><input type="number" id="smin" placeholder="0-100" min="0" max="100"></div>
+        <label class="chk"><input type="checkbox" id="etf"> Include ETFs</label>
+        <button class="btn ghost sm" id="reset" type="button" style="margin-bottom:2px">Reset</button>
+      </div>
+      <div class="tbl-wrap"><table>
+        <thead><tr id="thead"></tr></thead>
+        <tbody id="rows"></tbody>
+      </table></div>
+      <div class="pager"><span id="pageInfo"></span><div style="display:flex;gap:6px"><button class="btn ghost sm" id="prev">← Prev</button><button class="btn ghost sm" id="next">Next →</button></div></div>
+      <div class="note">
+        <b>Score</b> (0-100) = share of 7 checks passed: price above the 50- and 200-day averages, 50-day above 200-day, MACD above
+        its signal, RSI between 50 and 70, 3-month return up, within 10% of the 52-week high. <b>Trend dots</b> = price above the
+        20 / 50 / 200-day average (green) or below (red). <b>MACD</b> tag = MACD vs signal, with a fresh cross in the last 5 days marked.
+        <b>Cross</b> = 50-day average crossing the 200-day (golden ↑ / death ↓) in the last 30 days. <b>RS 3M</b> = 3-month return minus
+        NIFTY 50's. <b>Vol×</b> = today's volume ÷ its 20-day average. <b>52W</b> bar = where the price sits between the 52-week low and high.
+        All from end-of-day data - a research tool, not investment advice.
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+'use strict';
+const URLS = { data: "{% url 'market:analysis_data' %}", refresh: "{% url 'market:refresh_analysis' %}",
+  progress: "{% url 'market:refresh_analysis_progress' 'TASK' %}", chart: "{% url 'market:chart_view' %}",
+  candle: "{% url 'candle_predictor_page' %}", predict: "{% url 'stock_prediction_page' %}",
+  paper: "{% url 'paper_trading:page' %}" };
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+const nf = new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const nf0 = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 });
+const px = (v) => v == null ? '—' : nf.format(v);
+const pc = (v, d = 2) => v == null ? '—' : (v > 0 ? '+' : '') + v.toFixed(d) + '%';
+const cls = (v) => v == null ? 'muted' : v > 0 ? 'up' : v < 0 ? 'down' : 'muted';
+const big = (n) => n == null ? '—' : n >= 1e7 ? (n / 1e7).toFixed(2) + 'Cr' : n >= 1e5 ? (n / 1e5).toFixed(2) + 'L' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'K' : String(n);
+const store = { get(k, d) { try { return localStorage.getItem('ana:' + k) ?? d; } catch (e) { return d; } }, set(k, v) { try { localStorage.setItem('ana:' + k, v); } catch (e) {} } };
+// return heat: green / red tint, stronger with size (cap = the move that gets full colour)
+function heat(v, cap) {
+  if (v == null) return '';
+  const a = Math.min(1, Math.abs(v) / cap) * 0.55 + 0.06;
+  return v >= 0 ? `background:rgba(14,169,104,${a.toFixed(2)})` : `background:rgba(229,72,77,${a.toFixed(2)})`;
+}
+const CAP = { r1d: 3, r1w: 6, r1m: 12, r3m: 20, r6m: 30, r1y: 40 };
+
+let D = null, VIEW = [], PAGE = 0, SORT = store.get('sort', 'score'), DIR = store.get('dir', 'desc'), PRESET = '', OPEN = null;
+const PER_PAGE = 50;
+
+/* ---------------- presets ---------------- */
+const PRESETS = [
+  { k: 'breakout', label: '52W high breakout', f: (s) => (s.new_hi || (s.from_hi ?? -99) > -1) && (s.vol_x ?? 0) >= 1.5, sort: 'vol_x' },
+  { k: 'momentum', label: 'Strong momentum', f: (s) => (s.r3m ?? 0) > 20 && (s.vs50 ?? -1) > 0 && (s.vs200 ?? -1) > 0 && (s.rs3m ?? -1) > 0, sort: 'r3m' },
+  { k: 'oversold_up', label: 'Oversold in uptrend', f: (s) => (s.rsi ?? 50) < 35 && (s.vs200 ?? -1) > 0, sort: 'rsi', dir: 'asc' },
+  { k: 'macd_bull', label: 'MACD bullish cross', f: (s) => s.macd_cross != null && s.macd_cross > 0 && (s.vs50 ?? -1) > 0, sort: 'r1d' },
+  { k: 'golden', label: 'Golden cross ≤10d', f: (s) => s.cross != null && s.cross >= 1 && s.cross <= 10, sort: 'cross', dir: 'asc' },
+  { k: 'volume', label: 'Volume surge 3×', f: (s) => (s.vol_x ?? 0) >= 3, sort: 'vol_x' },
+  { k: 'gap_up', label: 'Gap up >2%', f: (s) => (s.gap ?? 0) > 2, sort: 'gap' },
+  { k: 'gap_down', label: 'Gap down >2%', f: (s) => (s.gap ?? 0) < -2, sort: 'gap', dir: 'asc' },
+  { k: 'near_low', label: 'Near 52W low', f: (s) => (s.from_lo ?? 99) < 5, sort: 'from_lo', dir: 'asc' },
+  { k: 'overbought', label: 'Overbought RSI>75', f: (s) => (s.rsi ?? 0) > 75, sort: 'rsi' },
+  { k: 'death', label: 'Death cross ≤10d', f: (s) => s.cross != null && s.cross <= -1 && s.cross >= -10, sort: 'r1m', dir: 'asc' },
+  { k: 'weak', label: 'Downtrend', f: (s) => (s.vs50 ?? 1) < 0 && (s.vs200 ?? 1) < 0 && (s.macd_hist ?? 1) < 0, sort: 'r3m', dir: 'asc' },
+];
+
+/* ---------------- columns ---------------- */
+const dots = (s) => `<span class="dots" title="vs 20 / 50 / 200-day average: ${pc(s.vs20)} / ${pc(s.vs50)} / ${pc(s.vs200)}">${[s.vs20, s.vs50, s.vs200].map((v) =>
+  `<i style="background:${v == null ? '#CBD5E1' : v > 0 ? 'var(--green)' : 'var(--red)'}"></i>`).join('')}</span>`;
+const macdTag = (s) => {
+  if (s.macd_hist == null) return '<span class="tag flat">—</span>';
+  const bull = s.macd_hist > 0, fresh = s.macd_cross != null ? ` ${Math.abs(s.macd_cross) === 1 ? 'today' : Math.abs(s.macd_cross) + 'd'}` : '';
+  return `<span class="tag ${bull ? 'bull' : 'bear'}" title="MACD ${s.macd} vs signal ${s.macd_sig}">${bull ? 'Bull' : 'Bear'}${s.macd_cross != null ? ' ✕' + fresh : ''}</span>`;
+};
+const crossTag = (s) => s.cross == null ? '<span class="muted">—</span>'
+  : `<span class="tag ${s.cross > 0 ? 'bull' : 'bear'}" title="50-day average crossed ${s.cross > 0 ? 'above' : 'below'} the 200-day ${Math.abs(s.cross)} trading day(s) ago">${s.cross > 0 ? 'Golden ↑' : 'Death ↓'} ${Math.abs(s.cross)}d</span>`;
+const rng = (s) => s.pos52 == null ? '—' : `<span class="rng" title="52W low ${px(s.lo52)} · high ${px(s.hi52)} · ${pc(s.from_hi)} from high"><i style="left:${Math.max(0, Math.min(100, s.pos52))}%"></i></span>`;
+const scoreBar = (s) => `<span class="score"><span>${s.score}</span><span class="t"><i style="width:${s.score}%;background:${s.score >= 70 ? 'var(--green)' : s.score >= 40 ? '#CA8A04' : 'var(--red)'}"></i></span></span>`;
+function spark(vals) {
+  if (!vals || vals.length < 2) return '';
+  const w = 90, h = 24, lo = Math.min(...vals), hi = Math.max(...vals), rg = hi - lo || 1;
+  const pts = vals.map((v, i) => `${(i / (vals.length - 1) * w).toFixed(1)},${(h - 2 - (v - lo) / rg * (h - 4)).toFixed(1)}`).join(' ');
+  const col = vals[vals.length - 1] >= vals[0] ? '#0A8A54' : '#C93A3F';
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true"><polyline fill="none" stroke="${col}" stroke-width="1.5" points="${pts}"/></svg>`;
+}
+const COLS = [
+  { k: 'code', t: 'Stock', l: true, r: (s) => `<span class="stk"><b>${esc(s.code.replace('.NS', ''))}</b><small>${esc(s.name)}</small></span>` },
+  { k: 'sector', t: 'Sector', l: true, r: (s) => `<span class="sub">${esc(s.sector)}</span>` },
+  { k: 'price', t: 'Price', r: (s) => px(s.price) },
+  ...['r1d', 'r1w', 'r1m', 'r3m', 'r1y'].map((k) => ({ k, t: k.slice(1).toUpperCase(), r: (s) => `<span class="rc" style="${heat(s[k], CAP[k])}">${pc(s[k], 1)}</span>` })),
+  { k: 'rsi', t: 'RSI', r: (s) => `<span class="${(s.rsi ?? 50) < 30 ? 'up' : (s.rsi ?? 50) > 70 ? 'down' : ''}">${s.rsi ?? '—'}</span>` },
+  { k: 'macd_hist', t: 'MACD', r: macdTag },
+  { k: 'vs50', t: 'Trend', r: dots, tip: 'Price vs 20 / 50 / 200-day average' },
+  { k: 'cross', t: 'Cross', r: crossTag },
+  { k: 'pos52', t: '52W', r: rng },
+  { k: 'from_hi', t: 'From high', r: (s) => `<span class="${cls(s.from_hi)}">${pc(s.from_hi, 1)}</span>` },
+  { k: 'vol_x', t: 'Vol×', r: (s) => `<span style="${(s.vol_x ?? 0) >= 2 ? 'font-weight:700;color:var(--purple)' : ''}">${s.vol_x == null ? '—' : s.vol_x.toFixed(1) + '×'}</span>` },
+  { k: 'turnover_cr', t: '₹Cr/day', r: (s) => s.turnover_cr == null ? '—' : s.turnover_cr >= 100 ? nf0.format(s.turnover_cr) : s.turnover_cr.toFixed(1) },
+  { k: 'atr_pct', t: 'ATR%', r: (s) => s.atr_pct == null ? '—' : s.atr_pct.toFixed(1) },
+  { k: 'rs3m', t: 'RS 3M', r: (s) => `<span class="${cls(s.rs3m)}">${pc(s.rs3m, 1)}</span>` },
+  { k: 'score', t: 'Score', r: scoreBar },
+  { k: 'spark', t: '6M', r: (s) => spark(s.spark), nosort: true },
+];
+
+/* ---------------- render: breadth / sectors / leaders ---------------- */
+function renderBreadth() {
+  const b = D.breadth, adv = b.advancers, dec = b.decliners, tot = adv + dec + b.unchanged || 1;
+  $('asOf').textContent = `Data as of ${new Date(D.as_of + 'T00:00:00').toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} · ${b.stocks.toLocaleString('en-IN')} stocks`;
+  const mood = b.above50 >= 60 ? ['Strong', 'up'] : b.above50 >= 40 ? ['Mixed', ''] : ['Weak', 'down'];
+  $('mood').innerHTML = `<b class="${mood[1]}">${mood[0]} market breadth.</b> ${adv.toLocaleString('en-IN')} stocks rose and ${dec.toLocaleString('en-IN')} fell on the last day; `
+    + `${b.above50}% are above their 50-day average and ${b.above200}% above their 200-day. New 52-week highs ${b.new_hi} vs lows ${b.new_lo}; `
+    + `${b.golden} golden and ${b.death} death crosses in the last 10 days. NIFTY 50 over 3 months: <b class="${cls(b.nifty_r3m)}">${pc(b.nifty_r3m, 1)}</b>.`;
+  const meter = (lbl, v) => `<div class="meter"><span>${lbl}</span><span class="t"><i style="width:${v}%;background:${v >= 50 ? 'var(--green)' : 'var(--red)'}"></i></span><span>${v}%</span></div>`;
+  $('kpis').innerHTML = `
+    <div class="kpi"><div class="lbl">Advance / decline</div><div class="val"><span class="up">${adv.toLocaleString('en-IN')}</span> <small class="muted">/</small> <span class="down">${dec.toLocaleString('en-IN')}</span></div>
+      <div class="bar2"><i style="width:${adv / tot * 100}%;background:var(--green)"></i><i style="width:${b.unchanged / tot * 100}%;background:#CBD5E1"></i><i style="width:${dec / tot * 100}%;background:var(--red)"></i></div>
+      <div class="note">ratio ${(adv / Math.max(1, dec)).toFixed(2)} · ${b.unchanged} unchanged</div></div>
+    <div class="kpi"><div class="lbl">Above moving average</div><div class="meters">${meter('20D', b.above20)}${meter('50D', b.above50)}${meter('200D', b.above200)}</div></div>
+    <div class="kpi"><div class="lbl">52-week highs / lows</div><div class="val"><span class="up">${b.new_hi}</span> <small class="muted">/</small> <span class="down">${b.new_lo}</span></div>
+      <div class="note">stocks making a new 52-week high / low on the last day</div></div>
+    <div class="kpi"><div class="lbl">RSI (14)</div><div class="val">${b.rsi_avg} <small class="muted">avg</small></div>
+      <div class="note"><span class="up">${b.oversold} oversold</span> (&lt;30) · <span class="down">${b.overbought} overbought</span> (&gt;70)</div></div>
+    <div class="kpi"><div class="lbl">50 / 200-day crosses · 10d</div><div class="val"><span class="up">${b.golden}</span> <small class="muted">golden /</small> <span class="down">${b.death}</span> <small class="muted">death</small></div>
+      <div class="note">50-day average crossing the 200-day</div></div>`;
+}
+let PERIOD = store.get('period', 'r1d');
+function renderSectors() {
+  document.querySelectorAll('#sectorPeriod button').forEach((x) => x.classList.toggle('active', x.dataset.p === PERIOD));
+  const secs = [...D.sectors].sort((a, b) => (b[PERIOD] ?? -99) - (a[PERIOD] ?? -99));
+  const sel = $('sector').value;
+  $('heat').innerHTML = secs.map((s) => {
+    const v = s[PERIOD];
+    return `<div class="tile ${sel === s.sector ? 'sel' : ''}" data-sector="${esc(s.sector)}" style="${heat(v, CAP[PERIOD])}" title="Click to screen ${esc(s.sector)}">
+      <div class="nm">${esc(s.sector)}</div><div class="rt">${pc(v, 1)}</div>
+      <div class="mt">${s.stocks} stocks · ▲${s.advancers} ▼${s.decliners}<br>${s.above50}% above 50D · RSI ${s.rsi ?? '—'}</div></div>`;
+  }).join('');
+}
+function renderLeaders() {
+  const eq = D.stocks.filter((s) => !s.etf && (s.turnover_cr ?? 0) >= 1);
+  const top = (arr, k, dir, n = 8) => [...arr].filter((s) => s[k] != null).sort((a, b) => dir * (b[k] - a[k])).slice(0, n);
+  const list = (title, sub, arr, val) => `<div class="card"><div class="card-head"><span class="card-title">${title}</span><span class="sub">${sub}</span></div>
+    ${arr.map((s) => `<div class="lrow" data-code="${esc(s.code)}"><span class="c">${esc(s.code.replace('.NS', ''))}<small>${esc(s.name)}</small></span><span class="n">${px(s.price)}</span><span class="n">${val(s)}</span></div>`).join('') || '<div class="empty">None today</div>'}</div>`;
+  $('leaders').innerHTML =
+    list('Top gainers', 'last day', top(eq, 'r1d', 1), (s) => `<b class="up">${pc(s.r1d, 1)}</b>`)
+    + list('Top losers', 'last day', top(eq, 'r1d', -1), (s) => `<b class="down">${pc(s.r1d, 1)}</b>`)
+    + list('Volume surges', 'vs 20-day avg', top(eq, 'vol_x', 1), (s) => `<b style="color:var(--purple)">${s.vol_x.toFixed(1)}×</b> <span class="${cls(s.r1d)}">${pc(s.r1d, 1)}</span>`)
+    + list('New 52-week highs', 'by volume', top(eq.filter((s) => s.new_hi), 'vol_x', 1), (s) => `<span class="${cls(s.r1d)}">${pc(s.r1d, 1)}</span>`);
+}
+
+/* ---------------- screener ---------------- */
+function base() {
+  const etf = $('etf').checked;
+  const liq = +$('liq').value;
+  return D.stocks.filter((s) => (etf || !s.etf) && (s.turnover_cr ?? 0) >= liq);
+}
+function renderPresets() {
+  const b = base();
+  $('presets').innerHTML = `<button class="chip ${PRESET ? '' : 'active'}" data-preset="">All<span class="ct">${b.length}</span></button>`
+    + PRESETS.map((p) => `<button class="chip ${PRESET === p.k ? 'active' : ''}" data-preset="${p.k}">${esc(p.label)}<span class="ct">${b.filter(p.f).length}</span></button>`).join('');
+}
+function filtered() {
+  const q = $('q').value.trim().toUpperCase(), sec = $('sector').value;
+  const num = (id) => { const v = parseFloat($(id).value); return isNaN(v) ? null : v; };
+  const pmin = num('pmin'), pmax = num('pmax'), rmin = num('rmin'), rmax = num('rmax'), smin = num('smin');
+  const pre = PRESETS.find((p) => p.k === PRESET);
+  return base().filter((s) => (!pre || pre.f(s))
+    && (!q || s.code.toUpperCase().includes(q) || s.name.toUpperCase().includes(q))
+    && (!sec || s.sector === sec)
+    && (pmin == null || (s.price ?? 0) >= pmin) && (pmax == null || (s.price ?? 0) <= pmax)
+    && (rmin == null || (s.rsi ?? -1) >= rmin) && (rmax == null || (s.rsi ?? 999) <= rmax)
+    && (smin == null || s.score >= smin));
+}
+function sortRows(rows) {
+  const d = DIR === 'asc' ? 1 : -1;
+  return rows.sort((a, b) => {
+    const x = a[SORT], y = b[SORT];
+    if (x == null && y == null) return 0;
+    if (x == null) return 1;
+    if (y == null) return -1;
+    return typeof x === 'string' ? d * x.localeCompare(y) : d * (x - y);
+  });
+}
+function renderHead() {
+  $('thead').innerHTML = COLS.map((c) => `<th class="${c.l ? 'l' : ''} ${SORT === c.k ? 'sorted' : ''}" data-sort="${c.nosort ? '' : c.k}" title="${esc(c.tip || 'Sort')}">${c.t}${SORT === c.k ? (DIR === 'asc' ? ' ▲' : ' ▼') : ''}</th>`).join('');
+}
+function detail(s) {
+  const item = (k, v) => `<div><span>${k}</span><b>${v}</b></div>`;
+  const c = encodeURIComponent(s.code);
+  return `<tr class="detail"><td colspan="${COLS.length}">
+    <div class="dgrid">
+      ${item('Price · date', `${px(s.price)} · ${s.date}`)}${item('6M return', pc(s.r6m, 1))}${item('20 / 50 / 200 DMA', `${px(s.sma20)} / ${px(s.sma50)} / ${px(s.sma200)}`)}
+      ${item('vs 50 / 200 DMA', `${pc(s.vs50, 1)} / ${pc(s.vs200, 1)}`)}${item('52W low / high', `${px(s.lo52)} / ${px(s.hi52)}`)}${item('From low / high', `${pc(s.from_lo, 1)} / ${pc(s.from_hi, 1)}`)}
+      ${item('MACD / signal / hist', `${s.macd ?? '—'} / ${s.macd_sig ?? '—'} / ${s.macd_hist ?? '—'}`)}${item('RSI 14', s.rsi ?? '—')}${item('ATR 14', s.atr_pct == null ? '—' : s.atr_pct + '% of price')}
+      ${item('Volume · vs avg', `${big(s.vol)} · ${s.vol_x == null ? '—' : s.vol_x + '×'}`)}${item('Streak', s.streak ? `${Math.abs(s.streak)} day(s) ${s.streak > 0 ? 'up' : 'down'}` : '—')}${item('Gap today', pc(s.gap))}
+      ${item('Industry', esc(s.industry || '—'))}${item('Rel. strength 3M', pc(s.rs3m, 1) + ' vs NIFTY')}${item('Score', s.score + ' / 100')}
+    </div>
+    <div class="links"><a href="${URLS.chart}?company=${s.id}">Chart</a><a href="${URLS.candle}?company=${c}">Candle Predictor</a>
+      <a href="${URLS.predict}?company=${c}">Stock Prediction</a><a href="${URLS.paper}">Paper Trading</a></div></td></tr>`;
+}
+function renderTable() {
+  VIEW = sortRows(filtered());
+  const pages = Math.max(1, Math.ceil(VIEW.length / PER_PAGE));
+  PAGE = Math.min(PAGE, pages - 1);
+  const rows = VIEW.slice(PAGE * PER_PAGE, (PAGE + 1) * PER_PAGE);
+  renderHead();
+  $('rows').innerHTML = rows.map((s) => `<tr class="row" data-code="${esc(s.code)}">${COLS.map((c) => `<td class="${c.l ? 'l' : ''}">${c.r(s)}</td>`).join('')}</tr>${OPEN === s.code ? detail(s) : ''}`).join('')
+    || `<tr><td colspan="${COLS.length}" class="empty">No stock matches these filters.</td></tr>`;
+  $('count').textContent = `${VIEW.length.toLocaleString('en-IN')} stocks`;
+  $('pageInfo').textContent = VIEW.length ? `${PAGE * PER_PAGE + 1}-${Math.min(VIEW.length, (PAGE + 1) * PER_PAGE)} of ${VIEW.length.toLocaleString('en-IN')}` : '';
+  $('prev').disabled = PAGE === 0; $('next').disabled = PAGE >= pages - 1;
+}
+function renderAll() { renderPresets(); renderTable(); }
+
+/* ---------------- events ---------------- */
+$('sectorPeriod').addEventListener('click', (e) => { const b = e.target.closest('button[data-p]'); if (!b) return; PERIOD = b.dataset.p; store.set('period', PERIOD); renderSectors(); });
+$('heat').addEventListener('click', (e) => {
+  const t = e.target.closest('.tile'); if (!t) return;
+  $('sector').value = $('sector').value === t.dataset.sector ? '' : t.dataset.sector;
+  PAGE = 0; renderSectors(); renderAll(); $('screener').scrollIntoView({ behavior: 'smooth' });
+});
+$('leaders').addEventListener('click', (e) => {
+  const r = e.target.closest('.lrow'); if (!r) return;
+  PRESET = ''; $('q').value = r.dataset.code.replace('.NS', ''); $('sector').value = ''; OPEN = r.dataset.code; PAGE = 0;
+  renderSectors(); renderAll(); $('screener').scrollIntoView({ behavior: 'smooth' });
+});
+$('presets').addEventListener('click', (e) => {
+  const b = e.target.closest('.chip'); if (!b) return;
+  PRESET = PRESET === b.dataset.preset ? '' : b.dataset.preset;
+  const p = PRESETS.find((x) => x.k === PRESET);
+  if (p) { SORT = p.sort; DIR = p.dir || 'desc'; }
+  PAGE = 0; renderAll();
+});
+$('thead').addEventListener('click', (e) => {
+  const th = e.target.closest('th[data-sort]'); if (!th || !th.dataset.sort) return;
+  if (SORT === th.dataset.sort) DIR = DIR === 'asc' ? 'desc' : 'asc'; else { SORT = th.dataset.sort; DIR = ['code', 'sector'].includes(SORT) ? 'asc' : 'desc'; }
+  store.set('sort', SORT); store.set('dir', DIR); PAGE = 0; renderTable();
+});
+$('rows').addEventListener('click', (e) => {
+  if (e.target.closest('a')) return;
+  const r = e.target.closest('tr.row'); if (!r) return;
+  OPEN = OPEN === r.dataset.code ? null : r.dataset.code; renderTable();
+});
+['q', 'pmin', 'pmax', 'rmin', 'rmax', 'smin'].forEach((id) => $(id).addEventListener('input', () => { PAGE = 0; renderTable(); }));
+['sector', 'liq', 'etf'].forEach((id) => $(id).addEventListener('change', () => { PAGE = 0; store.set('liq', $('liq').value); renderSectors(); renderAll(); }));
+$('reset').addEventListener('click', () => {
+  ['q', 'pmin', 'pmax', 'rmin', 'rmax', 'smin'].forEach((id) => { $(id).value = ''; });
+  $('sector').value = ''; $('liq').value = '1'; $('etf').checked = false; PRESET = ''; SORT = 'score'; DIR = 'desc'; PAGE = 0; OPEN = null;
+  renderSectors(); renderAll();
+});
+$('prev').addEventListener('click', () => { PAGE = Math.max(0, PAGE - 1); renderTable(); });
+$('next').addEventListener('click', () => { PAGE += 1; renderTable(); });
+$('csvBtn').addEventListener('click', () => {
+  const keys = ['code', 'name', 'sector', 'industry', 'price', 'r1d', 'r1w', 'r1m', 'r3m', 'r6m', 'r1y', 'rsi', 'macd', 'macd_sig', 'macd_hist', 'macd_cross',
+    'sma20', 'sma50', 'sma200', 'vs20', 'vs50', 'vs200', 'cross', 'hi52', 'lo52', 'from_hi', 'from_lo', 'new_hi', 'new_lo', 'vol', 'vol_x', 'turnover_cr', 'atr_pct', 'gap', 'streak', 'rs3m', 'score'];
+  const q = (v) => v == null ? '' : /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v);
+  const csv = [keys.join(','), ...VIEW.map((s) => keys.map((k) => q(s[k])).join(','))].join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  a.download = `analysis_${D.as_of}${PRESET ? '_' + PRESET : ''}.csv`; a.click(); URL.revokeObjectURL(a.href);
+});
+
+/* ---------------- refresh (same background job as the classic page) ---------------- */
+const csrf = () => { const m = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/); return m ? decodeURIComponent(m[1]) : ''; };
+$('refreshBtn').addEventListener('click', async () => {
+  $('refreshBtn').disabled = true;
+  try {
+    const r = await fetch(URLS.refresh, { method: 'POST', headers: { 'X-CSRFToken': csrf() } });
+    const d = await r.json(); poll(d.task_id);
+  } catch (e) { $('refreshBtn').disabled = false; alert('Could not start the refresh.'); }
+});
+async function poll(id) {
+  $('progress').hidden = false;
+  try {
+    const d = await (await fetch(URLS.progress.replace('TASK', id))).json();
+    $('progressText').textContent = d.message || 'Working…'; $('progressFill').style.width = (d.percent || 2) + '%';
+    if (d.status === 'running') { setTimeout(() => poll(id), 1500); return; }
+    $('refreshBtn').disabled = false;
+    if (d.status === 'completed') { $('progress').hidden = true; load(); }
+  } catch (e) { setTimeout(() => poll(id), 3000); }
+}
+
+/* ---------------- boot ---------------- */
+async function load() {
+  try {
+    const r = await fetch(URLS.data);
+    if (!r.ok) { $('notice').hidden = false; return; }
+    D = await r.json();
+  } catch (e) { $('notice').hidden = false; $('notice').textContent = 'Could not load the analysis.'; return; }
+  $('notice').hidden = true; $('app').hidden = false;
+  const keep = $('sector').value;
+  $('sector').innerHTML = '<option value="">All sectors</option>' + [...new Set(D.stocks.map((s) => s.sector))].sort().map((s) => `<option>${esc(s)}</option>`).join('');
+  $('sector').value = keep;
+  $('liq').value = store.get('liq', '1');
+  renderBreadth(); renderSectors(); renderLeaders(); renderAll();
+}
+load();
+})();
+</script>
+</body>
+</html>

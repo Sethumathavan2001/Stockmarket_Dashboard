@@ -124,7 +124,7 @@
     </div>
 
     <a href="{% url 'market:live' %}" class="{% if app == 'market' and current == 'live' %}active{% endif %}">Live</a>
-    <a href="{% url 'market:analysis' %}" class="{% if app == 'market' and current == 'analysis' %}active{% endif %}">Analysis</a>
+    <a href="{% url 'market:analysis' %}" class="{% if app == 'market' and current|slice:':8' == 'analysis' %}active{% endif %}">Analysis</a>
     <a href="{% url 'market:chart_view' %}" class="{% if app == 'market' and current == 'chart_view' %}active{% endif %}">Chart</a>
     <a href="{% url 'stock_prediction_page' %}" class="{% if current == 'stock_prediction_page' %}active{% endif %}">Stock Prediction</a>
     <a href="{% url 'candle_predictor_page' %}" class="{% if current == 'candle_predictor_page' %}active{% endif %}">Candle Predictor</a>

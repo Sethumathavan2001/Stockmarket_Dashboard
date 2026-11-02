@@ -334,7 +334,8 @@
   // FORMATTING HELPERS
   // ----------------------------------------------------------------
   function toNum(v) {
-    var n = typeof v === "string" ? parseFloat(v) : v;
+    // plain numbers only - text like "3,812.46 Cr" (NSE's turnover since Nov 2026) is shown as sent
+    var n = typeof v === "string" ? (/^\s*-?[\d,]*\.?\d+\s*$/.test(v) ? parseFloat(v.replace(/,/g, "")) : NaN) : v;
     return typeof n === "number" && !isNaN(n) ? n : null;
   }
   function fmt(v, type) {

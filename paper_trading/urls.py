@@ -33,6 +33,7 @@ urlpatterns = [
     path("api/paper/claude-orders/place/", claude_orders.place, name="claude_orders_place"),
     path("api/paper/claude-orders/refresh/", claude_orders.refresh, name="claude_orders_refresh"),
     path("api/paper/claude-orders/wallets/", claude_orders.wallets, name="claude_orders_wallets"),
+    path("api/paper/claude-orders/exit/", claude_orders.exit_trades, name="claude_orders_exit"),
 ]
 
 # Project-level urls.py:

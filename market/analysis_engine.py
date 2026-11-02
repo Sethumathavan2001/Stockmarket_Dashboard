@@ -427,8 +427,9 @@ def run_refresh(progress=None) -> Dict[str, int]:
 # the page polls its progress.  Only one refresh runs at a time.
 REFRESH_JOB_KEY = "analysis_refresh:current"
 _REFRESH_LOCK = threading.Lock()
-PHASE_SPAN = {"load": (0, 60), "analyze": (60, 97), "save": (97, 100)}   # % of the bar per phase
-PHASE_LABEL = {"load": "Loading daily data", "analyze": "Analysing companies", "save": "Saving results"}
+PHASE_SPAN = {"load": (0, 45), "analyze": (45, 58), "save": (58, 60), "screener": (60, 100)}   # % of the bar per phase
+PHASE_LABEL = {"load": "Loading daily data", "analyze": "Analysing companies", "save": "Saving results",
+               "screener": "Indicators for the Analysis page"}
 
 
 def _set_progress(task_id, **fields):
@@ -446,6 +447,8 @@ def _refresh_worker(task_id):
 
     try:
         summary = run_refresh(progress)
+        from .screener import build_snapshot                   # RSI, MACD, trend, breadth, sectors ...
+        build_snapshot(progress=lambda done, total: progress("screener", done, total))
         _set_progress(task_id, status="completed", percent=100, phase="done",
                       message=f"Done - {summary['succeeded']:,} companies analysed, {summary['failed']} failed.",
                       **summary)

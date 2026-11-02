@@ -16,6 +16,7 @@ from collections import defaultdict
 from django.shortcuts import render
 from django.http import JsonResponse
 from django.views.decorators.http import require_POST
+from django.views.decorators.gzip import gzip_page
 from django.db.models import Max
 from datetime import date, timedelta, datetime,time
 import yfinance as yf
@@ -145,9 +146,27 @@ from django.db.models import Min, Max, Avg
 from datetime import timedelta
 from .models import Company, DailyData
 
+@gzip_page
+def analysis_dashboard(request):
+    """Analysis page: market breadth, sector heatmap, leaders and a screener (data from analysis_data)."""
+    from .screener import load_snapshot
+    snap = load_snapshot()
+    return render(request, "market/analysis_dashboard.html", {"has_snapshot": bool(snap)})
+
+
+@gzip_page
+def analysis_data(request):
+    """The analysis snapshot (logs/analysis_snapshot.json), built by the Refresh button."""
+    from .screener import load_snapshot
+    snap = load_snapshot()
+    if not snap:
+        return JsonResponse({"error": "No analysis yet - press Refresh to build it."}, status=404)
+    return JsonResponse(snap)
+
+
 def analysis_view(request):
     """
-    Analysis page with:
+    Classic lows & highs table (/analysis/levels/) with:
     - Company contains filter
     - Range filters for all numeric columns
     - Sorting

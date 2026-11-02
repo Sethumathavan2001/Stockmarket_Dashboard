@@ -117,9 +117,10 @@ def place(account, *, rec_id, code, side, quantity, stop_pct, target_pct, guard=
         except angel.AngelError as exc:
             raise BrokerError(str(exc))
         value = price * quantity
-        if value > Decimal(str(angel.max_order_value())):
-            raise BrokerError(f"Order value ₹{value:,.0f} is above the limit ₹{angel.max_order_value():,.0f} "
-                              "(ANGEL_MAX_ORDER_VALUE in .env).")
+        cap = angel.max_order_value()                            # None = no limit
+        if cap is not None and value > Decimal(str(cap)):
+            raise BrokerError(f"Order value ₹{value:,.0f} is above the limit ₹{cap:,.0f} "
+                              "(ANGEL_MAX_ORDER_VALUE in .env; 0 = no limit).")
         long_ = side == "BUY"
         if guard:
             g_stop, g_target = (Decimal(str(x)) for x in guard)
@@ -185,7 +186,8 @@ def _close(bo, price, reason, order_id=""):
     bo.status, bo.exit_reason = BO.CLOSED, reason
     bo.exit_price = Decimal(str(price)).quantize(Decimal("0.01")) if price else None
     bo.exit_order_id = bo.exit_order_id or order_id
-    label = {"stop_loss": "Stop loss hit", "target": "Target hit", "squareoff": "15:15 exit"}.get(reason, reason)
+    label = {"stop_loss": "Stop loss hit", "target": "Target hit", "squareoff": "15:15 exit",
+             "manual": "Exited by you"}.get(reason, reason)
     bo.message = f"{label} @ ₹{bo.exit_price}" + (f" · P&L ₹{bo.pnl:,.2f}" if bo.pnl is not None else "")
     bo.save()
 
@@ -260,6 +262,39 @@ def _watch_one(bo, now):
     return None
 
 
+def exit_trade(bo_id):
+    """Exit one open trade now (secure exit): cancel its stop-loss order at Angel One, and only once that is
+    confirmed, exit at market - the same safe sequence as the target / 15:15 exits."""
+    with LOCK:
+        bo = BO.objects.filter(pk=bo_id).first()
+        if bo is None:
+            raise BrokerError("Unknown trade.")
+        if bo.status != BO.OPEN:
+            raise BrokerError(f"{bo.code.removesuffix('.NS')} is not open ({bo.status}).")
+        if bo.exit_order_id:
+            raise BrokerError(f"An exit order for {bo.code.removesuffix('.NS')} is already at Angel One - "
+                              "the server is checking it.")
+        try:
+            _exit(bo, angel.instrument(bo.code), "manual")
+        except angel.AngelError as exc:
+            raise BrokerError(str(exc))
+        bo.refresh_from_db()
+        return bo
+
+
+def exit_all(accounts, now=None):
+    """Secure exit of every open trade (placed from this app, today) in these accounts.
+    Returns [(BrokerOrder, error or None)]."""
+    now = now or now_ist()
+    out = []
+    for bo in BO.objects.filter(account__in=accounts, status=BO.OPEN, session=now.date()).order_by("created_at"):
+        try:
+            out.append((exit_trade(bo.pk), None))
+        except BrokerError as exc:
+            out.append((bo, str(exc)))
+    return out
+
+
 def has_active(now=None):
     now = now or now_ist()
     return BO.objects.filter(status__in=[BO.PLACING, BO.PENDING, BO.OPEN], session__lte=now.date()).exists()
@@ -272,4 +307,5 @@ def serialize(bo):
             "stop_pct": f(bo.stop_pct), "target_pct": f(bo.target_pct),
             "sl_trigger": f(bo.sl_trigger), "exit_price": f(bo.exit_price), "exit_reason": bo.exit_reason,
             "pnl": f(bo.pnl), "message": bo.message, "entry_order_id": bo.entry_order_id,
+            "exit_order_id": bo.exit_order_id,
             "time": bo.created_at.astimezone(IST).isoformat()}
