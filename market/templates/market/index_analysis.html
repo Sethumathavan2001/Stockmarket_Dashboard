@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Index Analysis</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --navy-900:#0B2545; --navy-800:#123B7A; --blue-600:#2F6FED; --blue-50:#EEF3FF;
+    --bg:#FFFFFF; --panel:#F7F9FC; --border:#E3E8F0; --text:#101828; --text-muted:#64748B;
+    --green:#0EA968; --green-dark:#0A8A54; --green-bg:#E7F8F0; --red:#E5484D; --red-dark:#C93A3F; --red-bg:#FDECEC;
+    --amber:#B45309; --amber-bg:#FEF3E0; --purple:#7C3AED; --purple-bg:#F3EEFF;
+    --radius:10px; --shadow:0 1px 2px rgba(16,24,40,.04),0 1px 3px rgba(16,24,40,.06);
+  }
+  *{ box-sizing:border-box; }
+  [hidden]{ display:none !important; }
+  body{ margin:0; font-family:'Inter',system-ui,sans-serif; background:var(--bg); color:var(--text); }
+  .mono{ font-family:'JetBrains Mono',monospace; }
+  .wrap{ max-width:1440px; margin:0 auto; padding:0 24px 60px; }
+  .page-head{ display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px 16px; margin-top:20px; }
+  .page-head .title{ display:flex; flex-wrap:wrap; align-items:center; gap:4px 12px; font-size:18px; font-weight:700; }
+  .page-head .tag{ font-size:12.5px; font-weight:500; color:var(--text-muted); border-left:1px solid var(--border); padding-left:12px; }
+  .head-r{ display:flex; flex-wrap:wrap; align-items:center; gap:10px; font-size:12.5px; color:var(--text-muted); }
+  .btn{ border:none; border-radius:8px; padding:8px 14px; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit; color:#fff; background:var(--navy-800); white-space:nowrap; display:inline-flex; align-items:center; gap:6px; }
+  .btn.ghost{ background:#fff; color:var(--navy-800); border:1px solid var(--border); font-weight:600; }
+  .btn.sm{ padding:6px 10px; font-size:12.5px; }
+  .btn:disabled{ opacity:.45; cursor:not-allowed; }
+  .progress{ margin-top:12px; padding:10px 14px; border-radius:8px; background:var(--blue-50); color:var(--navy-800); font-size:13px; line-height:1.5; }
+  .progress.err{ background:var(--red-bg); color:var(--red-dark); }
+  .notice{ margin-top:12px; padding:10px 14px; border-radius:8px; font-size:13.5px; background:var(--amber-bg); color:var(--amber); line-height:1.5; }
+  .chips{ display:flex; flex-wrap:wrap; gap:8px; margin-top:16px; }
+  .chip{ border:1px solid var(--border); background:#fff; border-radius:999px; padding:6px 12px; font-size:12.5px; font-weight:600; color:var(--navy-800); cursor:pointer; font-family:inherit; display:inline-flex; align-items:center; gap:6px; }
+  .chip small{ font-size:10px; font-weight:700; color:var(--text-muted); }
+  .chip.on{ background:var(--navy-800); border-color:var(--navy-800); color:#fff; }
+  .chip.on small{ color:rgba(255,255,255,.7); }
+  .chip .fo{ width:6px; height:6px; border-radius:50%; background:var(--purple); }
+  .card{ border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); background:#fff; margin-top:16px; }
+  .card-head{ display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px 16px; padding:11px 16px; border-bottom:1px solid var(--border); }
+  .card-title{ font-size:11.5px; font-weight:700; text-transform:uppercase; letter-spacing:.07em; color:var(--text-muted); }
+  .card-title b{ color:var(--text); }
+  .ctrl{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  input[type=date], select{ border:1px solid var(--border); border-radius:8px; padding:6px 9px; font-size:13px; font-family:'JetBrains Mono',monospace; background:#fff; color:var(--text); }
+  .badge{ display:inline-block; font-size:11px; font-weight:700; padding:2px 9px; border-radius:999px; white-space:nowrap; }
+  .badge.weekly{ background:var(--purple-bg); color:var(--purple); } .badge.monthly{ background:var(--amber-bg); color:var(--amber); }
+  .badge.day{ background:var(--panel); color:var(--text-muted); border:1px solid var(--border); }
+  .chart{ height:420px; }
+  .chart.sm{ height:340px; }
+  .tiles{ display:grid; grid-template-columns:repeat(auto-fill,minmax(130px,1fr)); gap:1px; background:var(--border); border-top:1px solid var(--border); }
+  .tile{ background:#fff; padding:10px 14px; }
+  .tile .lbl{ font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--text-muted); }
+  .tile .v{ font-family:'JetBrains Mono',monospace; font-size:15px; font-weight:700; margin-top:3px; }
+  .tile .s{ font-size:11px; color:var(--text-muted); margin-top:1px; font-family:'JetBrains Mono',monospace; }
+  .table-wrap{ overflow-x:auto; }
+  table{ width:100%; border-collapse:collapse; font-size:13px; }
+  thead th{ text-align:left; font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--text-muted); padding:8px 10px; background:var(--panel); border-bottom:1px solid var(--border); white-space:nowrap; position:sticky; top:0; }
+  tbody td{ padding:6px 10px; border-bottom:1px solid #EEF2F7; white-space:nowrap; }
+  td.num, th.num{ text-align:right; font-family:'JetBrains Mono',monospace; }
+  tbody tr.click{ cursor:pointer; } tbody tr.click:hover td{ background:var(--blue-50); }
+  tbody tr.sel td{ background:var(--blue-50); font-weight:600; }
+  .up{ color:var(--green-dark); } .down{ color:var(--red-dark); } .muted{ color:var(--text-muted); }
+  .type{ font-size:11.5px; font-weight:600; }
+  .type.tu{ color:var(--green-dark); } .type.td{ color:var(--red-dark); } .type.rg{ color:var(--text-muted); } .type.mx{ color:var(--amber); }
+  .swatch{ display:inline-block; width:10px; height:3px; border-radius:2px; vertical-align:middle; margin-right:6px; }
+  .split{ display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
+  #allRows td{ padding:6px 8px; }
+  #allRows td:last-child{ white-space:normal; min-width:90px; }
+  .split > div:first-child{ border-right:1px solid var(--border); }
+  @media (max-width:1100px){ .split{ grid-template-columns:1fr; } .split > div:first-child{ border-right:none; border-bottom:1px solid var(--border); } }
+  .scroll{ max-height:560px; overflow:auto; }
+  .note{ font-size:12px; color:var(--text-muted); line-height:1.6; padding:10px 16px 14px; }
+  .empty{ padding:40px 16px; text-align:center; color:var(--text-muted); font-size:14px; line-height:1.6; }
+  .cmp td:first-child{ font-weight:600; }
+  .next{ font-size:12.5px; color:var(--text-muted); }
+  .next b{ color:var(--text); font-family:'JetBrains Mono',monospace; }
+  @media (max-width:640px){ .wrap{ padding:0 16px 40px; } }
+</style>
+</head>
+<body>
+
+{% include 'market/_navbar.html' %}
+
+<div class="wrap">
+  <div class="page-head">
+    <div class="title">Index Analysis <span class="tag">NIFTY, SENSEX and the main indices · every day from 5-minute candles · past expiry days</span></div>
+    <div class="head-r"><span id="coverage"></span><button class="btn" id="updateBtn" type="button" title="Download new candles and expiry dates (Angel One + NSE / BSE files)">↻ Update data</button></div>
+  </div>
+  <div class="progress" id="progress" hidden></div>
+  <div class="notice" id="notice" hidden></div>
+
+  <div class="chips" id="chips"></div>
+
+  <div class="card">
+    <div class="card-head">
+      <span class="card-title" id="dayTitle">Day by day</span>
+      <div class="ctrl">
+        <button class="btn ghost sm" id="prevExp" type="button">⟸ Prev expiry</button>
+        <button class="btn ghost sm" id="prevDay" type="button">◀ Prev day</button>
+        <input type="date" id="dayInput">
+        <button class="btn ghost sm" id="nextDay" type="button">Next day ▶</button>
+        <button class="btn ghost sm" id="nextExp" type="button">Next expiry ⟹</button>
+      </div>
+    </div>
+    <div class="chart" id="candleChart"></div>
+    <div class="tiles" id="dayTiles"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><span class="card-title" id="allTitle">All indices that day</span><span class="muted" style="font-size:12px">Lines: % from the previous close · click a row to open that index</span></div>
+    <div class="split">
+      <div class="chart sm" id="lineChart"></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Index</th><th class="num">Close</th><th class="num">Change</th><th class="num">Gap</th><th class="num">Range</th><th class="num">High · low at</th><th>Day</th></tr></thead>
+        <tbody id="allRows"></tbody>
+      </table></div>
+    </div>
+  </div>
+
+  <div class="card" id="expCard">
+    <div class="card-head">
+      <span class="card-title" id="expTitle">Expiry days</span>
+      <div class="ctrl">
+        <span class="next" id="nextList"></span>
+        <select id="kindSel"><option value="">All expiries</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select>
+        <select id="yearSel"></select>
+      </div>
+    </div>
+    <div id="expBody"></div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+<script>
+(() => {
+'use strict';
+const URLS = { meta: "{% url 'market:index_meta' %}", day: "{% url 'market:index_day' %}",
+  exp: "{% url 'market:index_expiries' %}", update: "{% url 'market:index_update' %}" };
+const IST_SHIFT = 19800;
+const COLORS = ['#123B7A', '#E5484D', '#0EA968', '#7C3AED', '#B45309', '#0E7490', '#DB2777', '#64748B', '#2F6FED', '#65A30D', '#EA580C', '#0891B2'];
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+const nf = new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const num = (v) => v == null ? '—' : nf.format(v);
+const pct = (v, d = 2) => v == null ? '—' : `<span class="${v > 0 ? 'up' : v < 0 ? 'down' : ''}">${v > 0 ? '+' : ''}${v.toFixed(d)}%</span>`;
+const fmtDate = (iso) => iso ? new Date(iso + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+const csrf = () => { const m = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/); return m ? decodeURIComponent(m[1]) : ''; };
+const typeCls = (t) => ({ 'Trend up': 'tu', 'Trend down': 'td', 'Range': 'rg' })[t] || 'mx';
+
+const params = new URLSearchParams(location.search);
+let META = [], INDEX = (params.get('index') || 'NIFTY').toUpperCase(), DATE = params.get('date') || '', DAY = null, EXP = null;
+let daySeq = 0;
+
+/* ---------------- charts ---------------- */
+const chartOpts = (el) => ({ width: el.clientWidth, height: el.clientHeight, layout: { background: { color: '#fff' }, textColor: '#334155', fontFamily: 'Inter' },
+  grid: { vertLines: { color: '#F1F5F9' }, horzLines: { color: '#F1F5F9' } }, rightPriceScale: { borderColor: '#E3E8F0' },
+  timeScale: { borderColor: '#E3E8F0', timeVisible: true, secondsVisible: false }, crosshair: { mode: 0 } });
+const cEl = $('candleChart'), lEl = $('lineChart');
+const cChart = LightweightCharts.createChart(cEl, chartOpts(cEl));
+const candles = cChart.addCandlestickSeries({ upColor: '#0EA968', downColor: '#E5484D', borderVisible: false, wickUpColor: '#0EA968', wickDownColor: '#E5484D' });
+const lChart = LightweightCharts.createChart(lEl, { ...chartOpts(lEl), localization: { priceFormatter: (p) => (p > 0 ? '+' : '') + p.toFixed(2) + '%' } });
+let lines = {}, priceLines = [];
+new ResizeObserver(() => { cChart.applyOptions({ width: cEl.clientWidth }); lChart.applyOptions({ width: lEl.clientWidth }); }).observe(document.body);
+
+/* ---------------- meta, chips, update ---------------- */
+async function loadMeta() {
+  const r = await fetch(URLS.meta); const d = await r.json();
+  META = d.indices || [];
+  if (!META.find((m) => m.key === INDEX)) INDEX = 'NIFTY';
+  renderChips(); renderProgress(d.update);
+  const n = META.find((m) => m.key === 'NIFTY') || {};
+  $('coverage').textContent = n.five_to ? `5-minute data ${fmtDate(n.five_from)} → ${fmtDate(n.five_to)} · daily from ${n.daily_from ? n.daily_from.slice(0, 4) : '—'}` : 'No index data yet';
+  if (!n.five_to) $('notice').hidden = false, $('notice').textContent = d.accounts ? 'No index history stored yet - press Update data (the first download takes about 20 minutes).' : 'Index history comes from Angel One candle data - add an Angel One account to .env first.';
+  else $('notice').hidden = true;
+  return d;
+}
+function renderChips() {
+  $('chips').innerHTML = META.map((m) => `<button class="chip ${m.key === INDEX ? 'on' : ''}" data-key="${m.key}" title="${esc(m.name)}${m.options ? ' · has index options' : ''}">${m.options ? '<i class="fo"></i>' : ''}${esc(m.name)} <small>${m.exchange}</small></button>`).join('');
+}
+$('chips').addEventListener('click', (e) => { const b = e.target.closest('[data-key]'); if (b) selectIndex(b.dataset.key); });
+function selectIndex(key) { INDEX = key; renderChips(); loadDay(DATE); loadExpiries(); }
+
+let pollTimer = null;
+function renderProgress(u) {
+  const p = $('progress'); u = u || {};
+  $('updateBtn').disabled = !!u.running;
+  if (u.running) { p.hidden = false; p.className = 'progress'; p.innerHTML = `<b>Updating index data…</b> ${esc(u.step)}<br><span class="muted">${(u.log || []).slice(-3).map(esc).join(' · ')}</span>`; }
+  else if (u.error) { p.hidden = false; p.className = 'progress err'; p.textContent = 'Update failed: ' + u.error; }
+  else if (u.finished) { p.hidden = false; p.className = 'progress'; p.textContent = 'Index data updated ' + new Date(u.finished).toLocaleTimeString('en-IN', { hour12: false }) + '.'; }
+  else p.hidden = true;
+  if (u.running && !pollTimer) pollTimer = setInterval(pollUpdate, 3000);
+  if (!u.running && pollTimer) { clearInterval(pollTimer); pollTimer = null; loadMeta(); loadDay(DATE); loadExpiries(); }
+}
+async function pollUpdate() { try { const r = await fetch(URLS.update); renderProgress((await r.json()).update); } catch (e) {} }
+$('updateBtn').addEventListener('click', async () => {
+  const r = await fetch(URLS.update, { method: 'POST', headers: { 'X-CSRFToken': csrf() } });
+  renderProgress((await r.json()).update);
+});
+
+/* ---------------- day view ---------------- */
+function syncUrl() { const q = new URLSearchParams({ index: INDEX }); if (DATE) q.set('date', DATE); history.replaceState(null, '', '?' + q); }
+async function loadDay(date) {
+  const seq = ++daySeq;
+  const q = new URLSearchParams({ index: INDEX }); if (date) q.set('date', date);
+  const r = await fetch(URLS.day + '?' + q); const d = await r.json();
+  if (seq !== daySeq) return;
+  if (!r.ok) { DAY = null; $('dayTitle').textContent = d.error || 'No data'; candles.setData([]); $('dayTiles').innerHTML = ''; $('allRows').innerHTML = ''; return; }
+  DAY = d; DATE = d.date; syncUrl(); renderDay(); renderAll(); highlightExp();
+}
+function tile(lbl, v, s) { return `<div class="tile"><div class="lbl">${lbl}</div><div class="v">${v}</div>${s ? `<div class="s">${s}</div>` : ''}</div>`; }
+function renderDay() {
+  const d = DAY, s = d.stats;
+  $('dayInput').value = d.date;
+  $('dayTitle').innerHTML = `<b>${esc(d.name)}</b> · ${fmtDate(d.date)} ${d.expiry ? `<span class="badge ${d.expiry}">${d.expiry} expiry</span>` : ''}`;
+  $('prevDay').disabled = !d.prev_day; $('nextDay').disabled = !d.next_day;
+  $('prevExp').disabled = !d.prev_expiry; $('nextExp').disabled = !d.next_expiry;
+  $('prevExp').title = d.prev_expiry ? fmtDate(d.prev_expiry) : 'No earlier expiry stored'; $('nextExp').title = d.next_expiry ? fmtDate(d.next_expiry) : 'No later expiry stored';
+  candles.setData(d.candles.map(([t, o, h, l, c]) => ({ time: t + IST_SHIFT, open: o, high: h, low: l, close: c })));
+  priceLines.forEach((p) => candles.removePriceLine(p)); priceLines = [];
+  if (d.prev) [['Prev high', d.prev.high, '#0EA968'], ['Prev low', d.prev.low, '#E5484D'], ['Prev close', d.prev.close, '#64748B']]
+    .forEach(([t, p, c]) => priceLines.push(candles.createPriceLine({ price: p, color: c, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: t })));
+  cChart.timeScale().fitContent();
+  if (!s) { $('dayTiles').innerHTML = `<div class="tile">No 5-minute candles for ${esc(d.name)} on this day.</div>`; return; }
+  $('dayTiles').innerHTML = [
+    tile('Open', num(s.open), s.gap != null ? 'gap ' + (s.gap > 0 ? '+' : '') + s.gap.toFixed(2) + '%' : ''),
+    tile('High', num(s.high), 'at ' + s.high_time), tile('Low', num(s.low), 'at ' + s.low_time),
+    tile('Close', num(s.close), s.prev_close ? 'prev ' + num(s.prev_close) : ''),
+    tile('Change', pct(s.change), ''), tile('Range', s.range.toFixed(2) + '%', num(s.high - s.low) + ' pts'),
+    tile('Open → close', pct(s.body), 'close at ' + Math.round(s.close_pos * 100) + '% of range'),
+    tile('First 15 min', pct(s.first15), '09:15 → 09:30'), tile('Last hour', pct(s.last_hour), '14:30 → close'),
+    tile('Day type', `<span class="type ${typeCls(s.type)}">${esc(s.type)}</span>`, s.bars + ' candles'),
+  ].join('');
+}
+function renderAll() {
+  const d = DAY;
+  $('allTitle').innerHTML = `All indices · <b>${fmtDate(d.date)}</b>` + (Object.keys(d.expiries_today).length ? ' · expiry: ' + Object.entries(d.expiries_today).map(([k, v]) => `${k} <span class="badge ${v}">${v}</span>`).join(' ') : '');
+  Object.values(lines).forEach((s) => lChart.removeSeries(s)); lines = {};
+  d.indices.forEach((row, i) => {
+    const pts = d.series[row.key]; if (!pts || row.key === 'INDIAVIX') return;     // VIX moves 10x more: kept out of the lines
+    const s = lChart.addLineSeries({ color: COLORS[i % COLORS.length], lineWidth: row.key === d.index ? 3 : 1.5, priceLineVisible: false, lastValueVisible: false, title: row.key === d.index ? row.key : '' });
+    s.setData(pts.map(([t, v]) => ({ time: t + IST_SHIFT, value: v }))); lines[row.key] = s;
+  });
+  lChart.timeScale().fitContent();
+  $('allRows').innerHTML = d.indices.map((row, i) => {
+    const s = row.stats;
+    const sw = row.key !== 'INDIAVIX' && s ? `<span class="swatch" style="background:${COLORS[i % COLORS.length]}"></span>` : '<span class="swatch"></span>';
+    if (!s) return `<tr class="click" data-key="${row.key}"><td>${sw}${esc(row.name)}</td><td colspan="6" class="muted">no candles this day</td></tr>`;
+    return `<tr class="click ${row.key === d.index ? 'sel' : ''}" data-key="${row.key}"><td>${sw}${esc(row.name)} ${row.expiry ? `<span class="badge ${row.expiry}">expiry</span>` : ''}</td>
+      <td class="num">${num(s.close)}</td><td class="num">${pct(s.change)}</td><td class="num">${pct(s.gap)}</td><td class="num">${s.range.toFixed(2)}%</td>
+      <td class="num">${s.high_time} · ${s.low_time}</td><td><span class="type ${typeCls(s.type)}">${esc(s.type)}</span></td></tr>`;
+  }).join('');
+}
+$('allRows').addEventListener('click', (e) => { const tr = e.target.closest('tr[data-key]'); if (tr && tr.dataset.key !== INDEX) selectIndex(tr.dataset.key); });
+$('prevDay').addEventListener('click', () => DAY && DAY.prev_day && loadDay(DAY.prev_day));
+$('nextDay').addEventListener('click', () => DAY && DAY.next_day && loadDay(DAY.next_day));
+$('prevExp').addEventListener('click', () => DAY && DAY.prev_expiry && loadDay(DAY.prev_expiry));
+$('nextExp').addEventListener('click', () => DAY && DAY.next_expiry && loadDay(DAY.next_expiry));
+$('dayInput').addEventListener('change', () => $('dayInput').value && loadDay($('dayInput').value));
+document.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || !DAY) return;
+  if (e.key === 'ArrowLeft' && DAY.prev_day) loadDay(DAY.prev_day);
+  if (e.key === 'ArrowRight' && DAY.next_day) loadDay(DAY.next_day);
+});
+
+/* ---------------- expiry history ---------------- */
+let expSeq = 0;
+async function loadExpiries() {
+  const seq = ++expSeq;
+  $('expTitle').innerHTML = `Expiry days · <b>${esc((META.find((m) => m.key === INDEX) || {}).name || INDEX)}</b>`;
+  $('expBody').innerHTML = '<div class="empty">Loading…</div>';
+  const r = await fetch(URLS.exp + '?index=' + encodeURIComponent(INDEX)); const d = await r.json();
+  if (seq !== expSeq) return;
+  EXP = d;
+  const years = [...new Set((d.rows || []).map((x) => x.date.slice(0, 4)))];
+  const keep = $('yearSel').value;
+  $('yearSel').innerHTML = '<option value="">All years</option>' + years.map((y) => `<option ${y === keep ? 'selected' : ''}>${y}</option>`).join('');
+  $('nextList').innerHTML = (d.next_expiries || []).length ? 'Next listed: ' + d.next_expiries.map((x) => `<b>${fmtDate(x)}</b>`).join(', ') : '';
+  renderExpiries();
+}
+function cmpTable(sm) {
+  const cols = [['expiry', 'All expiry days'], ['weekly', 'Weekly expiries'], ['monthly', 'Monthly expiries'], ['other', 'Other days']];
+  const rowsDef = [['Days', (x) => x.days], ['Avg range', (x) => x.avg_range == null ? '—' : x.avg_range.toFixed(2) + '%'],
+    ['Avg move (|change|)', (x) => x.avg_abs_change == null ? '—' : x.avg_abs_change.toFixed(2) + '%'],
+    ['Closed up', (x) => x.up_pct == null ? '—' : x.up_pct + '%'],
+    ['Avg first 15 min move', (x) => x.avg_abs_first15 == null ? '—' : x.avg_abs_first15.toFixed(2) + '%'],
+    ['Avg last hour move', (x) => x.avg_abs_last_hour == null ? '—' : x.avg_abs_last_hour.toFixed(2) + '%'],
+    ['Trend days', (x) => x.trend_pct + '%'], ['Range days', (x) => x.range_pct + '%']];
+  return `<div class="table-wrap"><table class="cmp"><thead><tr><th>Since the first stored expiry</th>${cols.map(([, t]) => `<th class="num">${t}</th>`).join('')}</tr></thead><tbody>`
+    + rowsDef.map(([lbl, f]) => `<tr><td>${lbl}</td>${cols.map(([k]) => `<td class="num">${sm[k] ? f(sm[k]) : '—'}</td>`).join('')}</tr>`).join('') + '</tbody></table></div>';
+}
+function weekdayTable(w) {
+  const cell = (x) => x ? `${x.days} · ${x.avg_range.toFixed(2)}% · ${x.avg_abs_change.toFixed(2)}%` : '—';
+  return `<div class="table-wrap"><table><thead><tr><th>Weekday</th><th class="num">Expiry days: count · avg range · avg move</th><th class="num">Other days: count · avg range · avg move</th></tr></thead><tbody>`
+    + w.map((r) => `<tr><td>${r.weekday}</td><td class="num">${cell(r.expiry)}</td><td class="num">${cell(r.other)}</td></tr>`).join('') + '</tbody></table></div>';
+}
+function renderExpiries() {
+  const d = EXP;
+  if (!d) return;
+  if (!d.options) { $('expBody').innerHTML = `<div class="empty">${esc(d.name)} has no index options, so it has no expiry days.<br>Pick NIFTY 50, NIFTY BANK, FIN NIFTY, MIDCAP SELECT, NIFTY NEXT 50, SENSEX or BANKEX.</div>`; return; }
+  if (!d.rows.length) { $('expBody').innerHTML = '<div class="empty">No expiry dates stored yet - press Update data.</div>'; return; }
+  const kind = $('kindSel').value, year = $('yearSel').value;
+  const rows = d.rows.filter((x) => (!kind || x.kind === kind) && (!year || x.date.startsWith(year)));
+  $('expBody').innerHTML = `<div class="split"><div>${cmpTable(d.summary)}</div><div>${weekdayTable(d.weekday)}</div></div>
+    <div class="table-wrap scroll"><table><thead><tr><th>Expiry day</th><th>Type</th><th class="num">Open</th><th class="num">Close</th><th class="num">Change</th><th class="num">Gap</th>
+      <th class="num">Range</th><th class="num">First 15 min</th><th class="num">Last hour</th><th class="num">High at</th><th class="num">Low at</th><th>Day</th><th>Source</th></tr></thead><tbody>`
+    + rows.map((x) => { const s = x.stats;
+      return `<tr class="click ${x.date === DATE ? 'sel' : ''}" data-date="${x.date}"><td class="mono">${fmtDate(x.date)}</td><td><span class="badge ${x.kind}">${x.kind}</span></td>`
+        + (s ? `<td class="num">${num(s.open)}</td><td class="num">${num(s.close)}</td><td class="num">${pct(s.change)}</td><td class="num">${pct(s.gap)}</td><td class="num">${s.range.toFixed(2)}%</td>
+          <td class="num">${pct(s.first15)}</td><td class="num">${pct(s.last_hour)}</td><td class="num">${s.high_time}</td><td class="num">${s.low_time}</td><td><span class="type ${typeCls(s.type)}">${esc(s.type)}</span></td>`
+          : '<td colspan="10" class="muted">no 5-minute candles (before Jan 2016)</td>')
+        + `<td class="muted" title="${x.source === 'schedule' ? 'From the published weekly schedule (before BSE files exist)' : 'Confirmed in the exchange file of that day'}">${x.source === 'schedule' ? 'schedule' : x.source.replace('_bhav', '').toUpperCase() + ' file'}</td></tr>`; }).join('')
+    + `</tbody></table></div><div class="note">${rows.length} of ${d.rows.length} expiry days. Click a row to open that day above. Monthly = the last expiry of the month. Expiry dates are taken from NSE / BSE F&O bhavcopies and counted only when that day's own file shows contracts expiring (exact, including holiday shifts and the 2023-25 expiry-day changes); SENSEX before 2024 and BANKEX before 2024 follow the published weekly schedule.</div>`;
+}
+function highlightExp() { document.querySelectorAll('#expBody tr[data-date]').forEach((tr) => tr.classList.toggle('sel', tr.dataset.date === DATE)); }
+$('expBody').addEventListener('click', (e) => { const tr = e.target.closest('tr[data-date]'); if (tr) { loadDay(tr.dataset.date); window.scrollTo({ top: 0, behavior: 'smooth' }); } });
+$('kindSel').addEventListener('change', renderExpiries);
+$('yearSel').addEventListener('change', renderExpiries);
+
+loadMeta().then(() => { loadDay(DATE); loadExpiries(); });
+})();
+</script>
+</body>
+</html>

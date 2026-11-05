@@ -24,6 +24,7 @@ logs/
 
 # Claude's daily order recommendations (regenerated each session)
 paper_trading/claude_orders.json
+paper_trading/claude_orders2.json
 
 # Local secrets (ANTHROPIC_API_KEY ...)
 .env

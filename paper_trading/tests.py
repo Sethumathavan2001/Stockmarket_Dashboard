@@ -1897,7 +1897,7 @@ class ClaudeBoardTests(BaseCase):
             ran.set()
             return payload
         with mock.patch.object(claude_orders, "ORDERS_FILE", tmp), mock.patch.object(claude_board, "build", fake_build), \
-             mock.patch("django.db.connection.close"):
+             mock.patch.object(claude_board, "archive"), mock.patch("django.db.connection.close"):
             with mock.patch("threading.Thread.start"):                               # first: check the busy guard
                 claude_board._set(running=True)
                 self.assertEqual(self.client.post(reverse("paper_trading:claude_orders_refresh")).status_code, 409)
@@ -2211,8 +2211,8 @@ class AngelSessionTests(TestCase):
         self.assertEqual(sc.placeOrderFullResponse.call_count, 1)
 
 
-class SecureExitAndRouteTests(TestCase):
-    """Secure exit of real trades, and per-account network routing for Angel One."""
+class ExitAndRouteTests(TestCase):
+    """Exiting a real trade, and per-account network routing for Angel One."""
 
     def setUp(self):
         from . import broker
@@ -2236,19 +2236,14 @@ class SecureExitAndRouteTests(TestCase):
         with self.assertRaisesMessage(self.b.BrokerError, "is not open"):
             self.b.exit_trade(bo.pk)
 
-    def test_exit_all_by_account_and_api(self):
-        v, s = self.place("vivek"), self.place("sethu")
-        with mock.patch.object(self.b, "now_ist", return_value=self.now):
-            r = self.client.post(reverse("paper_trading:claude_orders_exit"), {"account": "vivek"}, content_type="application/json").json()
-        self.assertEqual([x["code"] for x in r["results"]], ["TST.NS"])
-        v.refresh_from_db(); s.refresh_from_db()
-        self.assertEqual((v.status, s.status), ("closed", "open"))               # Sethu untouched
-        with mock.patch.object(self.b, "now_ist", return_value=self.now):
-            r = self.client.post(reverse("paper_trading:claude_orders_exit"), {"account": "both"}, content_type="application/json").json()
-        s.refresh_from_db()
-        self.assertEqual(s.status, "closed")
-        self.assertEqual(self.client.post(reverse("paper_trading:claude_orders_exit"), {"account": "x"},
-                                          content_type="application/json").status_code, 400)
+    def test_exit_api_takes_one_trade(self):
+        bo = self.place("vivek")
+        url = reverse("paper_trading:claude_orders_exit")
+        self.assertEqual(self.client.post(url, {"account": "vivek"}, content_type="application/json").status_code, 400)
+        bo.refresh_from_db()
+        self.assertEqual(bo.status, "open")
+        r = self.client.post(url, {"id": bo.pk}, content_type="application/json").json()
+        self.assertTrue(r["ok"])
 
     def test_route_binds_each_account_to_its_adapter(self):
         import os
@@ -2302,3 +2297,416 @@ class OrderValueLimitTests(TestCase):
         bo = broker.place("vivek", rec_id="r", code="TST.NS", side="BUY", quantity=100, stop_pct=1, target_pct=2,
                           now=datetime(2026, 10, 26, 10, 0, tzinfo=svc.IST))           # Rs 2,70,320
         self.assertEqual(bo.status, "open")
+
+
+class ClaudeOrderHistoryTests(TestCase):
+    def test_refresh_lists_are_archived_once_and_history_renders(self):
+        from . import claude_board
+        from .models import BrokerOrder, ClaudeOrderList
+        payload = {"generated": "2026-11-02T10:05:00+05:30", "session": svc.today_ist().isoformat(), "counts": {"SELL": 1},
+                   "orders": [{"id": "x-TST-SELL", "code": "TST.NS", "name": "Test", "side": "SELL", "price_at": 100,
+                               "stop": 101, "target": 98, "stop_pct": 1, "target_pct": 2, "conviction": "High"}]}
+        claude_board.archive(payload)
+        claude_board.archive(payload)
+        self.assertEqual(ClaudeOrderList.objects.count(), 1)
+        BrokerOrder.objects.create(account="vivek", session=svc.today_ist(), rec_id="x-TST-SELL", code="TST.NS", side="SELL",
+                                   quantity=5, stop=101, target=98, status="closed", entry_price=100, exit_price=98)
+        r = self.client.get(reverse("paper_trading:claude_orders_history"))
+        self.assertEqual(r.status_code, 200)
+        self.assertContains(r, "Vivek · 5 · closed")
+        self.assertContains(r, "₹10.00")
+        self.assertEqual(self.client.get(reverse("paper_trading:claude_orders_history") + "?days=7&account=sethu").status_code, 200)
+
+
+class MostActiveCandidateTests(TestCase):
+    """Most active stocks are looked at on Refresh, and shown on an order - never a vote for its direction."""
+
+    def setUp(self):
+        for code in ("HDFCBANK.NS", "PENNY.NS"):
+            Company.objects.create(name=code, code=code)
+        Company.objects.create(name="Gold ETF", code="GOLDBEES.NS", sector="ETF")
+
+    def candidates(self, live):
+        from . import claude_board
+        with mock.patch("news.fetch.market_news", return_value={"items": []}), \
+             mock.patch("pathlib.Path.glob", return_value=[]):
+            return claude_board.candidates(live)
+
+    def test_listed_with_the_reason_and_cheap_or_etf_rows_left_out(self):
+        order, why = self.candidates({
+            "most_active_value": [{"symbol": "HDFCBANK", "value_cr": 1857.9}, {"symbol": "GOLDBEES", "value_cr": 900.0}],
+            "most_active_volume": [{"symbol": "HDFCBANK", "value_cr": 1857.9}, {"symbol": "PENNY", "value_cr": 3.5}]})
+        self.assertEqual(order, ["HDFCBANK.NS"])
+        self.assertEqual(why["HDFCBANK.NS"], ["Live: most active by value (₹1,858 Cr traded)",
+                                              "Live: most active by volume (₹1,858 Cr traded)"])
+
+    def test_shown_on_the_order_without_changing_the_signals(self):
+        from datetime import datetime
+        from . import claude_board
+        s = {"code": "HDFCBANK.NS", "name": "HDFC", "side": "SELL", "decision": "SELL", "conviction": "Medium", "score": -0.5,
+             "price": 100.0, "asof": "x", "plan": {"stop": 101.0, "target": 98.5, "risk_pct": 1.0},
+             "signals": [{"name": "ML model", "dir": -1, "cred": True, "detail": "down"}],
+             "why": ["Live: most active by value (₹1,858 Cr traded)", "Live: top loser -2.00%"]}
+        o = claude_board.to_order(s, datetime(2026, 11, 5, 10, 0))
+        self.assertEqual(o["reasons"], [{"signal": "ML model", "detail": "down"},
+                                        {"signal": "Most active", "detail": "value (₹1,858 Cr traded)"}])
+
+
+def signal(name, direction, weight=1.0):
+    return {"name": name, "dir": direction, "w": weight, "cred": bool(direction and weight), "detail": ""}
+
+
+class ClaudeBoard2DecisionTests(TestCase):
+    """Claude Orders 2.0: which signals may make a BUY / SELL."""
+
+    def setUp(self):
+        from . import claude_board2
+        self.b = claude_board2
+
+    def decide(self, *signals):
+        return self.b.decide([signal(*s) for s in signals])[0]
+
+    def test_needs_stock_signals_and_a_model(self):
+        b = self.b
+        self.assertEqual(self.decide(("Candle forecast", 1), ("Price action", 1), (b.MARKET, 1)), "BUY")
+        self.assertEqual(self.decide(("Candle forecast", -1), (b.BEHAVIOUR, -1), (b.SECTOR, -1)), "SELL")
+        self.assertEqual(self.decide(("Candle forecast", 1), ("Price action", 1)), "WATCH")          # only two agree
+        # the market alone can't carry a stock, however many indices are up
+        self.assertEqual(self.decide(("Candle forecast", 1), (b.MARKET, 1), (b.ALL_INDICES, 1), (b.GLOBAL, 1), (b.SECTOR, 1)), "WATCH")
+        self.assertEqual(self.decide(("Price action", 1), (b.BEHAVIOUR, 1), (b.MARKET, 1)), "WATCH")  # no tested model
+        self.assertEqual(self.decide((b.ML_DAILY, 1, 0.5), ("Price action", 1), (b.BEHAVIOUR, 1), (b.MARKET, 1)), "WATCH")  # next-days only
+
+    def test_behaviour_or_sector_against_it_stops_the_order(self):
+        b = self.b
+        base = [("Candle forecast", 1), ("ML model", 1), ("Reliable patterns", 1), ("Price action", 1), (b.MARKET, 1)]
+        self.assertEqual(self.decide(*base), "BUY")
+        self.assertEqual(self.decide(*base, (b.BEHAVIOUR, -1, 0.5)), "WATCH")
+        self.assertEqual(self.decide(*base, (b.SECTOR, -1)), "WATCH")
+
+    def test_against_nifty_takes_four_stock_signals(self):
+        b = self.b
+        three = [("Candle forecast", 1), ("ML model", 1), ("Price action", 1), (b.SECTOR, 1)]
+        self.assertEqual(self.decide(*three, (b.MARKET, -1)), "WATCH")
+        self.assertEqual(self.decide(*three, ("Reliable patterns", 1), (b.MARKET, -1)), "BUY")
+
+    def test_conviction_wants_two_models_and_behaviour(self):
+        b = self.b
+        medium = b.decide([signal("Candle forecast", 1), signal("ML model", 1), signal(b.MARKET, 1)])
+        higher = b.decide([signal("Candle forecast", 1), signal("ML model", 1), signal(b.BEHAVIOUR, 1)])
+        self.assertEqual((medium[2], higher[2]), ("Medium", "Higher"))
+
+    def test_stop_is_widened_by_the_usual_session_range_within_the_limits(self):
+        s = {"price": 100.0, "forecast": {"band": [[0, 99.7, 100.3]]}}
+        self.assertAlmostEqual(self.b.plan_for(s, 1, None)["risk_pct"], 0.4)                 # floor
+        self.assertAlmostEqual(self.b.plan_for(s, 1, 3.0)["risk_pct"], 0.75)                 # a quarter of 3%
+        self.assertAlmostEqual(self.b.plan_for(s, -1, 20.0)["risk_pct"], 1.2)                # ceiling
+        self.assertLess(self.b.plan_for(s, -1, 3.0)["target"], 100)
+        self.assertIsNone(self.b.plan_for({"price": 100.0}, 1, 3.0))
+
+
+class ClaudeBoard2TodayTests(TestCase):
+    """Reading the day: indices, world, session, expiry."""
+
+    def setUp(self):
+        from . import claude_board2
+        self.b = claude_board2
+
+    def test_index_direction_needs_the_close_and_the_open_to_agree(self):
+        row = self.b._index_row
+        self.assertEqual(row("A", 101, 100, 1.5)["dir"], 1)
+        self.assertEqual(row("A", 99, 100, 1.5)["dir"], 0)              # gapped up, then sold
+        self.assertEqual(row("A", 99, 100, -1.5)["dir"], -1)
+        self.assertEqual(row("A", 100.1, 100, 0.1)["dir"], 0)           # flat
+        self.assertEqual(row("A", None, 100, None)["dir"], 0)
+
+    def test_breadth_counts_broad_and_sector_indices_but_not_vix_or_themes(self):
+        def rows(*pcts):
+            return {f"I{i}": {"name": f"I{i}", "pct": p, "group": "SECTORAL INDICES"} for i, p in enumerate(pcts)}
+        indices = {**rows(1, 1, 1, -1), "INDIA VIX": {"name": "INDIA VIX", "pct": 9.0, "group": "SECTORAL INDICES"},
+                   "X": {"name": "X", "pct": -5, "group": "THEMATIC INDICES"}}
+        b = self.b.breadth(indices)
+        self.assertEqual((b["dir"], b["up"], b["down"], b["total"], b["vix_pct"]), (1, 3, 1, 4, 9.0))
+        self.assertEqual(self.b.breadth(rows(1, -1))["dir"], 0)
+        self.assertEqual(self.b.breadth({})["dir"], 0)
+
+    def test_world_direction_is_a_clear_majority(self):
+        def world(*pcts):
+            return self.b.world([{"short": str(i), "pct": p} for i, p in enumerate(pcts)])
+        self.assertEqual(world(1, 1, 1, -1, 0)["dir"], 1)
+        self.assertEqual(world(-1, -1, -1, 1)["dir"], -1)
+        self.assertEqual(world(1, 1, -1, -1, 0)["dir"], 0)
+        self.assertEqual(self.b.world([{"short": "A", "pct": 1, "stale": True}])["total"], 0)
+
+    def test_session_follows_the_clock(self):
+        at = lambda h, m: datetime(2026, 11, 5, h, m)
+        self.assertEqual([self.b.current_session(at(*t)) for t in ((8, 0), (11, 29), (11, 30), (13, 30), (16, 0))],
+                         ["morning", "morning", "afternoon", "evening", "evening"])
+
+    def test_session_move_starts_at_the_session_open(self):
+        bars = [[f"2026-11-05T{h}:00+05:30", 200, 0, 0, c] for h, c in (("11:25", 300), ("11:30", 200), ("11:35", 201), ("11:40", 202))]
+        self.assertAlmostEqual(self.b.session_move({"candles": bars}, "afternoon"), 1.0)
+        self.assertIsNone(self.b.session_move({"candles": bars[:3]}, "afternoon"))           # too early to say
+        self.assertIsNone(self.b.session_move({}, "morning"))
+
+    def test_today_expiries_from_the_last_files(self):
+        from datetime import date
+        today = date(2026, 11, 5)                                     # a Thursday
+        self.b._expiry_day.clear()
+        self.addCleanup(self.b._expiry_day.clear)
+        nse = {"NIFTY": {date(2026, 11, 10)}, "BANKNIFTY": {today, date(2026, 12, 29)}}
+        bse = {"SENSEX": {today, date(2026, 11, 12)}}
+        with mock.patch("market.index_data.nse_expiries", return_value=nse) as n, \
+             mock.patch("market.index_data.bse_expiries", return_value=bse):
+            self.assertEqual(self.b.today_expiries(today), {"BANKNIFTY": "monthly", "SENSEX": "weekly"})
+            self.b.today_expiries(today)
+        self.assertEqual(n.call_count, 1)                             # once a day
+        self.assertEqual(n.call_args[0][0], date(2026, 11, 4))
+
+    def test_a_source_that_fails_leaves_the_rest(self):
+        boom = RuntimeError("down")
+        with mock.patch.object(self.b, "read_indices", side_effect=boom), mock.patch("market.indices.index_chart", side_effect=boom), \
+             mock.patch("market.indices.global_indices", side_effect=boom), mock.patch.object(self.b, "today_expiries", side_effect=boom):
+            ctx = self.b.read_context(None, datetime(2026, 11, 5, 10, 0, tzinfo=self.b.IST))
+        self.assertEqual((ctx["indices"], ctx["expiry"], ctx["breadth"]["total"], ctx["world"]["total"], ctx["session"]),
+                         ({}, {}, 0, 0, "morning"))
+        self.assertEqual(self.b.backdrop_signals(ctx), [])
+        self.assertIn("Thursday, Morning", self.b.summary(ctx, None))
+
+
+class ClaudeBoard2BehaviourTests(TestCase):
+    """Stock Behaviour with today's filters: only what repeats gets a vote."""
+
+    def market(self, habit):
+        """80 stocks that follow nothing, the first 25 (HOT among them) leaning up by `habit`."""
+        import numpy as np
+        from market.tests import behaviour_matrix
+        rng = np.random.default_rng(3)
+        data = behaviour_matrix(560)
+        n, m = len(data["days"]), 80
+        noise = rng.normal(size=(n, m)).astype(np.float32)
+        noise[:, :25] += habit
+        names = [f"S{i}" for i in range(m)]
+        names[0] = "HOT"
+        data.update(codes=np.array([f"{x}.NS" for x in names]), names=np.array(names), sectors=np.array(["Technology"] * m),
+                    turnover=np.full(m, 100, dtype=np.float32), o2c=noise, c2c=noise, rng=np.abs(noise) + 1)
+        return data
+
+    def condition(self, data, **filters):
+        from market.stock_behaviour import Engine, Filters
+        from .claude_board2 import Condition
+        return Condition("x", "These days", Engine(data, Filters(period="all", **filters)))
+
+    def test_a_habit_that_repeats_votes(self):
+        c = self.condition(self.market(1.0))
+        self.assertTrue(c.repeats())
+        sign, strength, words = c.vote("HOT.NS")
+        self.assertEqual((sign, strength), (1, 1.0))
+        self.assertIn("typical stock", words)
+        self.assertIsNone(c.vote("S70.NS"))                          # a stock with no habit
+        self.assertIsNone(c.vote("NOPE.NS"))
+        self.assertIn(("HOT.NS", 1), c.candidates())
+
+    def test_noise_gets_no_vote_even_if_a_stock_looks_good(self):
+        c = self.condition(self.market(0.0))
+        self.assertFalse(c.repeats())
+        self.assertTrue(all(c.vote(code) is None for code in c.position))
+        self.assertEqual(c.candidates(), [])
+
+    def test_too_few_days_is_no_condition(self):
+        c = self.condition(self.market(1.0), weekday=0, expiry="monthly", trend="up", move=50.0)
+        self.assertEqual((c.sides, c.vote("HOT.NS")), ({}, None))
+
+    def test_signal_says_what_did_not_repeat(self):
+        from . import claude_board2 as b
+        good, noise = self.condition(self.market(1.0)), self.condition(self.market(0.0))
+        s = b.behaviour_signal("HOT.NS", [good, noise])
+        self.assertEqual((s["dir"], s["w"], s["cred"]), (1, 1.0, True))
+        self.assertIn("didn't repeat: These days", s["detail"])
+        s = b.behaviour_signal("S70.NS", [good])
+        self.assertEqual((s["dir"], s["w"], s["cred"]), (0, 0.0, False))
+
+    def test_todays_filters_become_conditions(self):
+        from market.tests import behaviour_matrix
+        from . import claude_board2 as b
+        ctx = {"session": "afternoon", "weekday": 0, "session_move": 0.5, "expiry": {"NIFTY": "weekly"},
+               "indices": {"NIFTY 50": {"o2c": -1.0}, "NIFTY IT": {"o2c": 0.05}}}
+        common, home = b.conditions(behaviour_matrix(200), ctx)
+        self.assertEqual([c.label for c in common], ["NIFTY down days", "Afternoon with NIFTY up", "Mondays with NIFTY down",
+                                                     "Monday afternoons", "NIFTY weekly expiries"])
+        self.assertEqual([c.engine.f.trend for c in common[:3]], ["down", "up", "down"])
+        self.assertEqual(common[1].engine.f.session, "afternoon")
+        self.assertEqual(common[2].engine.f.weekday, 0)
+        self.assertEqual(list(home), ["NIFTYIT"])
+        self.assertEqual(home["NIFTYIT"].engine.f.trend, "any")     # NIFTY IT is flat from its open
+        self.assertIn("MONDAY.NS", b.session_ranges(behaviour_matrix(200), "morning"))
+
+
+class ClaudeBoard2SignalTests(TestCase):
+    def setUp(self):
+        from . import claude_board2
+        self.b = claude_board2
+        self.ctx = {"indices": {"NIFTY BANK": {"name": "NIFTY BANK", "pct": 1.0, "dir": 1},
+                                "NIFTY FINANCIAL SERVICES": {"name": "NIFTY FINANCIAL SERVICES", "pct": 0.8, "dir": 1},
+                                "NIFTY METAL": {"name": "NIFTY METAL", "pct": -1.0, "dir": -1}},
+                    "breadth": {"dir": 1, "up": 8, "down": 1, "total": 10, "vix_pct": -2.0},
+                    "world": {"dir": -1, "up": 0, "down": 3, "total": 5, "detail": "x"}}
+
+    def test_sector_signal_uses_the_stocks_own_indices_else_its_sector(self):
+        member = lambda code: {"indices": [{"name": "NIFTY FIN SERVICE", "group": "sector"}, {"name": "NIFTY BANK", "group": "sector"},
+                                           {"name": "NIFTY 50", "group": "broad"}]}
+        s = self.b.sector_signal({"code": "A.NS"}, self.ctx, member)
+        self.assertEqual((s["dir"], s["w"]), (1, 1.0))
+        self.assertIn("NIFTY BANK", s["detail"])
+        none = lambda code: {"indices": []}
+        self.assertEqual(self.b.sector_signal({"code": "A.NS", "sector": "Basic Materials"}, self.ctx, none)["dir"], -1)
+        self.assertIsNone(self.b.sector_signal({"code": "A.NS", "sector": "Unknown"}, self.ctx, none))
+
+    def test_home_index_is_the_narrowest(self):
+        member = lambda *names: (lambda code: {"indices": [{"name": n} for n in names]})
+        self.assertEqual(self.b.home_index("A.NS", member("NIFTY 50", "NIFTY FIN SERVICE", "NIFTY BANK")), "BANKNIFTY")
+        self.assertEqual(self.b.home_index("A.NS", member("NIFTY SMALLCAP 100")), "NIFTYSML100")
+        self.assertIsNone(self.b.home_index("A.NS", member("NIFTY 50")))
+
+    def test_ml_daily_counts_only_with_an_edge_and_at_half_weight(self):
+        f = lambda edge: [{"in": "1 day", "direction": "up", "ret_pct": 0.5, "edge": edge}]
+        self.assertIsNone(self.b.ml_daily_signal({"ml_daily": f(False)}))
+        self.assertIsNone(self.b.ml_daily_signal({}))
+        self.assertEqual(self.b.ml_daily_signal({"ml_daily": f(True)})["w"], 0.5)
+
+    def test_open_interest_reads_with_the_price(self):
+        oi = {"A": {"avgInOI": 40.0}, "B": {"avgInOI": 3.0}}
+        stock = lambda code, price: {"code": code, "price": price, "levels": {"pdc": 100.0}}
+        self.assertEqual(self.b.oi_signal(stock("A.NS", 101), oi)["dir"], 1)
+        self.assertIn("short build-up", self.b.oi_signal(stock("A.NS", 99), oi)["detail"])
+        self.assertIsNone(self.b.oi_signal(stock("B.NS", 101), oi))
+        self.assertIsNone(self.b.oi_signal(stock("C.NS", 101), oi))
+
+    def test_rescore_leaves_a_skipped_stock_alone(self):
+        s = {"code": "A.NS", "decision": "SKIP"}
+        self.assertEqual(self.b.rescore(s, self.ctx, []), {"code": "A.NS", "decision": "SKIP"})
+
+    def test_rescore_decides_again_with_the_new_signals(self):
+        s = {"code": "A.NS", "price": 100.0, "sector": "Basic Materials", "decision": "BUY", "forecast": {"band": [[0, 99.0, 101.0]]},
+             "signals": [signal("Candle forecast", 1), signal("Price action", 1), signal("ML model", 1), signal(self.b.MARKET, 1)]}
+        with mock.patch("market.index_membership.indices_for", return_value={"indices": []}):
+            self.b.rescore(s, self.ctx, [])
+        self.assertEqual(s["decision"], "WATCH")                     # metals are falling: the first version said BUY
+        self.assertIsNone(s["plan"])
+        self.assertEqual([x["name"] for x in s["signals"]][-3:], [self.b.SECTOR, self.b.ALL_INDICES, self.b.GLOBAL])
+
+
+class ClaudeOrders2PageTests(ClaudeOrdersTests):
+    """The 2.0 page: the first version's page and order handling, on its own list."""
+
+    def setUp(self):
+        super().setUp()
+        from . import claude_orders2
+        self.tmp2 = self.tmp.with_name("claude_orders2.json")
+        patcher = mock.patch.object(claude_orders2, "ORDERS_FILE", self.tmp2)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def write2(self):
+        self.tmp2.write_text(json.dumps({
+            "generated": "2026-10-19T10:30:00+05:30", "session": svc.today_ist().isoformat(), "source": "Signal board 2.0",
+            "orders": [{"id": "v2-20261019-1030-TST-BUY", "code": "TST", "name": "Test Co", "sector": "", "side": "BUY",
+                        "product": "INTRADAY", "conviction": "Higher", "score": 0.8, "price_at": 100.0,
+                        "price_time": "2026-10-19T10:20:00+05:30", "stop": 99.0, "target": 101.5, "stop_pct": 1.0,
+                        "target_pct": 1.5, "reasons": [], "news": [], "square_off_by": "15:20"}]}), encoding="utf-8")
+
+    def place2(self):
+        with mock.patch.object(svc, "get_market_status", return_value="OPEN"), \
+             mock.patch.object(svc, "fetch_live_today", return_value=live_frame(1, close=100.2)):
+            return self.post(reverse("paper_trading:claude_orders2_place"), {"id": "v2-20261019-1030-TST-BUY", "quantity": 10})
+
+    def test_secure_exit_is_gone_from_both_pages(self):
+        for name in ("claude_orders", "claude_orders2"):
+            page = self.client.get(reverse(f"paper_trading:{name}")).content.decode().lower()
+            for word in ("secure exit", "secureexit", "secure_exit", "exit all", "exitall"):
+                self.assertNotIn(word, page)
+            self.assertIn('id="bulkmsg"', page)
+
+    def test_each_page_shows_its_own_list_and_uses_its_own_urls(self):
+        self.write()
+        self.write2()
+        one, two = self.client.get(reverse("paper_trading:claude_orders")), self.client.get(reverse("paper_trading:claude_orders2"))
+        self.assertContains(two, "<title>Claude Orders 2.0</title>")
+        self.assertContains(two, reverse("paper_trading:claude_orders2_refresh"))
+        self.assertContains(two, reverse("paper_trading:claude_orders2_place"))
+        self.assertContains(two, "v2-20261019-1030-TST-BUY")
+        self.assertContains(one, "<title>Claude Orders</title>")
+        self.assertNotContains(one, reverse("paper_trading:claude_orders2_refresh"))
+        self.assertNotContains(one, "v2-20261019-1030-TST-BUY")
+        self.assertEqual(self.client.get(reverse("paper_trading:claude_orders2_state")).json()["source"], "Signal board 2.0")
+
+    def test_both_sit_in_the_orders_dropdown(self):
+        page = self.client.get(reverse("paper_trading:claude_orders2")).content.decode()
+        menu = page[page.index(">Orders\n"):]
+        menu = menu[:menu.index("</nav>")]
+        self.assertIn(reverse("paper_trading:claude_orders"), menu)
+        self.assertIn(reverse("paper_trading:claude_orders2"), menu)
+        self.assertIn('class="active"><b>Claude Orders 2.0', menu)
+        self.assertNotIn('class="active"><b>Claude Orders<', menu)
+        first = self.client.get(reverse("paper_trading:claude_orders")).content.decode()
+        self.assertIn('class="active"><b>Claude Orders<', first)
+        self.assertNotIn('class="active"><b>Claude Orders 2.0', first)
+
+    def test_placing_from_either_page_blocks_the_other(self):
+        self.write()
+        self.write2()
+        r = self.place2()
+        self.assertEqual(r.status_code, 200, r.content)
+        o = PaperOrder.objects.get()
+        self.assertEqual((o.account.owner_key, o.side, o.quantity, o.reason), ("book:2", "BUY", 10, "claude"))
+        self.assertEqual(self.place().status_code, 409)
+        self.assertEqual(PaperOrder.objects.count(), 1)
+        st = self.client.get(reverse("paper_trading:claude_orders2_state")).json()
+        self.assertEqual(st["orders"][0]["placed"]["quantity"], 10)
+
+    def test_a_first_version_id_is_unknown_here(self):
+        self.write()
+        self.write2()
+        r = self.post(reverse("paper_trading:claude_orders2_place"), {"id": "20261019-1024-TST-BUY", "quantity": 1})
+        self.assertEqual(r.status_code, 404)
+
+    def test_refresh_runs_apart_from_the_first_version(self):
+        from . import claude_board, claude_board2
+        fake = {"generated": "2026-11-05T10:00:00+05:30", "session": svc.today_ist().isoformat(), "orders": [],
+                "source": "Signal board 2.0"}
+        with mock.patch.object(claude_board2, "build", return_value=fake), mock.patch.object(claude_board, "archive"), \
+             mock.patch("django.db.connection.close"):
+            claude_board._set(running=True)                          # the first version busy doesn't block 2.0
+            self.addCleanup(claude_board._set, running=False)
+            self.assertEqual(self.client.post(reverse("paper_trading:claude_orders2_refresh")).status_code, 202)
+            for _ in range(200):
+                if not claude_board2.progress()["running"]:
+                    break
+                threading.Event().wait(0.01)
+        self.assertEqual(json.loads(self.tmp2.read_text(encoding="utf-8"))["source"], "Signal board 2.0")
+        self.assertFalse(self.tmp.exists())                          # the first version's list wasn't touched
+
+    def test_build_keeps_the_order_format_and_marks_its_ids(self):
+        from . import claude_board, claude_board2 as b
+        Company.objects.update_or_create(code="TST.NS", defaults={"name": "Test Co", "sector": "Technology"})
+
+        def gathered(code, why):
+            return {"code": code, "name": "Test Co", "sector": "Technology", "why": why, "price": 100.0, "asof": "2026-11-05T10:00:00+05:30",
+                    "forecast": {"band": [[0, 99.0, 101.0]], "news_items": []}, "decision": "BUY", "conviction": "Medium", "score": 1,
+                    "signals": [signal("Candle forecast", 1), signal("ML model", 1), signal("Price action", 1)]}
+
+        ctx = {"day": svc.today_ist(), "weekday": 3, "session": "morning", "indices": {}, "session_move": None, "expiry": {},
+               "breadth": {"dir": 1, "up": 8, "down": 1, "total": 10, "vix_pct": 1.0},
+               "world": {"dir": 0, "up": 1, "down": 1, "total": 5, "detail": "x"}}
+        live = {"gainers": [{"x": 1}], "open_intrest": [{"symbol": "TST", "avgInOI": 30.0}, {"symbol": "FINNIFTY", "avgInOI": 30.0}]}
+        with mock.patch("market.views.live_snapshot", return_value=live), mock.patch.object(claude_board, "market_direction", return_value=None), \
+             mock.patch.object(b, "read_context", return_value=ctx), mock.patch("market.behaviour_data.load", return_value=None), \
+             mock.patch.object(claude_board, "candidates", return_value=([], {})), mock.patch.object(claude_board, "gather", side_effect=gathered), \
+             mock.patch.object(claude_board, "score", side_effect=lambda s, *a: s), mock.patch.object(b, "home_index", return_value=None), \
+             mock.patch("market.index_membership.indices_for", return_value={"indices": []}), mock.patch("django.db.connection.close"):
+            out = b.build()
+        self.assertEqual((out["checked"], out["counts"]["BUY"], len(out["orders"])), (1, 1, 1))     # FINNIFTY is not a company
+        order = out["orders"][0]
+        self.assertTrue(order["id"].startswith("v2-") and order["id"].endswith("-TST-BUY"))
+        for key in ("code", "side", "conviction", "price_at", "stop", "target", "stop_pct", "target_pct", "reasons", "news", "square_off_by"):
+            self.assertIn(key, order)
+        self.assertIn("Stock Behaviour data is not built", out["method"])

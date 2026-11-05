@@ -195,3 +195,15 @@ class BrokerOrder(models.Model):
         if self.entry_price is None or self.exit_price is None:
             return None
         return (self.exit_price - self.entry_price) * self.quantity * (1 if self.side == "BUY" else -1)
+
+
+class ClaudeOrderList(models.Model):
+    """Every Claude Orders list ever made (each Refresh), kept as written to claude_orders.json."""
+    generated = models.DateTimeField(unique=True)
+    session = models.DateField()
+    count = models.PositiveIntegerField(default=0)
+    payload = models.JSONField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-generated"]

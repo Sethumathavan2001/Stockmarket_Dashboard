@@ -81,3 +81,58 @@ class FiveMinuteData(models.Model):
 
     def __str__(self):
         return f"{self.company.code} @ {self.timestamp}"
+
+
+class MarketIndex(models.Model):
+    """An index (NIFTY 50, SENSEX, ...) whose history is kept - catalogue in market/index_data.py."""
+    key = models.CharField(max_length=20, unique=True)                 # NIFTY, BANKNIFTY, SENSEX ...
+    name = models.CharField(max_length=60)
+    exchange = models.CharField(max_length=5)                           # NSE / BSE
+    angel_token = models.CharField(max_length=20)
+    option_symbol = models.CharField(max_length=20, blank=True)         # has index options (expiries) when set
+    sort = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["sort"]
+
+    def __str__(self):
+        return self.key
+
+
+class IndexDaily(models.Model):
+    index = models.ForeignKey(MarketIndex, on_delete=models.CASCADE, related_name="daily")
+    date = models.DateField()
+    open = models.FloatField()
+    high = models.FloatField()
+    low = models.FloatField()
+    close = models.FloatField()
+
+    class Meta:
+        unique_together = ("index", "date")
+        ordering = ["index", "date"]
+
+
+class IndexFiveMinute(models.Model):
+    index = models.ForeignKey(MarketIndex, on_delete=models.CASCADE, related_name="five_min")
+    timestamp = models.DateTimeField()
+    date = models.DateField()                                           # IST trading day (fast day lookups)
+    open = models.FloatField()
+    high = models.FloatField()
+    low = models.FloatField()
+    close = models.FloatField()
+
+    class Meta:
+        unique_together = ("index", "timestamp")
+        indexes = [models.Index(fields=["index", "date"])]
+        ordering = ["index", "timestamp"]
+
+
+class IndexExpiry(models.Model):
+    """A past (or listed upcoming) expiry date of an index's options / futures."""
+    index = models.ForeignKey(MarketIndex, on_delete=models.CASCADE, related_name="expiries")
+    date = models.DateField()
+    source = models.CharField(max_length=12)                            # nse_bhav / bse_bhav / schedule
+
+    class Meta:
+        unique_together = ("index", "date")
+        ordering = ["index", "date"]

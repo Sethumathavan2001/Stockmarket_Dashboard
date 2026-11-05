@@ -7,10 +7,17 @@ Live index strip shown above the navbar on every page.
 NSE indices come from NSE's all-indices feed (one request, real time); SENSEX is a BSE index and
 comes from Yahoo (about 15 minutes delayed - marked "delayed").  Cached for 20 seconds so many
 open tabs share one fetch; if a source fails, the last good values are served and marked stale.
+
+  GET /api/market/global/               ->  {"indices": [...], "as_of"}   the world strip above the NSE one
+
+GIFT Nifty comes from NSE's market status feed (the near-month future at NSE IX, trading almost round the clock);
+NASDAQ, S&P 500, Nikkei 225 and Hang Seng from Yahoo daily candles.  A closed market shows its last session's
+close and move - what matters before the Indian open.  Cached for 2 minutes.
 """
 import logging
 import threading
-from datetime import datetime
+from datetime import datetime, time
+from zoneinfo import ZoneInfo
 
 from django.core.cache import cache
 from django.http import Http404, JsonResponse
@@ -38,8 +45,21 @@ CHART_SYMBOLS = {
     "FIN NIFTY": ("finnifty", "NIFTY_FIN_SERVICE.NS"), "NIFTY IT": ("niftyit", "^CNXIT"),
     "MIDCAP 100": ("midcap100", "NIFTY_MIDCAP_100.NS"), "SMALLCAP 100": ("smallcap100", "^CNXSC"),
     "INDIA VIX": ("indiavix", "^INDIAVIX"),
+    "US NASDAQ": ("nasdaq", "^IXIC"), "US S&P 500": ("sp500", "^GSPC"), "Japan Nikkei 225": ("nikkei", "^N225"),
+    "Hong Kong Hang Seng": ("hangseng", "^HSI"),
 }
 KEY_TO = {key: (label, sym) for label, (key, sym) in CHART_SYMBOLS.items()}
+GLOBAL_KEY, GLOBAL_GOOD_KEY = "market:global", "market:global:last_good"
+GLOBAL_SECONDS = 120
+GIFT = "GIFT Nifty"
+WORLD = [                            # (label, exchange's time zone, session open, close)
+    ("US NASDAQ", "America/New_York", time(9, 30), time(16, 0)),
+    ("US S&P 500", "America/New_York", time(9, 30), time(16, 0)),
+    ("Japan Nikkei 225", "Asia/Tokyo", time(9, 0), time(15, 30)),
+    ("Hong Kong Hang Seng", "Asia/Hong_Kong", time(9, 30), time(16, 0)),
+]
+SYMBOL_TZ = {CHART_SYMBOLS[label][1]: zone for label, zone, _, _ in WORLD}
+_global_lock = threading.Lock()
 
 
 def _num(v):
@@ -81,6 +101,65 @@ def _sensex():
             "pct": (last / prev - 1) * 100 if prev else 0.0, "open": float(raw["Open"].iloc[-1]),
             "high": float(raw["High"].iloc[-1]), "low": float(raw["Low"].iloc[-1]), "prev_close": prev,
             "source": "Yahoo", "delayed": True, "time": None}
+
+
+def _gift():
+    from news.fetch import _nse_json
+
+    g = _nse_json("/api/marketStatus").get("giftnifty") or {}
+    last, change = _num(g.get("LASTPRICE")), _num(g.get("DAYCHANGE"))
+    if last is None or change is None:
+        raise ValueError("NSE sent no GIFT Nifty price")
+    return {"name": f"GIFT Nifty future, expiry {g.get('EXPIRYDATE')}", "short": GIFT, "last": last, "change": change,
+            "pct": _num(g.get("PERCHANGE")) or 0.0, "prev_close": last - change, "source": "NSE", "delayed": False,
+            "time": g.get("TIMESTMP"), "key": None}
+
+
+def _world(label, zone, opens, closes):
+    from prediction.datasets import _yahoo
+
+    key, sym = CHART_SYMBOLS[label]
+    raw = _yahoo(sym, cache_seconds=GLOBAL_SECONDS, period="5d", interval="1d")
+    raw = None if raw is None else raw.dropna(subset=["Close"])
+    if raw is None or len(raw) < 2:
+        raise ValueError(f"Yahoo sent no {sym} candles")
+    last, prev = float(raw["Close"].iloc[-1]), float(raw["Close"].iloc[-2])
+    now, session = datetime.now(ZoneInfo(zone)), raw.index[-1]
+    is_open = session.date() == now.date() and opens <= now.time() < closes
+    return {"name": label, "short": label, "last": last, "change": last - prev, "pct": (last / prev - 1) * 100 if prev else 0.0,
+            "open": float(raw["Open"].iloc[-1]), "high": float(raw["High"].iloc[-1]), "low": float(raw["Low"].iloc[-1]),
+            "prev_close": prev, "source": "Yahoo", "delayed": is_open, "time": None, "key": key,
+            "tag": None if is_open else f"{session.day} {session:%b} close"}
+
+
+def global_indices():
+    hit = cache.get(GLOBAL_KEY)
+    if hit is not None:
+        return hit
+    with _global_lock:
+        hit = cache.get(GLOBAL_KEY)
+        if hit is not None:
+            return hit
+        good = {i["short"]: i for i in (cache.get(GLOBAL_GOOD_KEY) or {}).get("indices", [])}
+        indices, errors = [], []
+        for label, fetch in [(GIFT, _gift)] + [(w[0], lambda w=w: _world(*w)) for w in WORLD]:
+            try:
+                indices.append(fetch())
+            except Exception as exc:                     # keep the last good value for this one
+                logger.warning("%s failed: %s", label, exc)
+                errors.append(label)
+                if label in good:
+                    indices.append(dict(good[label], stale=True))
+        out = {"indices": indices, "as_of": datetime.now(IST).isoformat(), "errors": errors}
+        cache.set(GLOBAL_KEY, out, GLOBAL_SECONDS)
+        cache.set(GLOBAL_GOOD_KEY, {"indices": [i for i in indices if not i.get("stale")] + [
+            i for i in good.values() if i["short"] in errors]}, 24 * 3600)
+        return out
+
+
+@require_GET
+def global_api(request):
+    return JsonResponse(global_indices())
 
 
 def live_indices():
@@ -136,7 +215,8 @@ def index_chart(key):
     df = _yahoo_frame(_yahoo(sym, cache_seconds=60, period="5d", interval="5m", prepost=False))
     if df.empty:
         return {"key": key, "name": label, "candles": [], "previous": None}
-    df["day"] = df["timestamp"].dt.date
+    zone = ZoneInfo(SYMBOL_TZ.get(sym, "Asia/Kolkata"))             # a US session crosses midnight IST
+    df["day"] = df["timestamp"].dt.tz_convert(zone).dt.date
     days = sorted(df["day"].unique())
     cur = df[df["day"] == days[-1]]
     prev = None
@@ -145,7 +225,7 @@ def index_chart(key):
         prev = {"date": days[-2].isoformat(), "open": float(p["open"].iloc[0]), "high": float(p["high"].max()),
                 "low": float(p["low"].min()), "close": float(p["close"].iloc[-1])}
     out = {"key": key, "name": label, "symbol": sym, "session": days[-1].isoformat(),
-           "is_today": days[-1] == datetime.now(IST).date(), "delayed": sym == "^BSESN",
+           "is_today": days[-1] == datetime.now(zone).date(), "delayed": sym == "^BSESN" or sym in SYMBOL_TZ,
            "today": {"open": float(cur["open"].iloc[0]), "high": float(cur["high"].max()), "low": float(cur["low"].min()),
                      "last": float(cur["close"].iloc[-1]), "time": cur["timestamp"].iloc[-1].isoformat()},
            "previous": prev,

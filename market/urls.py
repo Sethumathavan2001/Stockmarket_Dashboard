@@ -1,11 +1,12 @@
 from django.urls import path
-from . import index_membership, indices, views
+from . import index_analysis, index_membership, indices, stock_behaviour, views
 
 app_name = 'market'
 
 urlpatterns = [
     path('', views.home, name='home'),
     path('api/market/indices/', indices.indices_api, name='indices'),
+    path('api/market/global/', indices.global_api, name='global_indices'),
     path('api/market/indices/<str:key>/chart/', indices.index_chart_api, name='index_chart'),
     path('api/market/stock-indices/<str:code>/', index_membership.stock_indices_api, name='stock_indices'),
     path('industries-by-sector/', views.industries_by_sector, name='industries_by_sector'),
@@ -30,4 +31,14 @@ urlpatterns = [
     path("delete-data/", views.delete_data_by_date, name="delete_data"),
     path("chart/", views.chart_view, name="chart_view"),
     path("chart/data/", views.chart_data, name="chart_data"),
+    path("index-analysis/", index_analysis.page, name="index_analysis"),
+    path("api/index/meta/", index_analysis.meta, name="index_meta"),
+    path("api/index/day/", index_analysis.day, name="index_day"),
+    path("api/index/expiries/", index_analysis.expiries, name="index_expiries"),
+    path("api/index/update/", index_analysis.update, name="index_update"),
+    path("stock-behaviour/", stock_behaviour.page, name="stock_behaviour"),
+    path("api/stock-behaviour/meta/", stock_behaviour.meta, name="behaviour_meta"),
+    path("api/stock-behaviour/data/", stock_behaviour.panels, name="behaviour_data"),
+    path("api/stock-behaviour/stock/", stock_behaviour.stock, name="behaviour_stock"),
+    path("api/stock-behaviour/build/", stock_behaviour.build, name="behaviour_build"),
 ]

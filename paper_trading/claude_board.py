@@ -28,6 +28,7 @@ log = logging.getLogger(__name__)
 TURNOVER_MIN = 2000          # NSE turnover field is in Rs lakh -> Rs 20 crore+
 TOP_MOVERS = 12
 TOP_NEWS = 15
+MOST_ACTIVE = "Live: most active by "
 METHOD = ("BUY / SELL only when at least two credible signals agree, one of them a tested model signal (Candle Predictor "
           "forecast that beat its test, reliable patterns, ML models with an edge), and not against the NIFTY direction "
           "unless 3+ signals agree. Stop sized from the forecast's 80% range about an hour ahead (0.4%-1.2%); target 1.5x "
@@ -66,6 +67,10 @@ def _run(orders_file):
         tmp = orders_file.with_suffix(".tmp")
         tmp.write_text(json.dumps(payload, indent=1, ensure_ascii=False, default=str), encoding="utf-8")
         tmp.replace(orders_file)
+        try:
+            archive(payload)
+        except Exception:                                         # the list itself is written; history is best effort
+            log.exception("Claude Orders: could not save the list to the history")
         _set(orders=len(payload["orders"]), step="Done")
     except Exception as exc:                                       # shown on the page; the old list is kept
         log.exception("Claude Orders refresh failed")
@@ -74,6 +79,20 @@ def _run(orders_file):
         from django.db import connection
         connection.close()
         _set(running=False, finished=datetime.now(IST).isoformat())
+
+
+def archive(payload):
+    """Keep this list in the database (ClaudeOrderList) - every list ever made stays viewable in the history."""
+    from .models import ClaudeOrderList
+
+    if not payload or not payload.get("generated"):
+        return None
+    gen = datetime.fromisoformat(str(payload["generated"]))
+    session = str(payload.get("session") or gen.date().isoformat())
+    data = json.loads(json.dumps(payload, default=str))
+    row, _ = ClaudeOrderList.objects.get_or_create(
+        generated=gen, defaults={"session": session, "count": len(payload.get("orders") or []), "payload": data})
+    return row
 
 
 # ---------------------------------------------------------------- 1. candidates
@@ -116,6 +135,10 @@ def candidates(live):
         add(r["symbol"], f"Live: top gainer {r['net_price']:+.2f}%")
     for r in sorted(filter(liquid, live.get("loosers", [])), key=lambda r: r["net_price"])[:TOP_MOVERS]:
         add(r["symbol"], f"Live: top loser {r['net_price']:+.2f}%")
+    for key, label in (("most_active_value", "value"), ("most_active_volume", "volume")):
+        for r in live.get(key, []):
+            if r.get("value_cr", 0) * 100 >= TURNOVER_MIN:           # by volume also lists cheap, thinly valued stocks
+                add(r["symbol"], f"{MOST_ACTIVE}{label} (₹{r['value_cr']:,.0f} Cr traded)")
     for r in live.get("pdh_data", []):
         add(r["nsecode"], "Live: above previous-day high & VWAP (PDH scan)")
     for r in live.get("pdl_data", []):
@@ -173,6 +196,8 @@ def gather(code, why):
     if not err:
         intr = ml.get("intraday", {})
         rec["ml"] = intr.get("forecasts") if intr.get("available") else None
+        daily = ml.get("daily", {})
+        rec["ml_daily"] = daily.get("forecasts") if daily.get("available") else None
     return rec
 
 
@@ -281,6 +306,8 @@ def to_order(s, gen):
     sym = s["code"].removesuffix(".NS")
     agree = [x for x in s["signals"] if x["cred"] and x["dir"] == (1 if side == "BUY" else -1)]
     news = [n for n in (s.get("forecast") or {}).get("news_items", []) if n.get("label") != "neutral"][:3]
+    # why it was looked at, not a vote: heavy trading says nothing about direction
+    active = [{"signal": "Most active", "detail": w.removeprefix(MOST_ACTIVE)} for w in s.get("why", []) if w.startswith(MOST_ACTIVE)]
     return {
         "id": f"{gen:%Y%m%d-%H%M}-{sym}-{side}",
         "code": s["code"], "name": s["name"], "sector": s.get("sector") or "",
@@ -288,7 +315,7 @@ def to_order(s, gen):
         "price_at": round(s["price"], 2), "price_time": s["asof"],
         "stop": round(p["stop"], 2), "target": round(p["target"], 2),
         "stop_pct": round(p["risk_pct"], 3), "target_pct": round(p["risk_pct"] * 1.5, 3),
-        "reasons": [{"signal": x["name"], "detail": x["detail"]} for x in agree],
+        "reasons": [{"signal": x["name"], "detail": x["detail"]} for x in agree] + active,
         "news": [{"title": n["title"], "url": n.get("url"), "source": n.get("source"), "label": n["label"]} for n in news],
         "square_off_by": "15:20",
     }

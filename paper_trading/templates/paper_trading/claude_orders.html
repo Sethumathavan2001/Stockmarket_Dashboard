@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Claude Orders</title>
+<title>Claude Orders{% if v2 %} 2.0{% endif %}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
@@ -88,7 +88,7 @@
   .bulk{ display:grid; gap:8px; padding:12px 16px; border-bottom:1px solid var(--border); background:var(--panel); }
   .bulk-row{ display:flex; flex-wrap:wrap; align-items:center; gap:6px 8px; }
   .bulk-row .lbl{ width:92px; font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.05em; }
-  .bulk-row .lbl.sell{ color:var(--red-dark); } .bulk-row .lbl.buy{ color:var(--green-dark); } .bulk-row .lbl.exit{ color:var(--navy-800); }
+  .bulk-row .lbl.sell{ color:var(--red-dark); } .bulk-row .lbl.buy{ color:var(--green-dark); }
   .btn.exit{ background:#fff; color:var(--navy-800); border:2px solid var(--navy-800); }
   .btn.exit.sm{ padding:4px 9px; font-size:11.5px; margin-top:5px; }
   .bulk-msg{ font-size:12.5px; color:var(--navy-800); }
@@ -112,7 +112,7 @@
 
 <div class="wrap">
   <div class="page-head">
-    <div class="title">Claude Orders <span class="tag">Intraday picks from the signal board · place them in Paper Trading 2 or the real Angel One accounts</span></div>
+    <div class="title">Claude Orders{% if v2 %} 2.0{% endif %} <span class="tag">Intraday picks from {% if v2 %}every page: Live, Stock Behaviour, Stock Prediction, Candle Predictor, News, all indices and global markets{% else %}the signal board{% endif %} · place them in Paper Trading 2 or the real Angel One accounts</span></div>
     <span class="live-pill" id="livePill">—</span>
   </div>
 
@@ -122,8 +122,9 @@
       <div class="field"><label for="lev" title="Angel One intraday margin: the wallet can take positions worth up to this many times its cash">Angel intraday leverage ×</label>
         <input type="number" id="lev" min="1" max="5" step="0.5" value="5" style="width:90px"></div>
       <div class="wallets" id="wallets"></div>
-      <button class="btn refresh" id="refreshBtn" type="button" title="Re-run the signal board on current data (takes a few minutes)">↻ Refresh orders</button>
+      <button class="btn refresh" id="refreshBtn" type="button" title="Re-run {% if v2 %}the 2.0 signal board{% else %}the signal board{% endif %} on current data (takes a few minutes)">↻ Refresh orders</button>
       <a class="btn ghost" href="{% url 'paper_trading:page2' %}">Open Paper Trading 2 →</a>
+      <a class="btn ghost" href="{% url 'paper_trading:claude_orders_history' %}" title="Every order list made, and every Vivek / Sethu trade">History →</a>
     </div>
   </div>
   <div class="progress" id="progress" hidden><div id="progressText"></div><div class="track"><div class="fill" id="progressFill" style="width:0"></div></div></div>
@@ -141,11 +142,7 @@
         <button class="btn buy" data-bulk="BUY" data-accs="paper">Paper Trading</button>
         <button class="btn buy real" data-bulk="BUY" data-accs="vivek">Vivek</button>
         <button class="btn buy real" data-bulk="BUY" data-accs="sethu">Sethu</button>
-        <button class="btn buy real" data-bulk="BUY" data-accs="vivek,sethu">Vivek + Sethu</button></div>
-      <div class="bulk-row"><span class="lbl exit">Secure exit</span>
-        <button class="btn exit" data-exitall="vivek" title="Cancel the stop-loss orders and exit every open Angel One trade in Vivek's account">Exit all · Vivek</button>
-        <button class="btn exit" data-exitall="sethu" title="Same for Sethu's account">Exit all · Sethu</button>
-        <button class="btn exit" data-exitall="both">Exit all · both</button>
+        <button class="btn buy real" data-bulk="BUY" data-accs="vivek,sethu">Vivek + Sethu</button>
         <span class="bulk-msg" id="bulkMsg"></span></div>
     </div>
     <div class="table-wrap"><table>
@@ -176,8 +173,9 @@
 (() => {
 'use strict';
 const URLS = {
-  state: "{% url 'paper_trading:claude_orders_state' %}", place: "{% url 'paper_trading:claude_orders_place' %}",
-  refresh: "{% url 'paper_trading:claude_orders_refresh' %}", wallets: "{% url 'paper_trading:claude_orders_wallets' %}",
+  {% if v2 %}state: "{% url 'paper_trading:claude_orders2_state' %}", place: "{% url 'paper_trading:claude_orders2_place' %}",
+  refresh: "{% url 'paper_trading:claude_orders2_refresh' %}",{% else %}state: "{% url 'paper_trading:claude_orders_state' %}", place: "{% url 'paper_trading:claude_orders_place' %}",
+  refresh: "{% url 'paper_trading:claude_orders_refresh' %}",{% endif %} wallets: "{% url 'paper_trading:claude_orders_wallets' %}",
   exit: "{% url 'paper_trading:claude_orders_exit' %}",
   quotes: "{% url 'paper_trading:quotes' %}", page2: "{% url 'paper_trading:page2_live' 'CODE_PLACEHOLDER' %}",
   candle: "{% url 'candle_predictor_page' %}",
@@ -509,7 +507,7 @@ $('bulk').addEventListener('click', async (e) => {
   await refreshState(); loadWallets(true);
 });
 
-/* ---------------- secure exit: one trade, or every open trade of an account ---------------- */
+/* ---------------- exit one trade now ---------------- */
 async function postExit(body) {
   const r = await fetch(URLS.exit, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() }, body: JSON.stringify(body) });
   const d = await r.json().catch(() => ({}));
@@ -521,29 +519,11 @@ function exitToasts(d) {
 }
 document.addEventListener('click', async (e) => {
   const b = e.target.closest('button[data-exit]'); if (!b) return;
-  if (!confirm(`SECURE EXIT - ${b.dataset.name}\n\nCancels this trade's stop-loss order at Angel One and, once Angel One confirms, exits it at market.\n\nExit now?`)) return;
+  if (!confirm(`EXIT NOW - ${b.dataset.name}\n\nCancels this trade's stop-loss order at Angel One and, once Angel One confirms, exits it at market.\n\nExit now?`)) return;
   b.disabled = true; b.textContent = 'Exiting…';
   try { exitToasts(await postExit({ id: +b.dataset.exit })); } catch (err) { toast(err.message, 'error'); }
   await refreshState(); loadWallets(true);
 });
-$('bulk').addEventListener('click', async (e) => {
-  const b = e.target.closest('button[data-exitall]'); if (!b || bulkBusy) return;
-  const accs = b.dataset.exitall === 'both' ? ['vivek', 'sethu'] : [b.dataset.exitall];
-  const open = ST.orders.flatMap((o) => accs.map((a) => (o.broker || {})[a]).filter((x) => x && x.status === 'open'));
-  const names = accs.map((a) => a[0].toUpperCase() + a.slice(1)).join(' + ');
-  if (!open.length && !confirm(`No open trades from this page are shown for ${names}. Check with the server anyway?`)) return;
-  if (open.length && !confirm(`SECURE EXIT - ${names}\n\n` + open.map((x) => `   ${x.account} · ${x.side} ${x.quantity} ${x.code.replace('.NS', '')} (entry ₹${x.entry_price})`).join('\n')
-    + '\n\nFor each: cancel its stop-loss order at Angel One, then exit at market once the cancel is confirmed.\n'
-    + 'Only trades placed from this page are exited - positions you opened in the Angel One app are not touched.\n\nExit all?')) return;
-  setBulkBusy(true, `Exiting ${names}…`);
-  try {
-    const d = await postExit({ account: b.dataset.exitall });
-    exitToasts(d);
-    setBulkBusy(false, d.results.length ? `Exit ${names}: ${d.results.filter((x) => !x.error).length} of ${d.results.length} done.` : `No open trades in ${names}.`);
-  } catch (err) { setBulkBusy(false, ''); toast(err.message, 'error'); }
-  await refreshState(); loadWallets(true);
-});
-
 render();
 refreshQuotes();
 loadWallets();

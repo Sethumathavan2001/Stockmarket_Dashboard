@@ -1,3 +1,4 @@
+import logging
 import re
 import threading
 import traceback
@@ -23,6 +24,8 @@ import yfinance as yf
 from django.core.cache import cache
 from .models import Company, DailyData
 import warnings
+
+logger = logging.getLogger(__name__)
 warnings.filterwarnings("ignore")
 def home(request):
     # ---- Sector data (keep all, small count) ----
@@ -958,8 +961,22 @@ def retrive_daily(request, code=None):
 from .analysis_engine import refresh_analysis, refresh_analysis_progress
 
 import requests
+def most_active(by):
+    """NSE's 20 most active stocks by "value" or "volume" right now, with value_cr (Rs crore) and volume_lakh.
+    [] when NSE refuses - one missing list must not take the Live page down."""
+    from news.fetch import _nse_json
+
+    try:
+        rows = _nse_json(f"/api/live-analysis-most-active-securities?index={by}").get("data") or []
+    except Exception as exc:
+        logger.warning("NSE most active (%s) failed: %s", by, exc)
+        return []
+    return [{**r, "value_cr": (r.get("totalTradedValuecsv") or 0) / 1e7, "volume_lakh": (r.get("totalTradedVolumecsv") or 0) / 1e5}
+            for r in rows]
+
+
 def live_snapshot(tolerant=False):
-    """Live page data: NSE top gainers / losers, OI spurts and the Chartink PDH / PDL scans.
+    """Live page data: NSE top gainers / losers, most active stocks, OI spurts and the Chartink PDH / PDL scans.
     tolerant=True returns an empty list for a source that fails instead of raising."""
     gain_loss_url = "https://www.nseindia.com/api/live-analysis-variations"
     open_intrest_url = "https://www.nseindia.com/api/live-analysis-oi-spurts-underlyings"
@@ -1064,6 +1081,8 @@ def live_snapshot(tolerant=False):
     return_data = {
         "gainers":gainers,
         "loosers":loosers,
+        "most_active_value":most_active("value"),
+        "most_active_volume":most_active("volume"),
         "open_intrest":open_intrest,
         "pdh_data":pdh_data,
         "pdl_data":pdl_data

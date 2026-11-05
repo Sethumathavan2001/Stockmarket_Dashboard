@@ -262,8 +262,8 @@ def _watch_one(bo, now):
     return None
 
 
-def exit_trade(bo_id):
-    """Exit one open trade now (secure exit): cancel its stop-loss order at Angel One, and only once that is
+def exit_trade(bo_id, reason="manual"):
+    """Exit one open trade now: cancel its stop-loss order at Angel One, and only once that is
     confirmed, exit at market - the same safe sequence as the target / 15:15 exits."""
     with LOCK:
         bo = BO.objects.filter(pk=bo_id).first()
@@ -275,24 +275,11 @@ def exit_trade(bo_id):
             raise BrokerError(f"An exit order for {bo.code.removesuffix('.NS')} is already at Angel One - "
                               "the server is checking it.")
         try:
-            _exit(bo, angel.instrument(bo.code), "manual")
+            _exit(bo, angel.instrument(bo.code), reason)
         except angel.AngelError as exc:
             raise BrokerError(str(exc))
         bo.refresh_from_db()
         return bo
-
-
-def exit_all(accounts, now=None):
-    """Secure exit of every open trade (placed from this app, today) in these accounts.
-    Returns [(BrokerOrder, error or None)]."""
-    now = now or now_ist()
-    out = []
-    for bo in BO.objects.filter(account__in=accounts, status=BO.OPEN, session=now.date()).order_by("created_at"):
-        try:
-            out.append((exit_trade(bo.pk), None))
-        except BrokerError as exc:
-            out.append((bo, str(exc)))
-    return out
 
 
 def has_active(now=None):

@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claude Orders History</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --navy-900:#0B2545; --navy-800:#123B7A; --blue-600:#2F6FED; --blue-50:#EEF3FF;
+    --bg:#FFFFFF; --panel:#F7F9FC; --border:#E3E8F0; --text:#101828; --text-muted:#64748B;
+    --green:#0EA968; --green-dark:#0A8A54; --green-bg:#E7F8F0; --red:#E5484D; --red-dark:#C93A3F; --red-bg:#FDECEC;
+    --amber:#B45309; --amber-bg:#FEF3E0; --vivek:#0E7490; --vivek-bg:#E6F6F9; --sethu:#7C3AED; --sethu-bg:#F3EEFF;
+    --radius:10px; --shadow:0 1px 2px rgba(16,24,40,.04),0 1px 3px rgba(16,24,40,.06);
+  }
+  *{ box-sizing:border-box; }
+  body{ margin:0; font-family:'Inter',system-ui,sans-serif; background:var(--bg); color:var(--text); }
+  .wrap{ max-width:1440px; margin:0 auto; padding:0 24px 60px; }
+  .page-head{ display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px 16px; margin-top:20px; }
+  .page-head .title{ display:flex; flex-wrap:wrap; align-items:center; gap:4px 12px; font-size:18px; font-weight:700; }
+  .page-head .tag{ font-size:12.5px; font-weight:500; color:var(--text-muted); border-left:1px solid var(--border); padding-left:12px; }
+  .filters{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  .chip{ font-size:12.5px; font-weight:600; padding:6px 12px; border-radius:999px; border:1px solid var(--border); color:var(--navy-800); text-decoration:none; background:#fff; }
+  .chip.on{ background:var(--navy-800); color:#fff; border-color:var(--navy-800); }
+  .sep{ width:1px; height:22px; background:var(--border); margin:0 4px; }
+  .btn{ border:1px solid var(--border); border-radius:8px; padding:7px 12px; font-size:12.5px; font-weight:600; color:var(--navy-800); text-decoration:none; background:#fff; }
+  .tiles{ display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:12px; margin-top:16px; }
+  .tile{ border:1px solid var(--border); border-radius:var(--radius); padding:12px 16px; box-shadow:var(--shadow); }
+  .tile.vivek{ border-left:4px solid var(--vivek); } .tile.sethu{ border-left:4px solid var(--sethu); }
+  .tile .lbl{ font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--text-muted); }
+  .tile .big{ font-family:'JetBrains Mono',monospace; font-size:22px; font-weight:700; margin-top:4px; }
+  .tile .sub{ font-size:12px; color:var(--text-muted); margin-top:4px; line-height:1.5; }
+  .card{ border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); background:#fff; margin-top:16px; }
+  .card-head{ display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px 16px; padding:12px 16px; border-bottom:1px solid var(--border); }
+  .card-title{ font-size:11.5px; font-weight:700; text-transform:uppercase; letter-spacing:.07em; color:var(--text-muted); }
+  .table-wrap{ overflow-x:auto; }
+  table{ width:100%; border-collapse:collapse; font-size:13px; }
+  thead th{ text-align:left; font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--text-muted); padding:9px 10px; background:var(--panel); border-bottom:1px solid var(--border); white-space:nowrap; }
+  tbody td{ padding:7px 10px; border-bottom:1px solid #EEF2F7; vertical-align:top; }
+  td.num, th.num{ text-align:right; font-family:'JetBrains Mono',monospace; white-space:nowrap; }
+  .mono{ font-family:'JetBrains Mono',monospace; }
+  .pill{ display:inline-block; font-size:11px; font-weight:700; padding:2px 9px; border-radius:999px; white-space:nowrap; }
+  .pill.buy, .pill.BUY{ background:var(--green-bg); color:var(--green-dark); } .pill.sell, .pill.SELL{ background:var(--red-bg); color:var(--red-dark); }
+  .acct{ display:inline-flex; align-items:center; gap:6px; font-weight:700; font-size:12.5px; white-space:nowrap; }
+  .acct i{ width:8px; height:8px; border-radius:50%; display:inline-block; }
+  .acct.vivek i{ background:var(--vivek); } .acct.sethu i{ background:var(--sethu); }
+  .bstat{ display:inline-block; font-size:10.5px; font-weight:800; text-transform:uppercase; padding:1px 7px; border-radius:4px; }
+  .bstat.open, .bstat.pending, .bstat.placing{ background:var(--blue-50); color:var(--navy-800); }
+  .bstat.closed{ background:var(--green-bg); color:var(--green-dark); } .bstat.rejected, .bstat.error{ background:var(--red-bg); color:var(--red-dark); }
+  .up{ color:var(--green-dark); } .down{ color:var(--red-dark); } .muted{ color:var(--text-muted); }
+  .msg{ font-size:11.5px; color:var(--text-muted); max-width:380px; line-height:1.4; }
+  details.list{ border-bottom:1px solid var(--border); }
+  details.list > summary{ cursor:pointer; padding:11px 16px; display:flex; flex-wrap:wrap; gap:6px 14px; align-items:center; font-size:13px; list-style:none; }
+  details.list > summary::-webkit-details-marker{ display:none; }
+  details.list > summary::before{ content:'▸'; color:var(--text-muted); }
+  details.list[open] > summary::before{ content:'▾'; }
+  details.list > summary b{ font-weight:700; }
+  details.list[open] > summary{ background:var(--panel); }
+  .placed{ display:flex; flex-wrap:wrap; gap:4px; }
+  .ptag{ font-size:11px; font-weight:700; padding:1px 7px; border-radius:4px; white-space:nowrap; }
+  .ptag.vivek{ background:var(--vivek-bg); color:var(--vivek); } .ptag.sethu{ background:var(--sethu-bg); color:var(--sethu); }
+  .empty{ padding:30px 16px; text-align:center; color:var(--text-muted); font-size:14px; }
+  .note{ font-size:12px; color:var(--text-muted); line-height:1.6; padding:10px 16px 14px; }
+</style>
+</head>
+<body>
+
+{% load tz %}
+{% include 'market/_navbar.html' %}
+
+<div class="wrap">
+  <div class="page-head">
+    <div class="title">Claude Orders history <span class="tag">Every order list made, and every real trade in Vivek's and Sethu's accounts</span></div>
+    <a class="btn" href="{% url 'paper_trading:claude_orders' %}">← Back to Claude Orders</a>
+  </div>
+
+  <div class="filters" style="margin-top:14px">
+    {% for d in day_choices %}<a class="chip {% if d == days %}on{% endif %}" href="?days={{ d }}{% if account %}&account={{ account }}{% endif %}">{% if d == 1 %}Today{% else %}{{ d }} days{% endif %}</a>{% endfor %}
+    <span class="sep"></span>
+    <a class="chip {% if not account %}on{% endif %}" href="?days={{ days }}">Both accounts</a>
+    {% for key, name in accounts.items %}<a class="chip {% if account == key %}on{% endif %}" href="?days={{ days }}&account={{ key }}">{{ name }}</a>{% endfor %}
+  </div>
+
+  <div class="tiles">
+    {% for key, t in totals.items %}{% if not account or account == key %}
+    <div class="tile {{ key }}">
+      <div class="lbl">{{ t.name }} · {% if days == 1 %}today{% else %}last {{ days }} days{% endif %}</div>
+      <div class="big {% if t.pnl > 0 %}up{% elif t.pnl < 0 %}down{% endif %}">{% if t.pnl < 0 %}−{% endif %}₹{{ t.pnl|floatformat:2|cut:"-" }}</div>
+      <div class="sub">{{ t.trades }} trade{{ t.trades|pluralize }} · {{ t.closed }} closed ({{ t.wins }} won, {{ t.losses }} lost){% if t.open %} · <b>{{ t.open }} open</b>{% endif %}{% if t.rejected %} · {{ t.rejected }} refused{% endif %}</div>
+    </div>
+    {% endif %}{% endfor %}
+  </div>
+
+  {% if daily %}
+  <div class="card">
+    <div class="card-head"><span class="card-title">Day by day</span></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Day</th>{% for key, name in accounts.items %}{% if not account or account == key %}<th class="num">{{ name }} trades</th><th class="num">{{ name }} P&amp;L</th>{% endif %}{% endfor %}</tr></thead>
+      <tbody>
+      {% for day, row in daily %}<tr><td class="mono">{{ day|date:"D d M Y" }}</td>
+        {% for key, v in row.items %}{% if not account or account == key %}<td class="num">{{ v.trades }}</td><td class="num {% if v.pnl > 0 %}up{% elif v.pnl < 0 %}down{% endif %}">{% if v.pnl < 0 %}−{% endif %}₹{{ v.pnl|floatformat:2|cut:"-" }}</td>{% endif %}{% endfor %}</tr>{% endfor %}
+      </tbody>
+    </table></div>
+  </div>
+  {% endif %}
+
+  <div class="card">
+    <div class="card-head"><span class="card-title">Vivek and Sethu trades</span><span class="muted" style="font-size:12px">{{ trades|length }} order{{ trades|length|pluralize }}</span></div>
+    {% if trades %}
+    <div class="table-wrap"><table>
+      <thead><tr><th>Placed</th><th>Account</th><th>Stock</th><th>Side</th><th class="num">Qty</th><th class="num">Entry</th><th class="num">Stop · target</th>
+        <th class="num">Exit</th><th>Exit reason</th><th class="num">P&amp;L</th><th>Status</th><th>Angel One order ids · message</th></tr></thead>
+      <tbody>
+      {% for t in trades %}<tr>
+        <td class="mono" style="white-space:nowrap">{{ t.created_at|timezone:"Asia/Kolkata"|date:"d M H:i" }}</td>
+        <td><span class="acct {{ t.account }}"><i></i>{{ t.account|title }}</span></td>
+        <td><b>{{ t.code|cut:".NS" }}</b></td>
+        <td><span class="pill {{ t.side }}">{{ t.side }}</span></td>
+        <td class="num">{{ t.quantity }}</td>
+        <td class="num">{% if t.entry_price %}₹{{ t.entry_price }}{% else %}—{% endif %}</td>
+        <td class="num">₹{{ t.stop }} · ₹{{ t.target }}{% if t.stop_pct %}<div class="muted" style="font-size:11px">{{ t.stop_pct|floatformat:2 }}% · {{ t.target_pct|floatformat:2 }}%</div>{% endif %}</td>
+        <td class="num">{% if t.exit_price %}₹{{ t.exit_price }}{% else %}—{% endif %}</td>
+        <td>{{ t.exit_reason|default:"—" }}</td>
+        <td class="num {% if t.pnl > 0 %}up{% elif t.pnl < 0 %}down{% endif %}">{% if t.pnl is not None %}{% if t.pnl < 0 %}−{% endif %}₹{{ t.pnl|floatformat:2|cut:"-" }}{% else %}—{% endif %}</td>
+        <td><span class="bstat {{ t.status }}">{{ t.status }}</span></td>
+        <td class="msg"><span class="mono">{{ t.entry_order_id|default:"" }}{% if t.sl_order_id %} · SL {{ t.sl_order_id }}{% endif %}{% if t.exit_order_id %} · exit {{ t.exit_order_id }}{% endif %}</span><br>{{ t.message }}</td>
+      </tr>{% endfor %}
+      </tbody>
+    </table></div>
+    {% else %}<div class="empty">No real trades in this period.</div>{% endif %}
+  </div>
+
+  <div class="card">
+    <div class="card-head"><span class="card-title">Saved order lists</span><span class="muted" style="font-size:12px">{{ lists|length }} list{{ lists|length|pluralize }} · each Refresh is kept</span></div>
+    {% for L in lists %}
+    <details class="list" {% if forloop.first %}open{% endif %}>
+      <summary><b class="mono">{{ L.row.generated|timezone:"Asia/Kolkata"|date:"D d M Y · H:i" }}</b>
+        {% if L.row.payload.source == "Signal board 2.0" %}<span><b>2.0</b></span>{% endif %}
+        <span>{{ L.row.count }} order{{ L.row.count|pluralize }}</span>
+        {% if L.counts.SELL %}<span class="pill sell">{{ L.counts.SELL }} SELL</span>{% endif %}
+        {% if L.counts.BUY %}<span class="pill buy">{{ L.counts.BUY }} BUY</span>{% endif %}
+        {% if L.checked %}<span class="muted">{{ L.checked }} stocks checked</span>{% endif %}
+        {% if L.placed %}<span class="muted">· {{ L.placed }} placed in Vivek / Sethu</span>{% endif %}</summary>
+      {% if L.orders %}
+      <div class="table-wrap"><table>
+        <thead><tr><th>Stock</th><th>Side</th><th>Conviction</th><th class="num">Price at rec.</th><th class="num">Stop</th><th class="num">Target</th><th>Placed (real)</th></tr></thead>
+        <tbody>
+        {% for o in L.orders %}<tr>
+          <td><b>{{ o.code|cut:".NS" }}</b><div class="muted" style="font-size:11.5px">{{ o.name }}</div></td>
+          <td><span class="pill {{ o.side }}">{{ o.side }}</span></td>
+          <td>{{ o.conviction|default:"—" }}</td>
+          <td class="num">₹{{ o.price_at }}</td>
+          <td class="num">₹{{ o.stop }} <span class="muted">({{ o.stop_pct }}%)</span></td>
+          <td class="num">₹{{ o.target }} <span class="muted">({{ o.target_pct }}%)</span></td>
+          <td><div class="placed">{% for acc, t in o.trades.items %}<span class="ptag {{ acc }}" title="{{ t.message }}">{{ acc|title }} · {{ t.quantity }} · {{ t.status }}{% if t.pnl is not None %} · {% if t.pnl < 0 %}−{% endif %}₹{{ t.pnl|floatformat:2|cut:"-" }}{% endif %}</span>{% empty %}<span class="muted">—</span>{% endfor %}</div></td>
+        </tr>{% endfor %}
+        </tbody>
+      </table></div>
+      {% else %}<div class="empty">No BUY / SELL picks in this list.</div>{% endif %}
+    </details>
+    {% empty %}<div class="empty">No order lists saved in this period yet. Each Refresh orders on the Claude Orders page is saved here.</div>{% endfor %}
+    <div class="note">Real trades are those placed from the Claude Orders page; positions opened directly in the Angel One app are not listed. Lists made before the history existed are saved the first time the Claude Orders page loads them.</div>
+  </div>
+</div>
+</body>
+</html>

@@ -221,6 +221,16 @@
       <div class="lt-scroll"><table class="lt-table"><thead></thead><tbody></tbody></table></div>
     </section>
 
+    <section class="lt-panel" id="panel-most_active_value" data-panel="most_active_value">
+      <div class="lt-panel-head"><h3>Most Active by Value</h3><span class="lt-count"></span></div>
+      <div class="lt-scroll"><table class="lt-table"><thead></thead><tbody></tbody></table></div>
+    </section>
+
+    <section class="lt-panel" id="panel-most_active_volume" data-panel="most_active_volume">
+      <div class="lt-panel-head"><h3>Most Active by Volume</h3><span class="lt-count"></span></div>
+      <div class="lt-scroll"><table class="lt-table"><thead></thead><tbody></tbody></table></div>
+    </section>
+
     <section class="lt-panel lt-panel--wide" id="panel-open_intrest" data-panel="open_intrest">
       <div class="lt-panel-head"><h3>Open Interest</h3><span class="lt-count"></span></div>
       <div class="lt-scroll"><table class="lt-table"><thead></thead><tbody></tbody></table></div>
@@ -284,6 +294,34 @@
         { label: "Qty", key: "trade_quantity", type: "int" },
         { label: "Turnover", key: "turnover", type: "num2" },
         { label: "% Chg", key: "perChange", type: "pct" }
+      ]
+    },
+    {
+      id: "most_active_value", title: "Most Active by Value", dataKey: "most_active_value", symbolKey: "symbol",
+      columns: [
+        { label: "Symbol", key: "symbol", type: "text" },
+        { label: "LTP", key: "lastPrice", type: "num2" },
+        { label: "% Chg", key: "pChange", type: "pct" },
+        { label: "Value (₹ Cr)", key: "value_cr", type: "num2" },
+        { label: "Volume (lakh)", key: "volume_lakh", type: "num2" },
+        { label: "Open", key: "open", type: "num2" },
+        { label: "High", key: "dayHigh", type: "num2" },
+        { label: "Low", key: "dayLow", type: "num2" },
+        { label: "Prev", key: "previousClose", type: "num2" }
+      ]
+    },
+    {
+      id: "most_active_volume", title: "Most Active by Volume", dataKey: "most_active_volume", symbolKey: "symbol",
+      columns: [
+        { label: "Symbol", key: "symbol", type: "text" },
+        { label: "LTP", key: "lastPrice", type: "num2" },
+        { label: "% Chg", key: "pChange", type: "pct" },
+        { label: "Value (₹ Cr)", key: "value_cr", type: "num2" },
+        { label: "Volume (lakh)", key: "volume_lakh", type: "num2" },
+        { label: "Open", key: "open", type: "num2" },
+        { label: "High", key: "dayHigh", type: "num2" },
+        { label: "Low", key: "dayLow", type: "num2" },
+        { label: "Prev", key: "previousClose", type: "num2" }
       ]
     },
     {

@@ -9,6 +9,7 @@ angel.ACCOUNTS (Vivek, Sethu - see broker.py).
   POST /api/paper/claude-orders/place/       {"id", "account": "paper" | "vivek" | "sethu", "quantity",
                                               "stop_pct"?, "target_pct"?}
   POST /api/paper/claude-orders/refresh/     rebuild the list from current data (background, see claude_board)
+  GET  /claude-orders/history/               every list made (ClaudeOrderList) and every Vivek / Sethu trade
 
 Stop loss / target are percentages from the actual fill (editable on the page; the recommendation's by
 default), so the reward-to-risk holds even if the price moved.  Paper: a live market order in book 2
@@ -17,6 +18,7 @@ already placed today in that account, or the live price has already passed the r
 target.
 """
 import json
+from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -29,16 +31,16 @@ from market.models import Company
 
 from . import angel, broker, claude_board, netroute, surveillance
 from . import services as svc
-from .models import PaperOrder
+from .models import BrokerOrder, ClaudeOrderList, PaperOrder
 
 ORDERS_FILE = Path(__file__).resolve().parent / "claude_orders.json"
 BOOK = 2
 REASON = "claude"
 
 
-def load_orders():
+def load_orders(path=None):
     try:
-        data = json.loads(ORDERS_FILE.read_text(encoding="utf-8"))
+        data = json.loads((path or ORDERS_FILE).read_text(encoding="utf-8"))
     except (FileNotFoundError, ValueError):
         data = {}
     data.setdefault("orders", [])
@@ -55,8 +57,12 @@ def placed_today(account):
     return {(o.company.code, o.side): o for o in qs}
 
 
-def _state(account):
-    data = load_orders()
+def _state(account, path=None, board=claude_board):
+    data = load_orders(path)
+    try:
+        claude_board.archive(data)                               # lists made before the history existed
+    except Exception:
+        pass
     placed = placed_today(account)
     real = broker.placed_today(svc.today_ist())
     nse, refused = surveillance.nse_lists(), surveillance.refused_recently()
@@ -74,8 +80,63 @@ def _state(account):
     data["today"] = svc.today_ist().isoformat()
     data["is_today"] = data["session"] == data["today"]
     data["balance"] = float(account.balance)
-    data["refresh"] = claude_board.progress()
+    data["refresh"] = board.progress()
     return data
+
+
+@require_GET
+def history(request):
+    """Every saved Claude Orders list and every real trade in Vivek's / Sethu's account, newest first."""
+    try:
+        days = max(1, min(365, int(request.GET.get("days") or 30)))
+    except ValueError:
+        days = 30
+    since = svc.today_ist() - timedelta(days=days - 1)
+    acc = request.GET.get("account") or ""
+    trades = BrokerOrder.objects.filter(session__gte=since).order_by("-created_at")
+    if acc in angel.ACCOUNTS:
+        trades = trades.filter(account=acc)
+    trades = list(trades)
+    by_rec = {}
+    for t in trades:
+        if t.status != BrokerOrder.REJECTED or t.account not in by_rec.get(t.rec_id, {}):
+            by_rec.setdefault(t.rec_id, {})[t.account] = t
+
+    totals = {a: {"name": n, "trades": 0, "closed": 0, "wins": 0, "losses": 0, "rejected": 0, "open": 0,
+                  "pnl": 0.0} for a, n in angel.ACCOUNTS.items()}
+    daily = {}
+    for t in trades:
+        tot = totals.setdefault(t.account, {"name": t.account, "trades": 0, "closed": 0, "wins": 0, "losses": 0,
+                                            "rejected": 0, "open": 0, "pnl": 0.0})
+        d = daily.setdefault(t.session, {a: {"trades": 0, "pnl": 0.0} for a in angel.ACCOUNTS})
+        d.setdefault(t.account, {"trades": 0, "pnl": 0.0})
+        if t.status in (BrokerOrder.REJECTED, BrokerOrder.ERROR):
+            tot["rejected"] += 1
+            continue
+        tot["trades"] += 1
+        d[t.account]["trades"] += 1
+        if t.status == BrokerOrder.OPEN or t.status == BrokerOrder.PENDING:
+            tot["open"] += 1
+        if t.pnl is not None:
+            p = float(t.pnl)
+            tot["closed"] += 1
+            tot["pnl"] += p
+            d[t.account]["pnl"] += p
+            tot["wins" if p > 0 else "losses"] += 1
+
+    lists = []
+    for row in ClaudeOrderList.objects.filter(session__gte=since):
+        orders = []
+        for o in row.payload.get("orders") or []:
+            placed = by_rec.get(o.get("id"), {})
+            orders.append({**o, "trades": {a: placed[a] for a in angel.ACCOUNTS if a in placed}})
+        lists.append({"row": row, "orders": orders, "counts": row.payload.get("counts") or {},
+                      "checked": row.payload.get("checked"),
+                      "placed": sum(1 for o in orders if o["trades"])})
+    return render(request, "paper_trading/claude_orders_history.html", {
+        "lists": lists, "trades": trades, "totals": totals, "days": days, "account": acc,
+        "accounts": angel.ACCOUNTS, "daily": sorted(daily.items(), reverse=True),
+        "day_choices": (1, 7, 30, 90, 365)})
 
 
 @require_GET
@@ -101,27 +162,17 @@ def wallets(request):
 
 @require_POST
 def exit_trades(request):
-    """Secure exit of real Angel One trades: {"id": <trade>} or {"account": "vivek" | "sethu" | "both"}."""
+    """Exit one real Angel One trade now: {"id": <trade>}."""
     try:
         body = json.loads(request.body or b"{}")
     except ValueError:
         body = {}
-    if body.get("id"):
-        try:
-            bo = broker.exit_trade(int(body["id"]))
-        except (broker.BrokerError, ValueError) as exc:
-            return _error(str(exc))
-        angel._funds.pop(bo.account, None)
-        return JsonResponse({"ok": bo.status == "closed", "results": [{**broker.serialize(bo), "error": None}]})
-    acc = str(body.get("account") or "")
-    accounts = list(angel.ACCOUNTS) if acc == "both" else [acc] if acc in angel.ACCOUNTS else None
-    if not accounts:
-        return _error("Choose an account.")
-    results = broker.exit_all(accounts)
-    for a in accounts:
-        angel._funds.pop(a, None)
-    return JsonResponse({"ok": all(err is None for _, err in results),
-                         "results": [{**broker.serialize(bo), "error": err} for bo, err in results]})
+    try:
+        bo = broker.exit_trade(int(body.get("id")))
+    except (broker.BrokerError, TypeError, ValueError) as exc:
+        return _error(str(exc))
+    angel._funds.pop(bo.account, None)
+    return JsonResponse({"ok": bo.status == "closed", "results": [{**broker.serialize(bo), "error": None}]})
 
 
 @require_POST
@@ -141,11 +192,14 @@ def _error(msg, status=400, code=None):
 
 @require_POST
 def place(request):
+    return place_from(request, load_orders())
+
+
+def place_from(request, data):
     try:
         body = json.loads(request.body or b"{}")
     except ValueError:
         body = {}
-    data = load_orders()
     rec = next((o for o in data["orders"] if o.get("id") == body.get("id")), None)
     if rec is None:
         return _error("Unknown recommendation.", 404)

@@ -29,6 +29,7 @@
   .site-tk-msg{ color:rgba(255,255,255,.55); }
   .site-tk-item{ border-radius:5px; padding:3px 6px; margin:0 -6px; }
   .site-tk-item[data-key]{ cursor:pointer; }
+  .site-tk-item.closed{ opacity:.68; }
   .site-tk-item[data-key]:hover, .site-tk-item.on{ background:rgba(255,255,255,.1); }
   .site-tk-item:focus-visible{ outline:2px solid #5BE49B; outline-offset:0; }
   .site-ix-pop{
@@ -48,11 +49,14 @@
   .site-ix-x:hover{ color:#fff; }
   .site-ix-chart{ height:190px; width:100%; margin-top:8px; border-radius:8px; overflow:hidden; background:#0B2240; }
   .site-ix-msg{ height:190px; display:flex; align-items:center; justify-content:center; color:rgba(255,255,255,.6); font-size:13px; margin-top:8px; }
+  .site-ix-msg[hidden]{ display:none; }
   .site-ix-legend{ display:flex; flex-wrap:wrap; gap:4px 12px; font-size:11px; color:rgba(255,255,255,.65); margin-top:6px; }
   .site-ix-legend i{ display:inline-block; width:12px; height:2px; vertical-align:middle; margin-right:4px; }
   .site-ix-tbl{ width:100%; border-collapse:collapse; margin-top:8px; font-size:12px; }
   .site-ix-tbl th{ text-align:right; font-weight:600; color:rgba(255,255,255,.6); padding:3px 4px; font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; }
   .site-ix-tbl td{ padding:3px 4px; font-family:'JetBrains Mono',ui-monospace,Consolas,monospace; font-variant-numeric:tabular-nums; text-align:right; border-top:1px solid rgba(255,255,255,.08); }
+  .site-ix-tbl, .site-ix-tbl tr, .site-ix-tbl th, .site-ix-tbl td{ background:transparent !important; color:#fff; }
+  .site-ix-tbl th{ color:rgba(255,255,255,.6); }
   .site-ix-tbl td:first-child{ text-align:left; font-family:'Inter',system-ui,sans-serif; color:rgba(255,255,255,.8); }
 
 
@@ -103,6 +107,10 @@
   .site-dd-panel span{ display:block; font-size:12px; color:rgba(255,255,255,.65); margin-top:1px; }
 </style>
 
+<div class="site-ticker" id="siteWorld" role="region" aria-label="World indices">
+  <span class="site-tk-status open"><i></i><span>Global</span></span>
+  <span class="site-tk-msg">Loading indices…</span>
+</div>
 <div class="site-ticker" id="siteTicker" role="region" aria-label="Market indices">
   <span class="site-tk-status" id="siteTkStatus"><i></i><span>NSE</span></span>
   <span class="site-tk-msg" id="siteTkMsg">Loading indices…</span>
@@ -113,33 +121,42 @@
   <nav class="site-nav" aria-label="Main">
     <a href="{% url 'market:home' %}" class="{% if app == 'market' and current == 'home' %}active{% endif %}">Home</a>
 
-    <div class="site-dd {% if app == 'market' and current == 'daily_data' or app == 'market' and current == 'five_min' or app == 'market' and current == 'daily_data_page' %}active{% endif %}">
+    <div class="site-dd {% if app == 'market' and current == 'daily_data' or app == 'market' and current == 'five_min' or app == 'market' and current == 'daily_data_page' or app == 'market' and current|slice:':8' == 'analysis' or app == 'market' and current == 'chart_view' or app == 'market' and current == 'index_analysis' %}active{% endif %}">
       <button type="button" class="site-dd-btn" aria-haspopup="true" aria-expanded="false">Data
         <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 4.5l3 3 3-3"/></svg></button>
       <div class="site-dd-menu"><div class="site-dd-panel" role="menu">
         <a role="menuitem" href="{% url 'market:daily_data' %}" class="{% if app == 'market' and current == 'daily_data' %}active{% endif %}"><b>Daily Data</b><span>Daily OHLC history of every stock</span></a>
         <a role="menuitem" href="{% url 'market:five_min' %}" class="{% if app == 'market' and current == 'five_min' %}active{% endif %}"><b>5 Minutes</b><span>Intraday 5-minute candles</span></a>
         <a role="menuitem" href="{% url 'market:daily_data_page' %}" class="{% if app == 'market' and current == 'daily_data_page' %}active{% endif %}"><b>Scraper</b><span>Fetch the latest daily and 5-minute data</span></a>
+        <a role="menuitem" href="{% url 'market:analysis' %}" class="{% if app == 'market' and current|slice:':8' == 'analysis' %}active{% endif %}"><b>Analysis</b><span>Market breadth, sectors and the stock screener</span></a>
+        <a role="menuitem" href="{% url 'market:chart_view' %}" class="{% if app == 'market' and current == 'chart_view' %}active{% endif %}"><b>Chart</b><span>Day-by-day stock chart with MACD and volume</span></a>
+        <a role="menuitem" href="{% url 'market:index_analysis' %}" class="{% if app == 'market' and current == 'index_analysis' %}active{% endif %}"><b>Index Analysis</b><span>Every index day by day, with its past expiries</span></a>
       </div></div>
     </div>
 
     <a href="{% url 'market:live' %}" class="{% if app == 'market' and current == 'live' %}active{% endif %}">Live</a>
-    <a href="{% url 'market:analysis' %}" class="{% if app == 'market' and current|slice:':8' == 'analysis' %}active{% endif %}">Analysis</a>
-    <a href="{% url 'market:chart_view' %}" class="{% if app == 'market' and current == 'chart_view' %}active{% endif %}">Chart</a>
+    <a href="{% url 'market:stock_behaviour' %}" class="{% if app == 'market' and current == 'stock_behaviour' %}active{% endif %}">Stock Behaviour</a>
     <a href="{% url 'stock_prediction_page' %}" class="{% if current == 'stock_prediction_page' %}active{% endif %}">Stock Prediction</a>
     <a href="{% url 'candle_predictor_page' %}" class="{% if current == 'candle_predictor_page' %}active{% endif %}">Candle Predictor</a>
 
-    <div class="site-dd {% if app == 'paper_trading' and current != 'claude_orders' or app == 'options' %}active{% endif %}">
+    <div class="site-dd {% if app == 'paper_trading' and current|slice:':13' != 'claude_orders' or app == 'options' %}active{% endif %}">
       <button type="button" class="site-dd-btn" aria-haspopup="true" aria-expanded="false">Paper Trading
         <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 4.5l3 3 3-3"/></svg></button>
       <div class="site-dd-menu"><div class="site-dd-panel" role="menu">
-        <a role="menuitem" href="{% url 'paper_trading:page' %}" class="{% if app == 'paper_trading' and not current|slice:':5' == 'page2' and current != 'claude_orders' %}active{% endif %}"><b>Paper Trading</b><span>Account 1 - live and replay trading</span></a>
+        <a role="menuitem" href="{% url 'paper_trading:page' %}" class="{% if app == 'paper_trading' and not current|slice:':5' == 'page2' and current|slice:':13' != 'claude_orders' %}active{% endif %}"><b>Paper Trading</b><span>Account 1 - live and replay trading</span></a>
         <a role="menuitem" href="{% url 'paper_trading:page2' %}" class="{% if app == 'paper_trading' and current|slice:':5' == 'page2' %}active{% endif %}"><b>Paper Trading 2</b><span>Account 2 - separate wallet (Claude Orders go here)</span></a>
         <a role="menuitem" href="{% url 'options:page' %}" class="{% if app == 'options' %}active{% endif %}"><b>Option Trading</b><span>NSE option chain - buy / write options with margin and charges</span></a>
       </div></div>
     </div>
 
-    <a href="{% url 'paper_trading:claude_orders' %}" class="{% if app == 'paper_trading' and current == 'claude_orders' %}active{% endif %}">Claude Orders</a>
+    <div class="site-dd {% if app == 'paper_trading' and current|slice:':13' == 'claude_orders' %}active{% endif %}">
+      <button type="button" class="site-dd-btn" aria-haspopup="true" aria-expanded="false">Orders
+        <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 4.5l3 3 3-3"/></svg></button>
+      <div class="site-dd-menu"><div class="site-dd-panel" role="menu">
+        <a role="menuitem" href="{% url 'paper_trading:claude_orders' %}" class="{% if app == 'paper_trading' and current|slice:':13' == 'claude_orders' and current|slice:':14' != 'claude_orders2' %}active{% endif %}"><b>Claude Orders</b><span>Intraday picks from the signal board</span></a>
+        <a role="menuitem" href="{% url 'paper_trading:claude_orders2' %}" class="{% if app == 'paper_trading' and current|slice:':14' == 'claude_orders2' %}active{% endif %}"><b>Claude Orders 2.0</b><span>Every page, all indices, global markets, today's weekday and session</span></a>
+      </div></div>
+    </div>
     <a href="{% url 'ai_prediction_page' %}" class="{% if current == 'ai_prediction_page' %}active{% endif %}">AI Prediction</a>
     <a href="{% url 'news_page' %}" class="{% if current == 'news_page' %}active{% endif %}">News</a>
   </nav>
@@ -177,26 +194,30 @@
   // ---- live index strip
   const URL_ = "{% url 'market:indices' %}";
   const box = document.getElementById('siteTicker'), status = document.getElementById('siteTkStatus');
+  const world = document.getElementById('siteWorld'), strips = [box, world];
   const nf = new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+  function fill(strip, d, compact) {
+    const items = (d.indices || []).filter((i) => i.last != null).map((i) => {
+      const cls = i.change > 0 ? 'up' : i.change < 0 ? 'down' : 'flat', arrow = i.change > 0 ? '▲' : i.change < 0 ? '▼' : '';
+      const tip = [`${i.name}`, i.open != null ? `Open ${nf.format(i.open)} · High ${nf.format(i.high)} · Low ${nf.format(i.low)}` : '',
+        i.prev_close != null ? `Previous close ${nf.format(i.prev_close)} · change ${i.change > 0 ? '+' : ''}${nf.format(i.change)}` : '',
+        i.advances != null ? `Advances ${i.advances} · Declines ${i.declines}` : '',
+        i.tag ? `Market closed - ${i.tag}` : '', i.delayed ? 'Delayed about 15 minutes (Yahoo)' : `Source ${i.source}${i.time ? ', ' + i.time : ''}`, i.stale ? 'Last known value - source unavailable' : '']
+        .filter(Boolean).join('\n');
+      return `<span class="site-tk-item${compact && i.tag ? ' closed' : ''}" ${i.key ? `data-key="${esc(i.key)}" tabindex="0" role="button" aria-label="${esc(i.short)} chart"` : ''} title="${esc(tip)}"><span class="site-tk-name">${esc(i.short)}</span>
+        <span class="site-tk-last">${nf.format(i.last)}</span>
+        <span class="site-tk-chg ${cls}">${arrow} ${compact ? '' : `${i.change > 0 ? '+' : ''}${nf.format(i.change)} (`}${i.pct > 0 ? '+' : ''}${i.pct.toFixed(2)}%${compact ? '' : ')'}</span>
+        ${i.delayed && !compact ? '<span class="site-tk-tag">15m delay</span>' : ''}${i.stale ? '<span class="site-tk-tag">stale</span>' : ''}</span>`;
+    });
+    strip.querySelectorAll('.site-tk-item, .site-tk-sep, .site-tk-msg').forEach((n) => n.remove());
+    strip.insertAdjacentHTML('beforeend', items.length ? items.join('<span class="site-tk-sep"></span>') : '<span class="site-tk-msg">Indices unavailable right now</span>');
+  }
   function render(d) {
     const open = d.market_status === 'OPEN';
     status.className = 'site-tk-status' + (open ? ' open' : '');
     status.querySelector('span').textContent = open ? 'NSE open' : 'NSE ' + String(d.market_status || 'closed').toLowerCase();
-    const items = (d.indices || []).filter((i) => i.last != null).map((i) => {
-      const cls = i.change > 0 ? 'up' : i.change < 0 ? 'down' : 'flat', arrow = i.change > 0 ? '▲' : i.change < 0 ? '▼' : '';
-      const tip = [`${i.name}`, i.open != null ? `Open ${nf.format(i.open)} · High ${nf.format(i.high)} · Low ${nf.format(i.low)}` : '',
-        i.prev_close != null ? `Previous close ${nf.format(i.prev_close)}` : '',
-        i.advances != null ? `Advances ${i.advances} · Declines ${i.declines}` : '',
-        i.delayed ? 'Delayed about 15 minutes (Yahoo)' : `Source ${i.source}${i.time ? ', ' + i.time : ''}`, i.stale ? 'Last known value - source unavailable' : '']
-        .filter(Boolean).join('\n');
-      return `<span class="site-tk-item" ${i.key ? `data-key="${esc(i.key)}" tabindex="0" role="button" aria-label="${esc(i.short)} chart"` : ''} title="${esc(tip)}"><span class="site-tk-name">${esc(i.short)}</span>
-        <span class="site-tk-last">${nf.format(i.last)}</span>
-        <span class="site-tk-chg ${cls}">${arrow} ${i.change > 0 ? '+' : ''}${nf.format(i.change)} (${i.pct > 0 ? '+' : ''}${i.pct.toFixed(2)}%)</span>
-        ${i.delayed ? '<span class="site-tk-tag">15m delay</span>' : ''}${i.stale ? '<span class="site-tk-tag">stale</span>' : ''}</span>`;
-    });
-    box.querySelectorAll('.site-tk-item, .site-tk-sep, .site-tk-msg').forEach((n) => n.remove());
-    box.insertAdjacentHTML('beforeend', items.length ? items.join('<span class="site-tk-sep"></span>') : '<span class="site-tk-msg">Indices unavailable right now</span>');
+    fill(box, d);
   }
   async function load() {
     try {
@@ -211,6 +232,14 @@
   }
   load();
   setInterval(() => { if (!document.hidden) load(); }, 30000);
+  async function loadWorld() {
+    try {
+      const r = await fetch("{% url 'market:global_indices' %}");
+      if (r.ok) fill(world, await r.json(), true);               // five long names: % only; points, delay and close date in the tooltip, closed markets dimmed
+    } catch (e) { /* keep the last values on screen */ }
+  }
+  loadWorld();
+  setInterval(() => { if (!document.hidden) loadWorld(); }, 60000);
 
   // ---- index popup: hover to preview, click to pin; today's 5-minute candles + the previous day's OHLC
   const CHART_URL = "{% url 'market:index_chart' 'KEY' %}";
@@ -292,29 +321,32 @@
       + row(d.is_today ? 'Today so far' : 'Last session', t.open, t.high, t.low, t.last);
     place(IX.anchor);
   }
-  box.addEventListener('mouseover', (e) => {
+  strips.forEach((strip) => {
+  strip.addEventListener('mouseover', (e) => {
     const it = e.target.closest('.site-tk-item[data-key]'); if (!it) return;
     clearTimeout(IX.showT); clearTimeout(IX.hideT);
     if (IX.pinned && IX.key !== it.dataset.key) return;                // a pinned popup stays until it is closed
     IX.showT = setTimeout(() => show(it, false), 250);
   });
-  box.addEventListener('mouseout', (e) => {
+  strip.addEventListener('mouseout', (e) => {
     const it = e.target.closest('.site-tk-item[data-key]'); if (!it || it.contains(e.relatedTarget)) return;
     clearTimeout(IX.showT);
     if (!IX.pinned) IX.hideT = setTimeout(hide, 300);
   });
-  pop.addEventListener('mouseenter', () => clearTimeout(IX.hideT));
-  pop.addEventListener('mouseleave', () => { if (!IX.pinned) IX.hideT = setTimeout(hide, 300); });
-  box.addEventListener('click', (e) => {
+  strip.addEventListener('click', (e) => {
     const it = e.target.closest('.site-tk-item[data-key]'); if (!it) return;
     e.stopPropagation(); clearTimeout(IX.showT);
     if (IX.pinned && IX.key === it.dataset.key) { hide(); return; }
     show(it, true);
   });
-  box.addEventListener('keydown', (e) => {
+  strip.addEventListener('keydown', (e) => {
     const it = e.target.closest('.site-tk-item[data-key]');
     if (it && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); it.click(); }
   });
+  strip.addEventListener('scroll', () => { if (!pop.hidden && IX.anchor) place(IX.anchor); });
+  });
+  pop.addEventListener('mouseenter', () => clearTimeout(IX.hideT));
+  pop.addEventListener('mouseleave', () => { if (!IX.pinned) IX.hideT = setTimeout(hide, 300); });
   document.getElementById('siteIxClose').addEventListener('click', hide);
   // other parts of a page can open the popup next to their own element: siteIndexPopup(el, 'nifty50', 'NIFTY 50')
   window.siteIndexPopup = (el, key, name) => {
@@ -326,7 +358,6 @@
   document.addEventListener('click', () => { if (!pop.hidden) hide(); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !pop.hidden) hide(); });
   window.addEventListener('resize', () => { if (!pop.hidden && IX.anchor) place(IX.anchor); });
-  box.addEventListener('scroll', () => { if (!pop.hidden && IX.anchor) place(IX.anchor); });
   window.addEventListener('scroll', () => { if (!pop.hidden && IX.anchor) place(IX.anchor); }, { passive: true });
 })();
 </script>
