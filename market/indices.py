@@ -10,7 +10,8 @@ open tabs share one fetch; if a source fails, the last good values are served an
 
   GET /api/market/global/               ->  {"indices": [...], "as_of"}   the world strip above the NSE one
 
-GIFT Nifty comes from NSE's market status feed (the near-month future at NSE IX, trading almost round the clock);
+GIFT Nifty comes from NSE's market status feed (the near-month future at NSE IX, trading almost round the clock), and
+its popup chart from market/gift_nifty.py;
 NASDAQ, S&P 500, Nikkei 225 and Hang Seng from Yahoo daily candles.  A closed market shows its last session's
 close and move - what matters before the Indian open.  Cached for 2 minutes.
 """
@@ -51,7 +52,7 @@ CHART_SYMBOLS = {
 KEY_TO = {key: (label, sym) for label, (key, sym) in CHART_SYMBOLS.items()}
 GLOBAL_KEY, GLOBAL_GOOD_KEY = "market:global", "market:global:last_good"
 GLOBAL_SECONDS = 120
-GIFT = "GIFT Nifty"
+GIFT, GIFT_KEY = "GIFT Nifty", "giftnifty"
 WORLD = [                            # (label, exchange's time zone, session open, close)
     ("US NASDAQ", "America/New_York", time(9, 30), time(16, 0)),
     ("US S&P 500", "America/New_York", time(9, 30), time(16, 0)),
@@ -112,7 +113,7 @@ def _gift():
         raise ValueError("NSE sent no GIFT Nifty price")
     return {"name": f"GIFT Nifty future, expiry {g.get('EXPIRYDATE')}", "short": GIFT, "last": last, "change": change,
             "pct": _num(g.get("PERCHANGE")) or 0.0, "prev_close": last - change, "source": "NSE", "delayed": False,
-            "time": g.get("TIMESTMP"), "key": None}
+            "time": g.get("TIMESTMP"), "key": GIFT_KEY}
 
 
 def _world(label, zone, opens, closes):
@@ -203,6 +204,23 @@ def indices_api(request):
     return JsonResponse(live_indices())
 
 
+def session_chart(df, today):
+    """The popup's fields from 5-minute candles with a "day" column: the latest day's candles and the day before's OHLC."""
+    days = sorted(df["day"].unique())
+    cur = df[df["day"] == days[-1]]
+    prev = None
+    if len(days) > 1:
+        p = df[df["day"] == days[-2]]
+        prev = {"date": days[-2].isoformat(), "open": float(p["open"].iloc[0]), "high": float(p["high"].max()),
+                "low": float(p["low"].min()), "close": float(p["close"].iloc[-1])}
+    return {"session": days[-1].isoformat(), "is_today": days[-1] == today,
+            "today": {"open": float(cur["open"].iloc[0]), "high": float(cur["high"].max()), "low": float(cur["low"].min()),
+                      "last": float(cur["close"].iloc[-1]), "time": cur["timestamp"].iloc[-1].isoformat()},
+            "previous": prev,
+            "candles": [[ts.isoformat(), o, h, l, c] for ts, o, h, l, c in
+                        zip(cur["timestamp"], cur["open"], cur["high"], cur["low"], cur["close"])]}
+
+
 def index_chart(key):
     """Latest session's 5-minute candles and the previous session's OHLC, from Yahoo (5 days of 5-minute candles)."""
     from prediction.datasets import _yahoo, _yahoo_frame
@@ -217,30 +235,20 @@ def index_chart(key):
         return {"key": key, "name": label, "candles": [], "previous": None}
     zone = ZoneInfo(SYMBOL_TZ.get(sym, "Asia/Kolkata"))             # a US session crosses midnight IST
     df["day"] = df["timestamp"].dt.tz_convert(zone).dt.date
-    days = sorted(df["day"].unique())
-    cur = df[df["day"] == days[-1]]
-    prev = None
-    if len(days) > 1:
-        p = df[df["day"] == days[-2]]
-        prev = {"date": days[-2].isoformat(), "open": float(p["open"].iloc[0]), "high": float(p["high"].max()),
-                "low": float(p["low"].min()), "close": float(p["close"].iloc[-1])}
-    out = {"key": key, "name": label, "symbol": sym, "session": days[-1].isoformat(),
-           "is_today": days[-1] == datetime.now(zone).date(), "delayed": sym == "^BSESN" or sym in SYMBOL_TZ,
-           "today": {"open": float(cur["open"].iloc[0]), "high": float(cur["high"].max()), "low": float(cur["low"].min()),
-                     "last": float(cur["close"].iloc[-1]), "time": cur["timestamp"].iloc[-1].isoformat()},
-           "previous": prev,
-           "candles": [[ts.isoformat(), o, h, l, c] for ts, o, h, l, c in
-                       zip(cur["timestamp"], cur["open"], cur["high"], cur["low"], cur["close"])]}
+    out = {"key": key, "name": label, "symbol": sym, "delayed": sym == "^BSESN" or sym in SYMBOL_TZ,
+           **session_chart(df, datetime.now(zone).date())}
     cache.set(ck, out, 60)
     return out
 
 
 @require_GET
 def index_chart_api(request, key):
-    if key not in KEY_TO:
+    from . import gift_nifty
+
+    if key != GIFT_KEY and key not in KEY_TO:
         raise Http404("Unknown index")
     try:
-        return JsonResponse(index_chart(key))
+        return JsonResponse(gift_nifty.chart() if key == GIFT_KEY else index_chart(key))
     except Exception as exc:                              # Yahoo down - the popup shows the message
         logger.warning("index chart %s failed: %s", key, exc)
         return JsonResponse({"error": "Chart data is unavailable right now."}, status=502)

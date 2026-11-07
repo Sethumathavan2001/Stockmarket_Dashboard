@@ -5,6 +5,8 @@ Train the prediction model zoo for many stocks.
     python manage.py train_models --top 50                 # the 50 most traded stocks
     python manage.py train_models --top 50 --skip-trained  # only those without models yet
     python manage.py train_models --all --timeframe daily
+    python manage.py train_models --indices --skip-trained # every index (market/index_data.py)
+    python manage.py train_models --company NIFTY.IDX      # one index
 
 Each stock: 7 models + 2 ensembles, walk-forward tested, for intraday (15 / 30 / 60 min)
 and daily (1 / 5 days).  Models are saved to ml_models/<CODE>/.  About 3 minutes per stock.
@@ -18,7 +20,7 @@ from django.db.models import Avg, ExpressionWrapper, F, FloatField, Max
 
 from market.models import Company, DailyData
 from prediction import datasets as ds
-from prediction import engine
+from prediction import engine, indices
 
 SPECIAL = re.compile(r"-(BL|T0|RE|P1|IV|RR)\.NS$")
 
@@ -41,14 +43,17 @@ class Command(BaseCommand):
         who.add_argument("--company", help="one company code, e.g. TCS.NS")
         who.add_argument("--top", type=int, help="the N most traded stocks (average daily turnover, last 3 months)")
         who.add_argument("--all", action="store_true", help="every company (excluding ETFs)")
+        who.add_argument("--indices", action="store_true", help="every index")
         parser.add_argument("--timeframe", choices=ds.TIMEFRAMES, help="only intraday or only daily (default both)")
         parser.add_argument("--skip-trained", action="store_true", help="skip stocks that already have models")
 
     def handle(self, *args, **opts):
         if opts["company"]:
             codes = [opts["company"]]
-            if not Company.objects.filter(code=codes[0]).exists():
+            if not indices.find(codes[0]) and not Company.objects.filter(code=codes[0]).exists():
                 raise CommandError(f"No company '{codes[0]}'")
+        elif opts["indices"]:
+            codes = [a.code for a in indices.all_assets()]
         elif opts["top"]:
             codes = most_traded(opts["top"])
         else:
@@ -62,7 +67,7 @@ class Command(BaseCommand):
         started = time.time()
         for i, code in enumerate(codes, 1):
             t0 = time.time()
-            company = Company.objects.get(code=code)
+            company = indices.asset_or_404(code)
             try:
                 m = engine.train_stock(company, timeframes=timeframes)
             except Exception as exc:

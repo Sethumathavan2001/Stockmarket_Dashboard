@@ -10,18 +10,22 @@ Refresh the Claude Orders list from current data: the Intraday Signal Board, run
                   unless 3+ signals agree
   4. levels       stop from the forecast's 80 % range about an hour ahead (0.4 %-1.2 %), target 1.5x the stop
 
-The result replaces claude_orders.json. A refresh takes a few minutes, so it runs in a background thread;
-start_refresh() starts it (once at a time) and progress() reports how far it is.
+The result replaces claude_orders.json.  Stocks are analysed in worker processes on bulk Yahoo and Angel One data
+(board_pool.py).  It still takes a minute or two, so it runs in a background thread; start_refresh() starts it
+(once at a time) and progress() reports how far it is.
 """
 import json
 import logging
 import threading
+import time as _time
 from datetime import datetime
 from pathlib import Path
 
 from django.conf import settings
 
 from prediction.market_time import IST
+
+from . import board_pool
 
 log = logging.getLogger(__name__)
 
@@ -113,7 +117,7 @@ def turnover_lakh(v):
 
 
 
-def candidates(live):
+def candidates(live, fresh_news=True):
     from market.models import Company
     from news import fetch
     from news.signal import last_close
@@ -146,7 +150,7 @@ def candidates(live):
 
     try:
         since, cnt = last_close().isoformat(), {}
-        for it in fetch.market_news(refresh=True)["items"]:
+        for it in fetch.market_news(refresh=fresh_news)["items"]:
             if (it.get("time") or "") >= since and it["sentiment"]["label"] != "neutral":
                 for c in it["mentions"]:
                     cnt[c] = cnt.get(c, 0) + 1
@@ -321,27 +325,52 @@ def to_order(s, gen):
     }
 
 
-def build():
-    from market.views import live_snapshot
-
-    live = live_snapshot(tolerant=True)
-    pdh = {r["nsecode"] for r in live.get("pdh_data", [])}
-    pdl = {r["nsecode"] for r in live.get("pdl_data", [])}
-    _set(step="Choosing candidate stocks")
-    cands, why = candidates(live)
-    _set(step="Reading NIFTY direction", total=len(cands))
+def read_market():
     try:
-        market = market_direction()
+        return market_direction()
     except Exception:
         log.warning("Claude Orders refresh: NIFTY unavailable", exc_info=True)
-        market = None
-    scored = []
-    for i, code in enumerate(cands, 1):
-        _set(step=f"Analysing {code.removesuffix('.NS')}", done=i - 1)
-        try:
-            scored.append(score(gather(code, why[code]), market, pdh, pdl))
-        except Exception:
-            log.warning("Claude Orders refresh: %s failed", code, exc_info=True)
+        return None
+
+
+def read_news():
+    """Fetched beside the other opening reads; candidates() then finds it in the cache."""
+    from news import fetch
+
+    try:
+        fetch.market_news(refresh=True)
+    except Exception:
+        log.warning("Claude Orders refresh: news unavailable", exc_info=True)
+
+
+def opening_reads():
+    """The Live page, NIFTY and the headlines, side by side."""
+    from market.views import live_snapshot
+
+    return board_pool.together(live=lambda: live_snapshot(tolerant=True), market=read_market, news=read_news)
+
+
+def build():
+    started = _time.monotonic()
+    with board_pool.Workers() as workers:
+        first = opening_reads()
+        live, market = first["live"], first["market"]
+        pdh = {r["nsecode"] for r in live.get("pdh_data", [])}
+        pdl = {r["nsecode"] for r in live.get("pdl_data", [])}
+        _set(step="Choosing candidate stocks")
+        cands, why = candidates(live, fresh_news=False)
+        _set(total=len(cands))
+        done = {}
+
+        def score_one(code, stock):
+            try:
+                if stock:
+                    done[code] = score(stock, market, pdh, pdl)
+            except Exception:
+                log.warning("Claude Orders refresh: %s failed", code, exc_info=True)
+
+        workers.gather(cands, why, lambda step, n: _set(step=step, done=n), score_one)
+    scored = [done[code] for code in cands if code in done]       # the same order every time
     _set(done=len(cands), step="Writing orders")
     gen = datetime.now(IST).replace(microsecond=0)
     picks = sorted((s for s in scored if s.get("decision") in ("BUY", "SELL") and s.get("plan")),
@@ -354,4 +383,5 @@ def build():
         "checked": len(cands), "counts": counts,
         "market": market, "live_ok": bool(live.get("gainers") or live.get("loosers")),
         "orders": [to_order(s, gen) for s in picks],
+        "seconds": round(_time.monotonic() - started), "angel_prices": workers.live_prices,
     }

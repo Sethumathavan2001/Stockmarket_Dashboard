@@ -1,5 +1,5 @@
 from django.urls import path
-from . import index_analysis, index_membership, indices, stock_behaviour, views
+from . import angel_live, index_analysis, index_membership, indices, stock_behaviour, views
 
 app_name = 'market'
 
@@ -31,6 +31,9 @@ urlpatterns = [
     path("delete-data/", views.delete_data_by_date, name="delete_data"),
     path("chart/", views.chart_view, name="chart_view"),
     path("chart/data/", views.chart_data, name="chart_data"),
+    path("angel-live/", angel_live.page, name="angel_live"),
+    path("api/angel-live/candles/", angel_live.candles, name="angel_live_candles"),
+    path("api/angel-live/quote/", angel_live.quote, name="angel_live_quote"),
     path("index-analysis/", index_analysis.page, name="index_analysis"),
     path("api/index/meta/", index_analysis.meta, name="index_meta"),
     path("api/index/day/", index_analysis.day, name="index_day"),

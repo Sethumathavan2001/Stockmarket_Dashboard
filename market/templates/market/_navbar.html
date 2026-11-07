@@ -4,10 +4,13 @@
   predictor ...). Styles use their own "site-" class names and set every size
   explicitly, so page CSS cannot change the navbar's height or width.
   Above it, a live index strip (NIFTY, SENSEX, BANK NIFTY ...) from /api/market/indices/.
+  The strips and navbar stay on screen together in .site-top; --site-top-h is their height, for anything a page pins below them.
   Add new pages to the link list here only. Related pages share a hover menu ("Data", "Paper Trading").
 {% endcomment %}
 {% with current=request.resolver_match.url_name app=request.resolver_match.app_name %}
 <style>
+  :root{ --site-top-h:124px; }
+  .site-top{ position:sticky; top:0; z-index:30; width:100%; }
   .site-ticker{
     box-sizing:border-box; width:100%; height:32px; margin:0; padding:0 28px;
     display:flex; align-items:center; gap:18px; overflow-x:auto; scrollbar-width:none;
@@ -65,7 +68,6 @@
     display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px 24px;
     background:linear-gradient(180deg,#123B7A,#0B2545); color:#fff;
     box-shadow:0 1px 2px rgba(16,24,40,.04),0 1px 3px rgba(16,24,40,.06);
-    position:sticky; top:0; z-index:30;
     font-family:'Inter',system-ui,sans-serif; line-height:1.4;
   }
   .site-header *{ box-sizing:border-box; }
@@ -107,6 +109,7 @@
   .site-dd-panel span{ display:block; font-size:12px; color:rgba(255,255,255,.65); margin-top:1px; }
 </style>
 
+<div class="site-top" id="siteTop">
 <div class="site-ticker" id="siteWorld" role="region" aria-label="World indices">
   <span class="site-tk-status open"><i></i><span>Global</span></span>
   <span class="site-tk-msg">Loading indices…</span>
@@ -121,7 +124,7 @@
   <nav class="site-nav" aria-label="Main">
     <a href="{% url 'market:home' %}" class="{% if app == 'market' and current == 'home' %}active{% endif %}">Home</a>
 
-    <div class="site-dd {% if app == 'market' and current == 'daily_data' or app == 'market' and current == 'five_min' or app == 'market' and current == 'daily_data_page' or app == 'market' and current|slice:':8' == 'analysis' or app == 'market' and current == 'chart_view' or app == 'market' and current == 'index_analysis' %}active{% endif %}">
+    <div class="site-dd {% if app == 'market' and current == 'daily_data' or app == 'market' and current == 'five_min' or app == 'market' and current == 'daily_data_page' or app == 'market' and current|slice:':8' == 'analysis' or app == 'market' and current == 'chart_view' or app == 'market' and current == 'index_analysis' or app == 'market' and current == 'angel_live' %}active{% endif %}">
       <button type="button" class="site-dd-btn" aria-haspopup="true" aria-expanded="false">Data
         <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 4.5l3 3 3-3"/></svg></button>
       <div class="site-dd-menu"><div class="site-dd-panel" role="menu">
@@ -131,6 +134,7 @@
         <a role="menuitem" href="{% url 'market:analysis' %}" class="{% if app == 'market' and current|slice:':8' == 'analysis' %}active{% endif %}"><b>Analysis</b><span>Market breadth, sectors and the stock screener</span></a>
         <a role="menuitem" href="{% url 'market:chart_view' %}" class="{% if app == 'market' and current == 'chart_view' %}active{% endif %}"><b>Chart</b><span>Day-by-day stock chart with MACD and volume</span></a>
         <a role="menuitem" href="{% url 'market:index_analysis' %}" class="{% if app == 'market' and current == 'index_analysis' %}active{% endif %}"><b>Index Analysis</b><span>Every index day by day, with its past expiries</span></a>
+        <a role="menuitem" href="{% url 'market:angel_live' %}" class="{% if app == 'market' and current == 'angel_live' %}active{% endif %}"><b>Angel One Live</b><span>Live price and candle chart of a stock</span></a>
       </div></div>
     </div>
 
@@ -161,6 +165,7 @@
     <a href="{% url 'news_page' %}" class="{% if current == 'news_page' %}active{% endif %}">News</a>
   </nav>
 </header>
+</div>
 
 <div class="site-ix-pop" id="siteIxPop" hidden role="dialog" aria-label="Index chart">
   <div class="site-ix-head">
@@ -175,6 +180,12 @@
 
 <script>
 (() => {
+  // ---- height of the pinned strips and navbar: the nav wraps on a narrow screen
+  const top_ = document.getElementById('siteTop');
+  const setTop = () => document.documentElement.style.setProperty('--site-top-h', top_.offsetHeight + 'px');
+  setTop();
+  new ResizeObserver(setTop).observe(top_);
+
   // ---- hover menus: also open on click / tap (touch screens) and close on Escape or a click outside
   const dds = document.querySelectorAll('.site-dd');
   dds.forEach((dd) => {
@@ -295,10 +306,10 @@
     }
   }
   function draw(d) {
-    const t = d.today, p = d.previous, ref = p ? p.close : t.open, chg = t.last - ref, pc = ref ? (chg / ref) * 100 : 0;
+    const t = d.today, p = d.previous, ref = d.ref ?? (p ? p.close : t.open), chg = t.last - ref, pc = ref ? (chg / ref) * 100 : 0;
     const col = chg > 0 ? '#5BE49B' : chg < 0 ? '#FF8A8F' : 'rgba(255,255,255,.7)';
     const when = new Date(t.time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' });
-    document.getElementById('siteIxSub').textContent = `${d.is_today ? 'Today' : 'Last session ' + d.session} · 5-minute candles to ${when}${d.delayed ? ' · about 15 min delayed' : ''}`;
+    document.getElementById('siteIxSub').textContent = `${d.is_today ? 'Today' : 'Last session ' + d.session} · 5-minute candles to ${when}${d.delayed ? ' · about 15 min delayed' : ''}${d.note ? ' · ' + d.note : ''}`;
     document.getElementById('siteIxPx').innerHTML = `<b>${nf.format(t.last)}</b><span style="color:${col}">${chg > 0 ? '+' : ''}${nf.format(chg)} (${pc > 0 ? '+' : ''}${pc.toFixed(2)}%)</span>`;
     if (IX.chart) { IX.chart.remove(); IX.chart = null; }
     const ch = LightweightCharts.createChart(chartBox, {

@@ -11,10 +11,11 @@ import math
 from datetime import date, datetime
 
 from django.http import JsonResponse
-from django.shortcuts import get_object_or_404, render
+from django.shortcuts import render
 from django.views.decorators.http import require_GET
 
 from market.models import Company
+from prediction import indices
 
 from . import engine
 
@@ -39,6 +40,7 @@ def candle_predictor_view(request):
     companies = Company.objects.exclude(sector="ETF").order_by("code").values("code", "name")
     return render(request, "patterns/candle_predictor.html", {
         "companies": list(companies),
+        "indices": [{"code": a.code, "name": a.name} for a in indices.all_assets()],
         "initial": {"company": request.GET.get("company", ""), "interval": request.GET.get("interval", "5m"),
                     "news": request.GET.get("news") == "1"},
     })
@@ -46,7 +48,7 @@ def candle_predictor_view(request):
 
 @require_GET
 def candle_prediction_data(request, company_code):
-    company = get_object_or_404(Company, code=company_code)
+    company = indices.asset_or_404(company_code)
     interval = request.GET.get("interval", "5m")
     try:
         day = date.fromisoformat(request.GET["day"]) if request.GET.get("day") else None
@@ -55,10 +57,13 @@ def candle_prediction_data(request, company_code):
         return JsonResponse({"error": "Invalid day or time."}, status=400)
     try:
         news = None
-        if request.GET.get("news") == "1":
+        asked = request.GET.get("news") == "1"
+        if asked and not indices.is_index(company):
             from news.signal import news_signal
             news = news_signal
         data = engine.predict(company, interval=interval, day=day, asof=asof, news=news)
+        if asked and indices.is_index(company):
+            data["news_status"] = indices.NO_NEWS
     except engine.PredictorError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
     except Exception as exc:

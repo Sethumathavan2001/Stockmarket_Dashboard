@@ -143,7 +143,7 @@
   .btn-exit:disabled{ color:#B6BEC9; cursor:not-allowed; }
 
   /* ---------- side column ---------- */
-  .side-col{ display:flex; flex-direction:column; gap:16px; position:sticky; top:74px; }
+  .side-col{ display:flex; flex-direction:column; gap:16px; position:sticky; top:calc(var(--site-top-h) + 14px); }
   @media (max-width:1000px){ .side-col{ position:static; } }
   .wallet-card, .order-card{ padding:16px 18px; }
   .wallet-balance{ font-size:28px; font-weight:700; }
@@ -235,7 +235,7 @@
   .btn-ghost:hover{ border-color:var(--blue-600); }
   .wallet-stats .wide{ grid-column:1 / -1; }
 
-  #toasts{ position:fixed; top:74px; right:20px; display:flex; flex-direction:column; gap:8px; z-index:100; }
+  #toasts{ position:fixed; top:calc(var(--site-top-h) + 14px); right:20px; display:flex; flex-direction:column; gap:8px; z-index:100; }
   .toast{ background:var(--navy-900); color:#fff; padding:11px 16px; border-radius:8px; font-size:13px; box-shadow:0 6px 20px rgba(16,24,40,.25); max-width:340px; border-left:4px solid var(--blue-600); }
   .toast.success{ border-left-color:var(--green); }
   .toast.error{ border-left-color:var(--red); }

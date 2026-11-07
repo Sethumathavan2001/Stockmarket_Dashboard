@@ -25,8 +25,9 @@ from django.core.cache import cache
 from market.models import Company, DailyData, FiveMinuteData
 
 from . import features as base_features
+from . import indices
 from . import indicators as ind
-from .data import load_historical_candles
+from .data import load_historical_candles, remembered
 from .market_time import IST
 from .tickers import get_yahoo_ticker
 
@@ -46,8 +47,12 @@ def horizon_label(timeframe, h):
 # ==========================================================================
 # Yahoo helpers (in memory only, cached briefly)
 # ==========================================================================
+def yahoo_key(symbol, **kwargs):
+    return "prediction:yf:" + symbol + ":" + ":".join(f"{k}={v}" for k, v in sorted(kwargs.items()))
+
+
 def _yahoo(symbol, cache_seconds=60, **kwargs):
-    key = "prediction:yf:" + symbol + ":" + ":".join(f"{k}={v}" for k, v in sorted(kwargs.items()))
+    key = yahoo_key(symbol, **kwargs)
     cached = cache.get(key)
     if cached is not None:
         return cached
@@ -79,12 +84,19 @@ def _yahoo_frame(raw, daily=False):
 # ==========================================================================
 # INTRADAY
 # ==========================================================================
+def _recent_candles(company):
+    """The latest 5-minute candles: Yahoo for a stock, Angel One for an index."""
+    if indices.is_index(company):
+        return indices.recent(company)
+    return _yahoo_frame(_yahoo(get_yahoo_ticker(company.code), period="5d", interval="5m", prepost=False))
+
+
 def load_intraday(company, live=False):
     """5-minute candles: the database, plus (live) the last 5 days from Yahoo incl. today."""
     df = load_historical_candles(company)[["timestamp", "open", "high", "low", "close", "volume"]]
     if live:
         df = df.tail(75 * 60)                  # the latest ~60 sessions in the database, however old
-        recent = _yahoo_frame(_yahoo(get_yahoo_ticker(company.code), period="5d", interval="5m", prepost=False))
+        recent = _recent_candles(company)
         if not recent.empty:
             df = pd.concat([df, recent], ignore_index=True)
             df = df.drop_duplicates("timestamp", keep="last")
@@ -217,21 +229,30 @@ def _clean_daily(df):
     return df
 
 
-def load_daily(company, live=False):
+def _read_daily(company):
+    if indices.is_index(company):
+        return indices.daily(company)
     rows = (DailyData.objects.filter(company=company).order_by("date")
             .values_list("date", "open", "high", "low", "close", "volume"))
-    df = pd.DataFrame([(d, float(o), float(h), float(l), float(c), float(v or 0)) for d, o, h, l, c, v in rows
-                       if None not in (o, h, l, c) and float(l) > 0],
-                      columns=["date", "open", "high", "low", "close", "volume"])
+    return pd.DataFrame([(d, float(o), float(h), float(l), float(c), float(v or 0)) for d, o, h, l, c, v in rows
+                         if None not in (o, h, l, c) and float(l) > 0],
+                        columns=["date", "open", "high", "low", "close", "volume"])
+
+
+def load_daily(company, live=False):
+    df = remembered(("daily", company.pk), lambda: _read_daily(company))
     if live:
-        recent = _yahoo_frame(_yahoo(get_yahoo_ticker(company.code), cache_seconds=600, period="3mo", interval="1d"))
+        if indices.is_index(company):
+            recent = indices.recent(company, "ONE_DAY").copy()
+        else:
+            recent = _yahoo_frame(_yahoo(get_yahoo_ticker(company.code), cache_seconds=600, period="3mo", interval="1d"))
         if not recent.empty:
             recent["date"] = recent["timestamp"].dt.date
             today = pd.Timestamp.now(tz=IST).date()
             recent = recent[recent["date"] < today]            # completed days only
             df = pd.concat([df, recent[df.columns]], ignore_index=True).drop_duplicates("date", keep="last")
         # Yahoo's daily feed often lags a session; complete days from its 5-minute candles instead
-        five = _yahoo_frame(_yahoo(get_yahoo_ticker(company.code), period="5d", interval="5m", prepost=False))
+        five = _recent_candles(company).copy()
         if not five.empty:
             five["date"] = five["timestamp"].dt.date
             today = pd.Timestamp.now(tz=IST).date()
@@ -242,7 +263,7 @@ def load_daily(company, live=False):
             if not agg.empty:
                 df = pd.concat([df, agg[df.columns]], ignore_index=True)
     df = df.sort_values("date").reset_index(drop=True)
-    return _clean_daily(df)
+    return df if indices.is_index(company) else _clean_daily(df)     # an index has no splits, and VIX really jumps
 
 
 def _market_daily(live=False):

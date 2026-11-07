@@ -9,6 +9,7 @@ angel.ACCOUNTS (Vivek, Sethu - see broker.py).
   POST /api/paper/claude-orders/place/       {"id", "account": "paper" | "vivek" | "sethu", "quantity",
                                               "stop_pct"?, "target_pct"?}
   POST /api/paper/claude-orders/refresh/     rebuild the list from current data (background, see claude_board)
+  POST /api/paper/claude-orders/connect/     Connect IP: check each account's connection and log in again
   GET  /claude-orders/history/               every list made (ClaudeOrderList) and every Vivek / Sethu trade
 
 Stop loss / target are percentages from the actual fill (editable on the page; the recommendation's by
@@ -158,6 +159,23 @@ def wallets(request):
         out[acc] = angel.funds(acc, use_cache=request.GET.get("fresh") != "1")
         out[acc]["route"] = netroute.describe(acc)            # which connection / public IP Angel One sees
     return JsonResponse(out)
+
+
+def _refused_on(account, ip):
+    """The last day Angel One refused an order because of this IP, or None."""
+    row = BrokerOrder.objects.filter(account=account, message__contains=f"{ip} is not a registered").order_by("-created_at").first()
+    return row.session.isoformat() if row else None
+
+
+@require_POST
+def connect_ip(request):
+    """The Connect IP button: each account's connection, public IP and a fresh Angel One login."""
+    out = {}
+    for acc in angel.ACCOUNTS:
+        out[acc] = angel.connect(acc)
+        ip = out[acc]["route"].get("public_ip")
+        out[acc]["refused_on"] = _refused_on(acc, ip) if ip else None
+    return JsonResponse({"accounts": out})
 
 
 @require_POST

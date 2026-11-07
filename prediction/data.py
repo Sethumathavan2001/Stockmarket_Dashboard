@@ -18,6 +18,7 @@ import pandas as pd
 import yfinance as yf
 
 from market.models import Company, FiveMinuteData  # adjust if your app is named differently
+from . import indices
 from .tickers import get_yahoo_ticker
 from .market_time import IST
 
@@ -26,8 +27,34 @@ logger = logging.getLogger(__name__)
 REQUIRED_COLUMNS = ["timestamp", "open", "high", "low", "close", "volume"]
 
 
+# A Claude Orders worker (paper_trading/board_pool.py) reads the same history several times per stock: it keeps it
+# here between reads.  Everywhere else this stays None and every read goes to the database.
+_memo = None
+
+
+def remembered(key, read):
+    """read(), or a copy of what it gave in this worker.  key = (kind, company id, ...)."""
+    if _memo is None:
+        return read()
+    if key not in _memo:
+        _memo[key] = read()
+    return _memo[key].copy()
+
+
+def remember_only(company_id):
+    """Turn remembering on, keeping only this company's history (the market's, which every stock uses)."""
+    global _memo
+    _memo = {k: v for k, v in (_memo or {}).items() if k[1] == company_id}
+
+
 def load_historical_candles(company: Company, lookback_days: int = None) -> pd.DataFrame:
     """Historical candles from the database. Used for TRAINING."""
+    if indices.is_index(company):
+        return indices.history(company)
+    return remembered(("5m", company.pk, lookback_days), lambda: _read_candles(company, lookback_days))
+
+
+def _read_candles(company, lookback_days):
     qs = FiveMinuteData.objects.filter(company=company).order_by("timestamp")
     if lookback_days:
         cutoff = datetime.now(IST) - timedelta(days=lookback_days)

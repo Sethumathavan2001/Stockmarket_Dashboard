@@ -27,6 +27,7 @@ import pandas as pd
 from django.core.cache import cache
 
 from prediction.data import load_historical_candles
+from prediction import indices
 from prediction.datasets import _yahoo, _yahoo_frame
 from prediction.market_time import IST, get_market_status
 from prediction.tickers import get_yahoo_ticker
@@ -64,8 +65,13 @@ def load_candles(company, interval):
     ticker = get_yahoo_ticker(company.code)
     if interval == "5m":
         db = load_historical_candles(company)[["timestamp", "open", "high", "low", "close", "volume"]]
-        recent = _yahoo_frame(_yahoo(ticker, cache_seconds=30, period="5d", interval="5m", prepost=False))
+        if indices.is_index(company):
+            recent = indices.recent(company)
+        else:
+            recent = _yahoo_frame(_yahoo(ticker, cache_seconds=30, period="5d", interval="5m", prepost=False))
         df = pd.concat([db, recent], ignore_index=True) if not recent.empty else db
+    elif indices.is_index(company):
+        df = indices.recent(company, "ONE_MINUTE").copy()
     else:
         today = datetime.now(IST).date()
         parts = []

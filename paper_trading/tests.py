@@ -2699,7 +2699,7 @@ class ClaudeOrders2PageTests(ClaudeOrdersTests):
                "world": {"dir": 0, "up": 1, "down": 1, "total": 5, "detail": "x"}}
         live = {"gainers": [{"x": 1}], "open_intrest": [{"symbol": "TST", "avgInOI": 30.0}, {"symbol": "FINNIFTY", "avgInOI": 30.0}]}
         with mock.patch("market.views.live_snapshot", return_value=live), mock.patch.object(claude_board, "market_direction", return_value=None), \
-             mock.patch.object(b, "read_context", return_value=ctx), mock.patch("market.behaviour_data.load", return_value=None), \
+             mock.patch.object(claude_board, "read_news"), mock.patch.object(b, "read_context", return_value=ctx), mock.patch("market.behaviour_data.load", return_value=None), \
              mock.patch.object(claude_board, "candidates", return_value=([], {})), mock.patch.object(claude_board, "gather", side_effect=gathered), \
              mock.patch.object(claude_board, "score", side_effect=lambda s, *a: s), mock.patch.object(b, "home_index", return_value=None), \
              mock.patch("market.index_membership.indices_for", return_value={"indices": []}), mock.patch("django.db.connection.close"):
@@ -2710,3 +2710,180 @@ class ClaudeOrders2PageTests(ClaudeOrdersTests):
         for key in ("code", "side", "conviction", "price_at", "stop", "target", "stop_pct", "target_pct", "reasons", "news", "square_off_by"):
             self.assertIn(key, order)
         self.assertIn("Stock Behaviour data is not built", out["method"])
+
+
+class BoardPoolTests(TestCase):
+    """Refresh orders in worker processes: it must never start a second watcher, and it must lose no stock."""
+
+    def frame(self, closes):
+        import pandas as pd
+        idx = pd.date_range("2026-11-06 10:00", periods=len(closes), freq="5min", tz="Asia/Kolkata")
+        return pd.DataFrame({"Open": closes, "High": closes, "Low": closes, "Close": closes, "Volume": 10.0}, index=idx)
+
+    def test_a_worker_process_never_starts_the_watcher(self):
+        from django.apps import apps
+        from . import monitor
+        cfg = apps.get_app_config("paper_trading")
+        with mock.patch("sys.argv", ["manage.py", "runserver"]), mock.patch.dict("os.environ", {"RUN_MAIN": "true"}), \
+             mock.patch.object(monitor, "start") as start:
+            with mock.patch("multiprocessing.parent_process", return_value=object()):
+                cfg.ready()
+            start.assert_not_called()
+            with mock.patch("multiprocessing.parent_process", return_value=None):
+                cfg.ready()
+            start.assert_called_once()
+
+    def test_workers_follow_free_memory(self):
+        import psutil
+        from . import board_pool as p
+        with mock.patch("sys.argv", ["manage.py", "runserver"]), mock.patch.dict("os.environ", {"CLAUDE_BOARD_WORKERS": ""}), \
+             mock.patch("os.cpu_count", return_value=8):
+            for free_mb, want in ((400, p.MIN_WORKERS), (2000, 4), (16000, p.MAX_WORKERS)):
+                with mock.patch.object(psutil, "virtual_memory", return_value=mock.Mock(available=free_mb << 20)):
+                    self.assertEqual(p.worker_count(), want)
+        with mock.patch.dict("os.environ", {"CLAUDE_BOARD_WORKERS": "0"}):
+            self.assertEqual(p.worker_count(), 0)
+
+    def test_an_angel_one_trade_moves_the_last_candle_or_starts_one(self):
+        import pandas as pd
+        from . import board_pool as p
+        f = self.frame([100.0, 101.0])                             # candles at 10:00 and 10:05
+        same = p.with_last_trade(f, 103.0, pd.Timestamp("2026-11-06 10:07:30", tz="Asia/Kolkata"))
+        self.assertEqual((len(same), same["Close"].iloc[-1], same["High"].iloc[-1], same["Open"].iloc[-1]), (2, 103.0, 103.0, 101.0))
+        later = p.with_last_trade(f, 99.0, pd.Timestamp("2026-11-06 10:11:00", tz="Asia/Kolkata"))
+        self.assertEqual((len(later), later["Close"].iloc[-1], later.index[-1].minute), (3, 99.0, 10))
+        old = p.with_last_trade(f, 50.0, pd.Timestamp("2026-11-06 09:50:00", tz="Asia/Kolkata"))
+        self.assertEqual(old["Close"].iloc[-1], 101.0)
+        self.assertEqual(f["Close"].iloc[-1], 101.0)               # the original frame is left alone
+
+    def test_downloaded_frames_are_used_without_calling_yahoo(self):
+        from django.core.cache import cache
+        from prediction import datasets
+        from . import board_pool as p
+        cache.clear()
+        p._seed({datasets.yahoo_key("TST.NS", **p.CANDLES): self.frame([100.0])})
+        with mock.patch("yfinance.Ticker") as ticker:
+            out = datasets._yahoo("TST.NS", period="5d", interval="5m", prepost=False)
+        ticker.assert_not_called()
+        self.assertEqual(out["Close"].iloc[-1], 100.0)
+
+    def test_history_is_read_once_per_stock_in_a_worker_only(self):
+        import pandas as pd
+        from prediction import data
+        reads = []
+
+        def read():
+            reads.append(1)
+            return pd.DataFrame({"a": [1]})
+        data.remembered(("5m", 1), read)
+        data.remembered(("5m", 1), read)
+        self.assertEqual(len(reads), 2)                            # outside a worker every read is fresh
+        self.addCleanup(setattr, data, "_memo", None)
+        data.remember_only(9)
+        first = data.remembered(("5m", 1), read)
+        first["a"] = 5                                             # a caller's changes don't reach the kept copy
+        self.assertEqual(data.remembered(("5m", 1), read)["a"].iloc[0], 1)
+        self.assertEqual(len(reads), 3)
+        data.remembered(("5m", 9), read)
+        data.remember_only(9)                                      # next stock: only the market stays
+        data.remembered(("5m", 9), read)
+        data.remembered(("5m", 1), read)
+        self.assertEqual(len(reads), 5)
+
+    def test_a_stopped_worker_loses_no_stock(self):
+        from concurrent.futures import Future
+        from concurrent.futures.process import BrokenProcessPool
+        from . import board_pool as p, claude_board
+
+        class Pool:
+            def submit(self, fn, code, why, frames):
+                job = Future()
+                if code == "A.NS":
+                    job.set_result({"code": code, "worker": True})
+                else:
+                    job.set_exception(BrokenProcessPool("stopped"))
+                return job
+
+        w = p.Workers()
+        w.pool, w.live_prices = Pool(), 0
+        out = {}
+        batches = [({"A.NS": {}, "B.NS": {}}, 2), ({"C.NS": {}}, 1)]
+        with mock.patch.object(p, "prefetch", return_value=iter(batches)), \
+             mock.patch.object(claude_board, "gather", side_effect=lambda code, why: {"code": code, "worker": False}):
+            w.gather(["A.NS", "B.NS", "C.NS"], {"A.NS": [], "B.NS": [], "C.NS": []}, each=out.__setitem__)
+        self.assertEqual(set(out), {"A.NS", "B.NS", "C.NS"})
+        self.assertEqual(w.live_prices, 3)
+        self.assertFalse(out["C.NS"]["worker"])
+
+    def test_outside_market_hours_angel_one_is_not_asked(self):
+        from . import angel, board_pool as p
+        with mock.patch("prediction.market_time.get_market_status", return_value="CLOSED"), mock.patch.object(angel, "quotes") as q:
+            self.assertEqual(p.angel_trades(["TST.NS"]), {})
+        q.assert_not_called()
+
+    def test_quotes_go_50_a_call(self):
+        from . import angel
+        sent = []
+
+        def read(fn):
+            sc = mock.Mock()
+            sc.getMarketData.side_effect = lambda mode, t: sent.append(len(t["NSE"])) or {
+                "data": {"fetched": [{"symbolToken": x, "ltp": 1} for x in t["NSE"]]}}
+            return "vivek", fn(sc)
+        with mock.patch.object(angel, "read_any", side_effect=read), mock.patch.object(angel._time, "sleep"):
+            out = angel.quotes([str(i) for i in range(120)])
+        self.assertEqual((sent, len(out)), ([50, 50, 20], 120))
+
+
+class ConnectIpTests(TestCase):
+    """The Connect IP button on both Claude Orders pages."""
+
+    def post(self):
+        return self.client.post(reverse("paper_trading:claude_orders_connect"))
+
+    def test_button_is_on_both_pages_and_needs_a_post(self):
+        for name in ("claude_orders", "claude_orders2"):
+            self.assertContains(self.client.get(reverse(f"paper_trading:{name}")), 'id="connectBtn"')
+        self.assertEqual(self.client.get(reverse("paper_trading:claude_orders_connect")).status_code, 405)
+
+    def test_connected_account_logs_in_again_with_a_fresh_ip(self):
+        from . import angel, netroute
+        route = {"setting": "adapter Wi-Fi", "local_ip": "192.168.1.2", "public_ip": "203.0.113.7"}
+        with mock.patch.object(angel, "configured", return_value=True), mock.patch.object(netroute, "describe", return_value=route) as d, \
+             mock.patch.object(angel, "client") as login, mock.patch.object(angel, "funds", return_value={"available": 500.0, "error": None}):
+            out = self.post().json()["accounts"]
+        self.assertTrue(out["vivek"]["ok"])
+        self.assertEqual(out["vivek"]["available"], 500.0)
+        d.assert_any_call("vivek", fresh=True)
+        login.assert_any_call("vivek", fresh=True)
+
+    def test_a_missing_connection_is_reported_without_a_login(self):
+        from . import angel, netroute
+        with mock.patch.object(angel, "configured", return_value=True), \
+             mock.patch.object(netroute, "describe", return_value={"setting": "adapter Ethernet", "error": "Network adapter 'Ethernet' is not connected"}), \
+             mock.patch.object(angel, "client") as login:
+            out = self.post().json()["accounts"]
+        self.assertFalse(out["sethu"]["ok"])
+        self.assertIn("not connected", out["sethu"]["error"])
+        login.assert_not_called()
+
+    def test_failed_login_and_unset_account(self):
+        from . import angel, netroute
+        with mock.patch.object(angel, "configured", side_effect=lambda a: a == "vivek"), \
+             mock.patch.object(netroute, "describe", return_value={"public_ip": "203.0.113.7"}), \
+             mock.patch.object(angel, "client", side_effect=angel.AngelError("Angel One login failed: bad TOTP")):
+            out = self.post().json()["accounts"]
+        self.assertIn("bad TOTP", out["vivek"]["error"])
+        self.assertIn("Not set up", out["sethu"]["error"])
+
+    def test_an_ip_angel_one_refused_before_is_flagged(self):
+        from . import angel, netroute
+        from .models import BrokerOrder
+        BrokerOrder.objects.create(account="vivek", session=svc.today_ist(), code="INFY.NS", side="SELL", quantity=1, stop=1, target=1,
+                                   status="rejected", message="Angel One did not accept the order: 203.0.113.7 is not a registered IP")
+        with mock.patch.object(angel, "configured", return_value=True), \
+             mock.patch.object(netroute, "describe", return_value={"public_ip": "203.0.113.7"}), \
+             mock.patch.object(angel, "client"), mock.patch.object(angel, "funds", return_value={"available": 1.0}):
+            out = self.post().json()["accounts"]
+        self.assertEqual(out["vivek"]["refused_on"], svc.today_ist().isoformat())
+        self.assertIsNone(out["sethu"]["refused_on"])

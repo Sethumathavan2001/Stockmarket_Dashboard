@@ -1,11 +1,16 @@
 import json
+import tempfile
+from contextlib import ExitStack
+from pathlib import Path
 from unittest import mock
 
 import pandas as pd
 from django.core.cache import cache
 from django.test import TestCase
+from django.urls import reverse
 
-from . import indices
+from . import gift_nifty, indices
+from .models import Company
 
 NSE = {"timestamp": "19-Oct-2026 13:46", "data": [
     {"index": "NIFTY 50", "last": 22861.7, "variation": -284.45, "percentChange": -1.23, "open": 23150.85, "high": 23160,
@@ -243,7 +248,7 @@ class GlobalStripAndMostActiveTests(TestCase):
             d = self.client.get("/api/market/global/").json()
         self.assertEqual([i["short"] for i in d["indices"]],
                          ["GIFT Nifty", "US NASDAQ", "US S&P 500", "Japan Nikkei 225", "Hong Kong Hang Seng"])
-        self.assertEqual((d["indices"][0]["last"], d["indices"][0]["prev_close"], d["indices"][0]["key"]), (24435.0, 24374.0, None))
+        self.assertEqual((d["indices"][0]["last"], d["indices"][0]["prev_close"], d["indices"][0]["key"]), (24435.0, 24374.0, "giftnifty"))
         us = d["indices"][1]
         self.assertAlmostEqual(us["pct"], 5.0)                               # a closed market keeps its last session's move
         self.assertEqual((us["tag"], us["delayed"], us["key"]), ("4 Nov close", False, "nasdaq"))
@@ -261,6 +266,54 @@ class GlobalStripAndMostActiveTests(TestCase):
         with mock.patch("prediction.datasets._yahoo", return_value=raw):
             d = indices.index_chart("nasdaq")
         self.assertEqual((d["session"], len(d["candles"]), d["delayed"]), ("2026-11-04", 78, True))
+
+    def test_gift_records_each_exchange_minute_once_and_builds_candles(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(gift_nifty, "FILE", Path(tmp) / "gift.jsonl"):
+            last = None
+            for minute, price in ((0, 100.0), (1, 105.0), (1, 999.0), (2, 95.0), (5, 101.0)):
+                last = gift_nifty.record({"time": f"06-Nov-2026 21:{30 + minute:02d}", "last": price, "prev_close": 90.0}, last)
+            rows = gift_nifty._samples()
+            self.assertEqual([r["last"] for r in rows], [100.0, 105.0, 95.0, 101.0])       # the repeat minute is skipped
+            d = gift_nifty._recorded(rows)
+        self.assertEqual([c[1:] for c in d["candles"]], [[100.0, 105.0, 95.0, 95.0], [101.0, 101.0, 101.0, 101.0]])
+        self.assertEqual((d["ref"], d["session"]), (90.0, "2026-11-06"))
+
+    def test_gift_day_keeps_the_evening_session_together(self):
+        rows = [{"ts": ts, "last": 100.0, "ref": 90.0} for ts in
+                ("2026-11-06T02:40:00+05:30", "2026-11-06T06:30:00+05:30", "2026-11-07T02:40:00+05:30")]
+        d = gift_nifty._recorded(rows)
+        self.assertEqual((d["session"], len(d["candles"]), d["previous"]["date"]), ("2026-11-06", 2, "2026-11-05"))
+
+    def gift_rows(self, count):
+        start = pd.Timestamp("2026-11-06 18:00", tz="Asia/Kolkata")
+        return [{"ts": (start + pd.Timedelta(minutes=5 * i)).isoformat(), "last": 100.0 + i, "ref": 90.0} for i in range(count)]
+
+    def test_gift_chart_says_when_it_shows_the_stand_in(self):
+        stand_in = {"session": "2026-11-06", "candles": [["2026-11-06T15:25:00+05:30", 1, 2, 0, 1]], "stand_in": True, "note": "Stand-in"}
+        with mock.patch.object(gift_nifty, "_samples", return_value=self.gift_rows(3)), \
+             mock.patch.object(gift_nifty, "_stand_in", return_value=stand_in):
+            d = self.client.get("/api/market/indices/giftnifty/chart/").json()
+        self.assertTrue(d["stand_in"])
+        self.assertEqual(d["name"], "GIFT Nifty")
+
+    def test_gift_chart_uses_recorded_candles_once_there_are_enough(self):
+        with mock.patch.object(gift_nifty, "_samples", return_value=self.gift_rows(gift_nifty.MIN_CANDLES)), \
+             mock.patch.object(gift_nifty, "_stand_in") as stand_in:
+            d = gift_nifty.chart()
+        stand_in.assert_not_called()
+        self.assertNotIn("stand_in", d)
+        self.assertEqual(len(d["candles"]), gift_nifty.MIN_CANDLES)
+
+    def test_gift_chart_keeps_recorded_candles_or_explains_when_angel_fails(self):
+        with mock.patch.object(gift_nifty, "_samples", return_value=self.gift_rows(3)), \
+             mock.patch.object(gift_nifty, "_stand_in", side_effect=RuntimeError("down")):
+            self.assertEqual(len(gift_nifty.chart()["candles"]), 3)
+        cache.clear()
+        with mock.patch.object(gift_nifty, "_samples", return_value=[]), \
+             mock.patch.object(gift_nifty, "_stand_in", side_effect=RuntimeError("down")):
+            d = gift_nifty.chart()
+        self.assertEqual(d["candles"], [])
+        self.assertIn("No GIFT Nifty candles yet", d["error"])
 
     def test_most_active_survives_nse_refusing(self):
         from . import views
@@ -516,3 +569,105 @@ class StockBehaviourBuildTests(TestCase):
         self.assertIn("Stock Behaviour", html)
         menu = html[html.index('class="site-dd-panel"'):html.index("</div></div>", html.index('class="site-dd-panel"'))]
         self.assertIn("/index-analysis/", menu)
+
+
+class AngelLiveTests(TestCase):
+    """Angel One Live page: the Data menu link, candles and the quote, all read only."""
+
+    INST = {"symbol": "INFY-EQ", "token": "1594", "tick": "0.05"}
+
+    def setUp(self):
+        from django.core.cache import cache
+        cache.clear()
+        Company.objects.create(code="INFY.NS", name="Infosys Limited")
+
+    def api(self, name, **params):
+        return self.client.get(reverse(f"market:angel_live_{name}"), params)
+
+    def patched(self, result=None, error=None):
+        from paper_trading import angel
+        call = mock.Mock(return_value=result, side_effect=error)
+        stack = ExitStack()
+        stack.enter_context(mock.patch.object(angel, "configured", return_value=True))
+        stack.enter_context(mock.patch.object(angel, "instrument", return_value=self.INST))
+        stack.enter_context(mock.patch.object(angel, "_call", call))
+        self.addCleanup(stack.close)
+        return call
+
+    def test_page_is_in_the_data_menu_and_lists_stocks(self):
+        r = self.client.get(reverse("market:angel_live"), {"company": "infy.ns"})
+        self.assertEqual(r.status_code, 200)
+        self.assertContains(r, "Angel One Live")
+        self.assertContains(r, '<option value="INFY.NS">Infosys Limited</option>')
+        self.assertContains(r, 'const opening = "INFY.NS"')
+        self.assertContains(self.client.get(reverse("market:chart_view")), reverse("market:angel_live"))
+
+    def test_candles_carry_ist_shifted_seconds(self):
+        self.patched({"data": [["2026-11-06T09:15:00+05:30", 100, 102, 99, 101, 500]]})
+        d = self.api("candles", code="INFY.NS", interval="FIVE_MINUTE").json()
+        self.assertEqual(d["seconds"], 300)
+        c = d["candles"][0]
+        self.assertEqual(c["time"] % 86400, 9 * 3600 + 15 * 60)           # reads 09:15 on the chart
+        self.assertEqual((c["open"], c["high"], c["low"], c["close"], c["volume"]), (100, 102, 99, 101, 500))
+
+    def test_no_candles_is_an_empty_chart_not_an_error(self):
+        self.patched({"data": None})
+        r = self.api("candles", code="INFY.NS")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["candles"], [])
+
+    def test_quote_fields_and_short_cache(self):
+        call = self.patched({"data": {"fetched": [{"ltp": 1167.9, "open": 1182.8, "high": 1198.8, "low": 1163.5, "close": 1167.4,
+                                                   "netChange": 0.5, "percentChange": 0.04, "tradeVolume": 1000, "avgPrice": 1179.03,
+                                                   "lowerCircuit": 1050.7, "upperCircuit": 1284.1,
+                                                   "exchTradeTime": "06-Nov-2026 13:28:18"}]}})
+        d = self.api("quote", code="INFY.NS").json()
+        self.assertEqual((d["ltp"], d["prev_close"], d["volume"]), (1167.9, 1167.4, 1000))
+        self.assertEqual(d["ts"] % 86400, 13 * 3600 + 28 * 60 + 18)
+        self.api("quote", code="INFY.NS")
+        self.assertEqual(call.call_count, 1)                              # a second tab costs no extra call
+
+    def test_bad_input_is_refused_without_calling_angel_one(self):
+        call = self.patched()
+        self.assertEqual(self.api("candles", code="INFY.NS", interval="TEN_YEARS").status_code, 400)
+        self.assertEqual(self.api("quote").status_code, 400)
+        call.assert_not_called()
+
+    def test_an_angel_one_failure_tries_the_next_account_then_reports(self):
+        from paper_trading import angel
+        call = self.patched(error=angel.AngelError("Angel One: session lost"))
+        r = self.api("quote", code="INFY.NS")
+        self.assertEqual(r.status_code, 502)
+        self.assertIn("session lost", r.json()["error"])
+        self.assertEqual(call.call_count, len(angel.ACCOUNTS))
+
+    def test_too_fast_is_retried_and_the_first_reason_is_shown(self):
+        from paper_trading import angel
+        ok = {"data": [["2026-11-06T09:15:00+05:30", 1, 2, 1, 2, 5]]}
+        rate = angel.AngelError("Angel One: Access denied because of exceeding access rate")
+        call = self.patched(error=[rate, ok])
+        with mock.patch.object(angel._time, "sleep"):
+            r = self.api("candles", code="INFY.NS", interval="ONE_HOUR")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(call.call_count, 2)
+        cache.clear()
+        call.side_effect = [angel.AngelError("Angel One: refused"), angel.AngelError("Adapter not connected")]
+        self.assertIn("refused", self.api("candles", code="INFY.NS", interval="ONE_HOUR").json()["error"])
+        cache.clear()
+        call.side_effect = rate
+        with mock.patch.object(angel._time, "sleep"):
+            self.assertIn("trying again", self.api("candles", code="INFY.NS", interval="ONE_HOUR").json()["error"])
+
+    def test_no_data_from_angel_one_is_an_empty_chart(self):
+        from paper_trading import angel
+        self.patched(error=angel.AngelError("Angel One: No Data Available"))
+        r = self.api("candles", code="INFY.NS")
+        self.assertEqual((r.status_code, r.json()["candles"]), (200, []))
+
+    def test_no_account_in_env(self):
+        from paper_trading import angel
+        with mock.patch.object(angel, "configured", return_value=False), \
+             mock.patch.object(angel, "instrument", return_value=self.INST):
+            r = self.api("candles", code="INFY.NS")
+        self.assertEqual(r.status_code, 502)
+        self.assertIn("No Angel One account", r.json()["error"])

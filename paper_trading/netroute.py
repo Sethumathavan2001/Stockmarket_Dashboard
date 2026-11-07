@@ -151,13 +151,13 @@ def public_ip(account, use_cache=True):
     return _public[key][1]
 
 
-def describe(account):
-    """For the page: which connection the account uses and the public IP it shows."""
+def describe(account, fresh=False):
+    """For the page: which connection the account uses and the public IP it shows (fresh: asked again now)."""
     kind, value = setting(account)
     out = {"setting": f"{'adapter' if kind == 'interface' else 'address'} {value}" if kind else "normal route (not set)"}
     try:
         out["local_ip"] = source_ip(account)
-        out["public_ip"] = public_ip(account)
+        out["public_ip"] = public_ip(account, use_cache=not fresh)
     except Exception as exc:
         out["error"] = str(exc)
     return out

@@ -6,7 +6,10 @@ Stock Prediction page and API.
                                                  (news=1: tilt it by the stock's news since the last close)
   POST /api/train/<code>/                      train the model zoo for a stock (background)
   GET  /api/train/<code>/                      training progress
-  GET  /api/predict/                           every trained stock (from the saved manifests)
+  GET  /api/predict/                           every trained stock and index with its LTP (from the saved
+                                               manifests); stocks at MIN_LTP or below are left out
+
+<code> is a stock, or an index like NIFTY.IDX (prediction/indices.py).
 """
 import logging
 import math
@@ -15,20 +18,21 @@ import threading
 from django.core.cache import cache
 from django.db import connection
 from django.http import JsonResponse
-from django.shortcuts import get_object_or_404, render
+from django.shortcuts import render
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_http_methods
 
 from market.models import Company
 
 from . import datasets as ds
-from . import engine
+from . import engine, indices
 
 logger = logging.getLogger(__name__)
 
 TRAIN_KEY = "prediction:train:{code}"
 RUNNING_KEY = "prediction:train:running"      # one stock trains at a time - training uses every CPU core
 _START_LOCK = threading.Lock()
+MIN_LTP = 20                                  # the Trained stocks list leaves out stocks at or below this price
 
 
 def _clean(obj):
@@ -49,20 +53,21 @@ def stock_prediction_view(request):
     trained = {m["company"] for m in engine.list_manifests()}
     return render(request, "prediction/stock_prediction.html", {
         "companies": [dict(c, trained=c["code"] in trained) for c in companies],
+        "indices": [{"code": a.code, "name": a.name, "trained": a.code in trained} for a in indices.all_assets()],
         "initial": {"company": request.GET.get("company", ""), "timeframe": request.GET.get("timeframe", "intraday"),
                     "news": request.GET.get("news") == "1"},
         "model_names": engine.model_names(),
     })
 
 
-def _train_worker(company_id, code):
+def _train_worker(code):
     key = TRAIN_KEY.format(code=code)
 
     def progress(message, fraction):
         cache.set(key, {"state": "training", "message": message, "percent": round(fraction * 100, 1)}, 3600)
 
     try:
-        company = Company.objects.get(id=company_id)
+        company = indices.asset_or_404(code)
         manifest = engine.train_stock(company, progress=progress)
         errors = {tf: v["error"] for tf, v in manifest["timeframes"].items() if "error" in v}
         cache.set(key, {"state": "completed", "percent": 100, "trained_at": manifest["trained_at"],
@@ -77,7 +82,7 @@ def _train_worker(company_id, code):
 
 @require_http_methods(["GET", "POST"])
 def train_company(request, company_code):
-    company = get_object_or_404(Company, code=company_code)
+    company = indices.asset_or_404(company_code)
     key = TRAIN_KEY.format(code=company.code)
     if request.method == "GET":
         return JsonResponse(cache.get(key) or {"state": "idle"})
@@ -91,22 +96,25 @@ def train_company(request, company_code):
                                                              "Try again when it finishes."}, status=409)
         cache.set(RUNNING_KEY, company.code, 3600)
         cache.set(key, {"state": "training", "message": "Starting...", "percent": 0}, 3600)
-        threading.Thread(target=_train_worker, args=(company.id, company.code), daemon=True).start()
+        threading.Thread(target=_train_worker, args=(company.code,), daemon=True).start()
     return JsonResponse(cache.get(key), status=202)
 
 
 @require_GET
 def predict_company(request, company_code):
-    company = get_object_or_404(Company, code=company_code)
+    company = indices.asset_or_404(company_code)
     timeframe = request.GET.get("timeframe", "intraday")
     if timeframe not in ds.TIMEFRAMES:
         return JsonResponse({"error": "timeframe must be 'intraday' or 'daily'."}, status=400)
     try:
         news = None
-        if request.GET.get("news") == "1":
+        asked = request.GET.get("news") == "1"
+        if asked and not indices.is_index(company):
             from news.signal import news_signal
             news = news_signal
         data = engine.predict_stock(company, timeframe, news=news)
+        if asked and indices.is_index(company):
+            data["news_status"] = indices.NO_NEWS
     except engine.NotTrained as exc:
         return JsonResponse({"error": str(exc), "not_trained": True}, status=404)
     except ValueError as exc:
@@ -119,4 +127,13 @@ def predict_company(request, company_code):
 
 @require_GET
 def models_overview(request):
-    return JsonResponse(_clean({"stocks": engine.overview()}))
+    rows = engine.overview()
+    prices = indices.last_prices([r["company"] for r in rows])
+    shown = []
+    for r in rows:
+        r["ltp"] = prices.get(r["company"])
+        r["is_index"] = r["company"].endswith(indices.SUFFIX)
+        if r["is_index"] or r["ltp"] is None or r["ltp"] > MIN_LTP:
+            shown.append(r)
+    shown.sort(key=lambda r: not r["is_index"])                   # indices first; each keeps its order
+    return JsonResponse(_clean({"stocks": shown, "hidden": len(rows) - len(shown), "min_ltp": MIN_LTP}))

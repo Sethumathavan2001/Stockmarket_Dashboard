@@ -25,7 +25,7 @@
   .page-head .tag{ font-size:12.5px; font-weight:500; color:var(--text-muted); border-left:1px solid var(--border); padding-left:12px; }
 
   .layout{ display:grid; grid-template-columns:minmax(0,1fr) 400px; gap:20px; align-items:start; }
-  .aside{ position:sticky; top:76px; max-height:calc(100vh - 90px); overflow-y:auto; padding-bottom:10px; }
+  .aside{ position:sticky; top:calc(var(--site-top-h) + 16px); max-height:calc(100vh - var(--site-top-h) - 30px); overflow-y:auto; padding-bottom:10px; }
   @media (max-width:1150px){ .layout{ grid-template-columns:1fr; } .aside{ position:static; max-height:none; } }
 
   .filter-bar{ background:var(--panel); border:1px solid var(--border); border-radius:var(--radius); padding:14px 18px; margin-top:16px;

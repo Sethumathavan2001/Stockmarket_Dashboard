@@ -115,6 +115,14 @@
       <select id="companySelect">
         <option value="">Select a company</option>
         {% for c in companies %}<option value="{{ c.code }}">{{ c.code }} — {{ c.name }}</option>{% endfor %}
+        <optgroup label="Indices" hidden>{% for i in indices %}<option value="{{ i.code }}">{{ i.name }}</option>{% endfor %}</optgroup>
+      </select>
+    </div>
+    <div class="field">
+      <label for="indexSelect">Index</label>
+      <select id="indexSelect">
+        <option value="">Select an index</option>
+        {% for i in indices %}<option value="{{ i.code }}">{% if i.trained %}● {% endif %}{{ i.name }}</option>{% endfor %}
       </select>
     </div>
     <div class="field">
@@ -529,6 +537,14 @@ els.iv.addEventListener('click', (e) => {
   if (els.company.value) load();
 });
 els.company.addEventListener('change', () => { els.day.value = ''; els.asof.value = ''; });
+/* The Index dropdown drives the company list, which holds the indices too (hidden): the rest of the page just reads it */
+const indexSelect = $('indexSelect');
+function syncIndex() { indexSelect.value = [...indexSelect.options].some((o) => o.value === els.company.value) ? els.company.value : ''; }
+indexSelect.addEventListener('change', () => {
+  els.company.value = indexSelect.value;
+  els.company.dispatchEvent(new Event('change'));
+});
+els.company.addEventListener('change', syncIndex);
 els.day.addEventListener('change', () => { els.asof.value = ''; if (els.company.value) load(); });
 els.asof.addEventListener('change', () => { if (els.company.value) load(); });
 els.auto.addEventListener('change', () => S.data && schedule(S.data));
@@ -537,7 +553,7 @@ $('logReliable').addEventListener('change', () => S.data && drawLog(S.data));
 
 initChart();
 if (INITIAL.interval === '1m') els.iv.querySelector('[data-iv="1m"]').click();
-if (INITIAL.company) { els.company.value = INITIAL.company; if (els.company.value) load(); }
+if (INITIAL.company) { els.company.value = INITIAL.company; syncIndex(); if (els.company.value) load(); }
 })();
 </script>
 </body>

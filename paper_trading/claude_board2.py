@@ -19,7 +19,7 @@ the background and progress() reports how far it is.
 import json
 import logging
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import time as _time
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -27,11 +27,11 @@ import numpy as np
 
 from prediction.market_time import IST
 
+from . import board_pool
 from . import claude_board as board
 
 log = logging.getLogger(__name__)
 
-WORKERS = 4
 FLAT = 0.2                     # an index or world market within this % of its previous close has no direction
 BREADTH_SHARE = 0.6            # this share of the indices one way makes a direction
 BREADTH_GROUPS = ("INDICES ELIGIBLE IN DERIVATIVES", "BROAD MARKET INDICES", "SECTORAL INDICES")
@@ -495,50 +495,44 @@ def more_candidates(cands, why, common, home, oi):
 
 
 def build():
-    from django.db import connection
-
     from market import behaviour_data
-    from market.views import live_snapshot
 
-    live = live_snapshot(tolerant=True)
-    pdh = {r["nsecode"] for r in live.get("pdh_data", [])}
-    pdl = {r["nsecode"] for r in live.get("pdl_data", [])}
-    oi = {r["symbol"]: r for r in live.get("open_intrest") or [] if r.get("symbol")}
-    _set(step="Reading all indices and global markets")
-    market = _attempt("NIFTY", board.market_direction)
-    gen = datetime.now(IST).replace(microsecond=0)
-    ctx = read_context(market, gen)
+    started = _time.monotonic()
+    with board_pool.Workers() as workers:
+        _set(step="Reading the Live page, NIFTY and the news")
+        first = board.opening_reads()
+        live, market = first["live"], first["market"]
+        pdh = {r["nsecode"] for r in live.get("pdh_data", [])}
+        pdl = {r["nsecode"] for r in live.get("pdl_data", [])}
+        oi = {r["symbol"]: r for r in live.get("open_intrest") or [] if r.get("symbol")}
+        _set(step="Reading all indices and global markets")
+        gen = datetime.now(IST).replace(microsecond=0)
+        ctx = read_context(market, gen)
 
-    _set(step="Reading Stock Behaviour for today")
-    data = behaviour_data.load()
-    common, home, ranges = [], {}, {}
-    if data is not None:
-        common, home = conditions(data, ctx)
-        ranges = session_ranges(data, ctx["session"])
+        _set(step="Reading Stock Behaviour for today")
+        data = behaviour_data.load()
+        common, home, ranges = [], {}, {}
+        if data is not None:
+            common, home = conditions(data, ctx)
+            ranges = session_ranges(data, ctx["session"])
 
-    _set(step="Choosing candidate stocks")
-    cands, why = more_candidates(*board.candidates(live), common, home, oi)
-    _set(total=len(cands), done=0)
+        _set(step="Choosing candidate stocks")
+        cands, why = more_candidates(*board.candidates(live, fresh_news=False), common, home, oi)
+        _set(total=len(cands), done=0)
+        done = {}
 
-    def analyse(code):
-        try:
-            s = board.score(board.gather(code, why[code]), market, pdh, pdl)
-            key = _attempt("home index", lambda: home_index(code))
-            return rescore(s, ctx, common + ([home[key]] if key in home else []), ranges.get(code), oi)
-        except Exception:
-            log.warning("Claude Orders 2.0 refresh: %s failed", code, exc_info=True)
-            return None
-        finally:
-            connection.close()                                    # this worker's own database connection
+        def score_one(code, stock):
+            try:
+                if stock:
+                    s = board.score(stock, market, pdh, pdl)
+                    key = _attempt("home index", lambda: home_index(code))
+                    done[code] = rescore(s, ctx, common + ([home[key]] if key in home else []), ranges.get(code), oi)
+            except Exception:
+                log.warning("Claude Orders 2.0 refresh: %s failed", code, exc_info=True)
 
-    scored = []
-    with ThreadPoolExecutor(WORKERS, thread_name_prefix="claude-board-2") as pool:
-        jobs = {pool.submit(analyse, code): code for code in cands}
-        for i, job in enumerate(as_completed(jobs), 1):
-            _set(step=f"Analysed {jobs[job].removesuffix('.NS')}", done=i)
-            if job.result():
-                scored.append(job.result())
+        workers.gather(cands, why, lambda step, n: _set(step=step, done=n), score_one)
 
+    scored = [done[code] for code in cands if code in done]       # the same order every time
     _set(step="Writing orders")
     picks = sorted((s for s in scored if s.get("decision") in ("BUY", "SELL") and s.get("plan")),
                    key=lambda s: (s["decision"] != "SELL", -abs(s["score"])))     # SELL first, then BUY
@@ -554,4 +548,5 @@ def build():
         "checked": len(cands), "counts": counts,
         "market": market, "live_ok": bool(live.get("gainers") or live.get("loosers")),
         "orders": orders,
+        "seconds": round(_time.monotonic() - started), "angel_prices": workers.live_prices,
     }

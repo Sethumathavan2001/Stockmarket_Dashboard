@@ -34,6 +34,7 @@ urlpatterns = [
     path("api/paper/claude-orders/refresh/", claude_orders.refresh, name="claude_orders_refresh"),
     path("api/paper/claude-orders/wallets/", claude_orders.wallets, name="claude_orders_wallets"),
     path("api/paper/claude-orders/exit/", claude_orders.exit_trades, name="claude_orders_exit"),
+    path("api/paper/claude-orders/connect/", claude_orders.connect_ip, name="claude_orders_connect"),
     path("claude-orders/history/", claude_orders.history, name="claude_orders_history"),
     path("claude-orders-2/", claude_orders2.page, name="claude_orders2"),
     path("api/paper/claude-orders-2/", claude_orders2.state, name="claude_orders2_state"),

@@ -40,6 +40,9 @@ SESSION_HOURS = 6
 FUNDS_SECONDS = 30
 TIMEOUT = 20              # seconds per request (the SDK's own default, 7 s, fails on a slow moment)
 NET_TRIES = 3             # attempts on a network error (see _retry)
+RATE_TRIES = 3            # attempts when Angel One says "exceeding access rate"
+QUOTE_BATCH = 50          # stocks in one market quote call (Angel One's limit)
+QUOTE_GAP = 1.1           # seconds between those calls
 
 _lock = threading.RLock()
 _sessions = {}            # account -> (SmartConnect, logged in at)
@@ -191,6 +194,68 @@ def _call(account, fn, order=False):
 
 
 # ---------------------------------------------------------------- data
+def read_any(fn):
+    """fn(SmartConnect) through the first account that answers: (account, response).  For market data only."""
+    accounts = [a for a in ACCOUNTS if configured(a)]
+    if not accounts:
+        raise AngelError("No Angel One account in .env - market data from Angel One needs one.")
+    error = None
+    for acc in accounts:
+        for attempt in range(RATE_TRIES):
+            try:
+                return acc, _call(acc, fn)
+            except AngelError as exc:
+                text = str(exc).lower()
+                if "no data" in text:                     # nothing for that window: an empty answer, not a failure
+                    return acc, {}
+                error = error or exc                      # the first account's reason is the one worth showing
+                if "access rate" not in text:
+                    break                                 # this account can't: try the next
+                _time.sleep(1 + attempt)                  # too fast: Angel One allows only a few calls a second
+    if "access rate" in str(error).lower():
+        raise AngelError("Angel One is limiting requests for a moment - trying again.")
+    raise error
+
+
+def quotes(tokens, exchange="NSE"):
+    """{token: full quote}, QUOTE_BATCH tokens a call at about one call a second (Angel One's limit)."""
+    out = {}
+    for i in range(0, len(tokens), QUOTE_BATCH):
+        if i:
+            _time.sleep(QUOTE_GAP)
+        part = tokens[i:i + QUOTE_BATCH]
+        res = read_any(lambda sc: sc.getMarketData("FULL", {exchange: part}))[1]
+        for q in ((res or {}).get("data") or {}).get("fetched") or []:
+            out[str(q.get("symbolToken"))] = q
+    return out
+
+
+def trade_time(quote):
+    """When a quote's last trade happened (IST), or None."""
+    try:
+        return datetime.strptime(quote.get("exchTradeTime") or "", "%d-%b-%Y %H:%M:%S").replace(tzinfo=IST)
+    except ValueError:
+        return None
+
+
+def connect(account):
+    """The Connect IP button: check this account's connection and public IP from scratch, then log in again."""
+    if not configured(account):
+        return {"name": ACCOUNTS[account], "ok": False, "route": {}, "error": f"Not set up - add {', '.join(config(account)[1])} to .env"}
+    route = netroute.describe(account, fresh=True)
+    out = {"name": ACCOUNTS[account], "ok": False, "route": route, "error": route.get("error")}
+    if out["error"]:
+        return out
+    try:
+        client(account, fresh=True)
+    except AngelError as exc:
+        out["error"] = str(exc)
+        return out
+    wallet = funds(account, use_cache=False)
+    out.update(ok=not wallet.get("error"), error=wallet.get("error"), available=wallet.get("available"))
+    return out
+
+
 def funds(account, use_cache=True):
     """{"configured", "available", "net", "used", "error"} - the RMS limits (cash available to trade)."""
     if not configured(account):

@@ -1,12 +1,13 @@
 import json
 import shutil
 import tempfile
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from unittest import mock
 
 import numpy as np
 import pandas as pd
 from django.test import TestCase, override_settings
+from django.urls import reverse
 
 from market.models import Company, DailyData, FiveMinuteData
 
@@ -142,3 +143,124 @@ class PredictionEngineTests(TestCase):
         self.assertFalse(engine.news_applies("intraday", pd.Timestamp("2026-10-22 15:25", tz=IST), now))
         self.assertTrue(engine.news_applies("daily", date(2026, 10, 22), now))   # previous session's close
         self.assertFalse(engine.news_applies("daily", date(2026, 10, 20), now))
+
+
+class IndexPredictionTests(TestCase):
+    """Indices on the Stock Prediction and Candle Predictor pages, and the Trained stocks list."""
+
+    def setUp(self):
+        from django.core.cache import cache
+        from market.models import Company, DailyData, IndexDaily, IndexFiveMinute, MarketIndex
+        cache.clear()
+        self.nifty = MarketIndex.objects.create(key="NIFTY", name="NIFTY 50", exchange="NSE", angel_token="99926000")
+        self.vix = MarketIndex.objects.create(key="INDIAVIX", name="INDIA VIX", exchange="NSE", angel_token="99926017", sort=1)
+        start = datetime(2026, 11, 2, 3, 45, tzinfo=timezone.utc)      # 09:15 IST
+        IndexFiveMinute.objects.bulk_create([
+            IndexFiveMinute(index=self.nifty, timestamp=start + timedelta(minutes=5 * i), date=date(2026, 11, 2),
+                            open=100 + i, high=101 + i, low=99 + i, close=100.5 + i) for i in range(3)])
+        IndexDaily.objects.create(index=self.nifty, date=date(2026, 11, 2), open=1, high=2, low=1, close=25000)
+        IndexDaily.objects.create(index=self.vix, date=date(2026, 11, 2), open=1, high=2, low=1, close=17.5)
+        self.low = Company.objects.create(code="LOW.NS", name="Low Price")
+        self.high = Company.objects.create(code="HIGH.NS", name="High Price")
+        self.edge = Company.objects.create(code="EDGE.NS", name="Exactly Twenty")
+        for c, close in ((self.low, 15), (self.high, 500), (self.edge, 20)):
+            DailyData.objects.create(company=c, date=date(2026, 11, 2), open=1, high=1, low=1, close=close)
+
+    def no_angel(self):
+        from paper_trading import angel
+        return mock.patch.object(angel, "configured", return_value=False)
+
+    def test_a_code_finds_an_index_or_a_stock(self):
+        from django.http import Http404
+        from prediction import indices
+        self.assertEqual(indices.asset_or_404("NIFTY.IDX").name, "NIFTY 50")
+        self.assertEqual(indices.asset_or_404("LOW.NS").name, "Low Price")
+        with self.assertRaises(Http404):
+            indices.asset_or_404("NOPE.IDX")
+
+    def test_index_history_reads_like_a_stock_in_ist(self):
+        from prediction import data, indices
+        df = data.load_historical_candles(indices.find("NIFTY.IDX"))
+        self.assertEqual(len(df), 3)
+        self.assertEqual(df["timestamp"].iloc[0].strftime("%H:%M"), "09:15")
+        self.assertEqual((df["close"].iloc[-1], df["volume"].iloc[-1]), (102.5, 0.0))
+
+    def test_history_keeps_the_latest_rows(self):
+        from prediction import indices
+        with mock.patch.object(indices, "HISTORY_ROWS", 2):
+            df = indices.history(indices.find("NIFTY.IDX"))
+        self.assertEqual(list(df["close"]), [101.5, 102.5])
+
+    def test_live_candles_come_from_angel_one_and_never_yahoo(self):
+        from paper_trading import angel
+        from prediction import datasets, indices
+        rows = {"data": [["2026-11-02T09:25:00+05:30", 1, 2, 1, 150.0, 0], ["2026-11-02T09:30:00+05:30", 1, 2, 1, 151.0, 0]]}
+        with mock.patch.object(angel, "read_any", return_value=("vivek", rows)), mock.patch("yfinance.Ticker") as ticker:
+            df = datasets.load_intraday(indices.find("NIFTY.IDX"), live=True)
+        ticker.assert_not_called()
+        self.assertEqual(list(df["close"]), [100.5, 101.5, 150.0, 151.0])     # Angel One's newer version of 09:25 wins
+
+    def test_a_failed_angel_one_call_falls_back_to_stored_candles(self):
+        from paper_trading import angel
+        from prediction import datasets, indices
+        with mock.patch.object(angel, "read_any", side_effect=angel.AngelError("down")):
+            df = datasets.load_intraday(indices.find("NIFTY.IDX"), live=True)
+        self.assertEqual(len(df), 3)
+
+    def test_a_real_vix_jump_keeps_the_daily_history(self):
+        from market.models import IndexDaily
+        from prediction import datasets, indices
+        closes = [12, 12.5, 25, 13, 13.5]                          # doubles for a day, then falls back
+        for i, c in enumerate(closes):
+            IndexDaily.objects.create(index=self.vix, date=date(2026, 3, 2) + timedelta(days=i), open=c, high=c, low=c, close=c)
+        self.assertEqual(len(datasets.load_daily(indices.find("INDIAVIX.IDX"))), 6)
+
+    def test_pages_show_the_index_dropdown(self):
+        for url in (reverse("stock_prediction_page"), reverse("candle_predictor_page")):
+            r = self.client.get(url)
+            self.assertContains(r, 'id="indexSelect"')
+            self.assertContains(r, 'value="NIFTY.IDX"')
+
+    def test_index_without_models_asks_for_training(self):
+        with mock.patch.object(engine, "load_manifest", return_value=None):
+            r = self.client.get(reverse("predict_company", args=["NIFTY.IDX"]))
+        self.assertEqual(r.status_code, 404)
+        self.assertTrue(r.json()["not_trained"])
+
+    def test_news_is_not_used_for_an_index(self):
+        from prediction import engine
+        with mock.patch.object(engine, "predict_stock", return_value={"company": "NIFTY.IDX"}) as p:
+            d = self.client.get(reverse("predict_company", args=["NIFTY.IDX"]), {"news": "1"}).json()
+        self.assertIsNone(p.call_args.kwargs["news"])
+        self.assertIn("isn't used", d["news_status"])
+
+    def overview(self, codes):
+        from prediction import engine
+        rows = [{"company": c, "name": c, "horizons": [], "edges": 0} for c in codes]
+        with mock.patch.object(engine, "overview", return_value=rows), self.no_angel():
+            return self.client.get(reverse("predict_all")).json()
+
+    def test_list_has_ltp_and_drops_stocks_at_20_or_below(self):
+        d = self.overview(["LOW.NS", "HIGH.NS", "EDGE.NS"])
+        self.assertEqual([(s["company"], s["ltp"]) for s in d["stocks"]], [("HIGH.NS", 500.0)])
+        self.assertEqual(d["hidden"], 2)
+
+    def test_an_index_stays_at_any_level_and_comes_first(self):
+        d = self.overview(["HIGH.NS", "INDIAVIX.IDX", "NIFTY.IDX"])
+        self.assertEqual([s["company"] for s in d["stocks"]], ["INDIAVIX.IDX", "NIFTY.IDX", "HIGH.NS"])
+        self.assertEqual(d["stocks"][0]["ltp"], 17.5)
+
+    def test_a_stock_with_no_price_is_kept(self):
+        d = self.overview(["NEW.NS"])
+        self.assertEqual((d["stocks"][0]["company"], d["stocks"][0]["ltp"], d["hidden"]), ("NEW.NS", None, 0))
+
+    def test_ltp_comes_from_angel_one_by_exchange(self):
+        from market.models import MarketIndex
+        from paper_trading import angel
+        from prediction import indices
+        MarketIndex.objects.create(key="SENSEX", name="SENSEX", exchange="BSE", angel_token="99919000", sort=2)
+        answers = {"NSE": {"1": {"ltp": 30.5}, "99926000": {"ltp": 25100.0}}, "BSE": {"99919000": {"ltp": 81000.0}}}
+        with mock.patch.object(angel, "instrument", return_value={"token": "1"}), \
+             mock.patch.object(angel, "quotes", side_effect=lambda tokens, exchange: answers[exchange]):
+            out = indices.last_prices(["HIGH.NS", "NIFTY.IDX", "SENSEX.IDX"])
+        self.assertEqual(out, {"HIGH.NS": 30.5, "NIFTY.IDX": 25100.0, "SENSEX.IDX": 81000.0})
