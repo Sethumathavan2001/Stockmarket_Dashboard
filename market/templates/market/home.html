@@ -12,13 +12,13 @@
       <thead>
         <tr>
           <th>Index</th><th class="num">Last</th><th class="num">Change</th><th>Outlook</th>
-          <th>Previous day</th><th>Today</th><th>Gap</th><th title="Past days with the same setup: how often the index closed above its open">History</th><th>Global</th>
+          <th>Last 5 days</th><th>Previous day</th><th>Today open</th><th>Today</th><th title="Past days with the same setup: how often the index closed above its open">History</th><th>News</th><th>Global</th>
         </tr>
       </thead>
-      <tbody id="outlookRows"><tr><td colspan="9" class="outlook-empty">Reading the indices...</td></tr></tbody>
+      <tbody id="outlookRows"><tr><td colspan="11" class="outlook-empty">Reading the indices...</td></tr></tbody>
     </table>
   </div>
-  <p class="outlook-note">Equal-weight average of the five readings; hover a cell for its numbers. This describes the market now and is not a forecast. Tested on 2019 to 2026, the read at the open matched the close against the previous close 61% of the time, mostly because the gap had already happened, and the move from open to close only about 50% of the time.</p>
+  <p class="outlook-note">Equal-weight average of the readings; hover a cell for its numbers. This describes the market now and is not a forecast. Tested on 2019 to 2026, the read at the open matched the close against the previous close 61% of the time, mostly because the gap had already happened, and the move from open to close only about 50% of the time. News has no stored history, so it is untested.</p>
 </section>
 
 <h1>All Companies</h1>
@@ -208,7 +208,7 @@
         .then((d) => {
           $('outlookCount').textContent = `${d.bullish} Bullish, ${d.bearish} Bearish`;
           $('outlookWhen').textContent = when(d);
-          $('outlookRows').innerHTML = d.indices.map(row).join('') || '<tr><td colspan="9" class="outlook-empty">No index data yet.</td></tr>';
+          $('outlookRows').innerHTML = d.indices.map(row).join('') || '<tr><td colspan="11" class="outlook-empty">No index data yet.</td></tr>';
         })
         .catch((err) => {
           $('outlookCount').textContent = '';

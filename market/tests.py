@@ -179,6 +179,11 @@ class IndexOutlookTests(TestCase):
         IndexDaily.objects.bulk_create(rows)
         self.prev_close = 140.0
         self.world = {"indices": [{"short": "US", "pct": 1.0}, {"short": "Japan", "pct": 1.0}]}
+        self.news = [self.headline("positive", "2025-03-05T10:00:00+05:30", f"Good day {n}") for n in range(3)]
+
+    @staticmethod
+    def headline(label, when, title="Markets"):
+        return {"title": title, "summary": "", "time": when, "sentiment": {"label": label, "score": 1.0, "strong": False}}
 
     def quote(self, tokens, exchange="NSE"):
         c = self.prev_close
@@ -190,6 +195,7 @@ class IndexOutlookTests(TestCase):
         from . import index_data, index_outlook, indices
         with override_settings(MARKET_HOLIDAYS=[]), mock.patch.object(angel, "quotes", side_effect=self.quote), \
                 mock.patch.object(index_data, "update_daily") as self.update, \
+                mock.patch("news.fetch.market_news", return_value={"items": self.news}), \
                 mock.patch.object(indices, "global_indices", return_value=self.world):
             return index_outlook.build(now or self.NOW)
 
@@ -203,6 +209,54 @@ class IndexOutlookTests(TestCase):
         self.assertIn("Below yesterday's low", o.today(100, 101, 90, 91, 110, 95)["text"])
         self.assertEqual(o.gap(102, 100)["score"], 1.0)
         self.assertEqual(o.gap(99.9, 100)["score"], -0.2)
+
+    def test_last_days(self):
+        from . import index_outlook as o
+        day = date(2025, 1, 1)
+        rising = [(day, 100.0 + i, 101.5 + i, 99.5 + i, 101.0 + i) for i in range(25)]
+        f = o.last_days(rising)
+        self.assertEqual(f["short"], "5 of 5 green, +4.17%")
+        self.assertEqual(f["score"], 1.0)
+        falling = [(day, 200.0 - i, 200.5 - i, 198.5 - i, 199.0 - i) for i in range(25)]
+        self.assertEqual(o.last_days(falling)["score"], -1.0)
+        self.assertIsNone(o.last_days(rising[:5])["score"])
+
+    def test_open_outside_yesterdays_range_counts_in_full(self):
+        from . import index_outlook as o
+        above = o.gap(100.2, 100, 100.1, 98)
+        self.assertEqual(above["score"], 1.0)
+        self.assertIn("above yesterday's high", above["text"])
+        self.assertEqual(o.gap(99.8, 100, 102, 99.9)["score"], -1.0)
+        inside = o.gap(100.2, 100, 103, 98)
+        self.assertEqual(inside["score"], 0.4)
+        self.assertIn("inside yesterday's range", inside["text"])
+
+    def test_headlines(self):
+        from . import index_outlook as o
+        now = self.NOW
+        new, old = "2025-03-05T10:30:00+05:30", "2025-03-05T04:30:00+05:30"
+        items = [self.headline("positive", new), self.headline("positive", new), self.headline("negative", old),
+                 self.headline("neutral", new), self.headline("negative", "2025-03-03T10:00:00+05:30")]    # the last is before the window
+        f = o.headlines(items, "NIFTY", now)
+        self.assertGreater(f["score"], 1 / 3)                                     # the old negative counts less than a third
+        self.assertIn("4 headlines, 2 positive, 1 negative", f["text"])
+        self.assertIsNone(o.headlines(items[:2], "NIFTY", now)["score"])
+
+    def test_sector_headlines_count_for_their_index(self):
+        from . import index_outlook as o
+        new = "2025-03-05T10:30:00+05:30"
+        items = [self.headline("positive", new) for _ in range(3)] + [self.headline("negative", new, f"RBI hits banks {n}") for n in range(3)]
+        self.assertEqual(o.headlines(items, "NIFTY", self.NOW)["score"], 0.0)
+        bank = o.headlines(items, "BANKNIFTY", self.NOW)
+        self.assertEqual(bank["score"], -0.5)
+        self.assertIn("Banking: 3 headlines, 0 positive, 3 negative", bank["text"])
+        self.assertEqual(bank["short"], "Negative, Banking 0 up 3 down")
+
+    def test_news_failure_leaves_the_rest_working(self):
+        from . import index_outlook as o
+        with mock.patch("news.fetch.market_news", side_effect=RuntimeError("down")):
+            self.assertEqual(o.read_news(), [])
+        self.assertIsNone(o.headlines([], "NIFTY", self.NOW)["score"])
 
     def test_world_skips_stale_and_empty(self):
         from . import index_outlook as o
@@ -244,12 +298,17 @@ class IndexOutlookTests(TestCase):
         self.assertEqual(out["mode"], "live")
         self.assertEqual(len(out["indices"]), len(self.ix))
         nifty = out["indices"][0]
-        self.assertEqual((nifty["key"], nifty["verdict"], nifty["agree"], nifty["known"], nifty["day"]), ("NIFTY", "Bullish", 4, 5, "2025-03-05"))
+        self.assertEqual((nifty["key"], nifty["verdict"], nifty["agree"], nifty["known"], nifty["day"]), ("NIFTY", "Bullish", 6, 7, "2025-03-05"))
+        self.assertEqual([f["key"] for f in nifty["factors"]], ["trend", "previous", "gap", "today", "history", "news", "global"])
         by = {f["key"]: f for f in nifty["factors"]}
         self.assertEqual(by["history"]["short"], "100% of 39")
         self.assertEqual(by["gap"]["short"], "+0.00%")
         self.assertIn("Above yesterday's high", by["today"]["text"])
         self.update.assert_not_called()                                           # stored candles are current
+
+    def test_a_holiday_missing_from_the_calendar_is_not_live(self):
+        out = self.build(self.NOW + timedelta(days=1))                            # market hours, but the feed is yesterday's
+        self.assertEqual((out["mode"], out["day"]), ("closed", "2025-03-05"))
 
     def test_history_ignores_the_session_itself(self):
         from .models import IndexDaily
@@ -263,9 +322,9 @@ class IndexOutlookTests(TestCase):
         out = {r["key"]: r for r in self.build()["indices"]}
         vix, nifty = out["INDIAVIX"], out["NIFTY"]
         self.assertTrue(vix["inverted"])
-        for a, b in zip(vix["factors"][:2], nifty["factors"][:2]):
+        for a, b in zip(vix["factors"][:5], nifty["factors"][:5]):
             self.assertEqual(a["score"], -b["score"])
-        self.assertEqual(vix["factors"][4]["score"], nifty["factors"][4]["score"])
+        self.assertEqual(vix["factors"][5:], nifty["factors"][5:])                # news and global are about the market already
         self.assertEqual(vix["verdict"], "Bearish")
 
     def test_before_open_leaves_out_today_and_gap(self):
@@ -273,7 +332,7 @@ class IndexOutlookTests(TestCase):
         nifty = out["indices"][0]
         by = {f["key"]: f for f in nifty["factors"]}
         self.assertEqual(out["mode"], "pre_open")
-        self.assertEqual((nifty["known"], by["today"]["short"], by["gap"]["short"]), (3, "Waiting", "Waiting"))
+        self.assertEqual((nifty["known"], by["today"]["short"], by["gap"]["short"]), (5, "Waiting", "Waiting"))
         self.assertEqual(by["history"]["short"], "100% of 39")
 
     def test_top_up_when_behind_and_only_once_a_day(self):
