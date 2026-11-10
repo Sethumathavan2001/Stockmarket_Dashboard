@@ -22,7 +22,7 @@ from django.shortcuts import render
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_http_methods
 
-from market.models import Company
+from market.models import five_x_companies
 
 from . import datasets as ds
 from . import engine, indices
@@ -49,7 +49,7 @@ def _clean(obj):
 @ensure_csrf_cookie
 @require_GET
 def stock_prediction_view(request):
-    companies = Company.objects.exclude(sector="ETF").order_by("code").values("code", "name")
+    companies = five_x_companies().order_by("code").values("code", "name")
     trained = {m["company"] for m in engine.list_manifests()}
     return render(request, "prediction/stock_prediction.html", {
         "companies": [dict(c, trained=c["code"] in trained) for c in companies],

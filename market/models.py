@@ -8,6 +8,9 @@ class Company(models.Model):
     sector = models.CharField(max_length=100, blank=True)
     industry = models.CharField(max_length=100, blank=True)
     latest_price = models.FloatField(null=True, blank=True)
+    # Angel One's intraday margin (manage.py update_leverage): 5.0 = 5x, 0 = none, empty = never checked
+    leverage = models.FloatField(null=True, blank=True)
+    leverage_checked = models.DateField(null=True, blank=True)
     # 🔥 LOW ANALYSIS
     low_yearly = models.FloatField(null=True, blank=True)
     low_monthly = models.FloatField(null=True, blank=True)
@@ -31,6 +34,14 @@ class Company(models.Model):
     high_weekly_max = models.FloatField(null=True, blank=True)
     def __str__(self):
         return f"{self.code} - {self.name}"
+
+
+LEVERAGE_MIN = 4.9
+
+
+def five_x_companies():
+    """The stocks with 5x intraday margin at Angel One (manage.py update_leverage)."""
+    return Company.objects.exclude(sector="ETF").filter(leverage__gte=LEVERAGE_MIN)
 
 
 class DailyData(models.Model):

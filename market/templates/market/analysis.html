@@ -182,6 +182,24 @@ tbody tr:hover {
         </form>
     </div>
 
+    <!-- leverage pivot: follows the filters above -->
+    <table class="table table-bordered table-sm w-auto mb-3" id="leveragePivot">
+        <thead>
+            <tr>
+                <th>Leverage</th>
+                {% for row in leverage_pivot %}<th class="text-end">{{ row.label }}</th>{% endfor %}
+                <th class="text-end">Total</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td class="fw-semibold">Stocks</td>
+                {% for row in leverage_pivot %}<td class="text-end">{{ row.count }}</td>{% endfor %}
+                <td class="text-end fw-semibold">{{ page_obj.paginator.count }}</td>
+            </tr>
+        </tbody>
+    </table>
+
     <div class="table-container">
         <table class="table table-bordered table-hover">
             <thead>
@@ -189,6 +207,7 @@ tbody tr:hover {
                     <th class="rank-col">#</th>
                     <th><a href="?{{ filters.urlencode }}&mode={{ mode }}&sort=code&order={% if current_order == 'asc' %}desc{% else %}asc{% endif %}&page=1">Company</a></th>
                     <th><a href="?{{ filters.urlencode }}&mode={{ mode }}&sort=code&order={% if current_order == 'asc' %}desc{% else %}asc{% endif %}&page=1">Current Price</a></th>
+                    <th><a href="?{{ filters.urlencode }}&mode={{ mode }}&sort=leverage&order={% if current_order == 'asc' %}desc{% else %}asc{% endif %}&page=1">Leverage</a></th>
                     <th><a href="?{{ filters.urlencode }}&mode={{ mode }}&sort={{ mode }}_yearly&order={% if current_order == 'asc' %}desc{% else %}asc{% endif %}&page=1">Yearly</a></th>
                     <th><a href="?{{ filters.urlencode }}&mode={{ mode }}&sort={{ mode }}_monthly&order={% if current_order == 'asc' %}desc{% else %}asc{% endif %}&page=1">Monthly</a></th>
                     <th><a href="?{{ filters.urlencode }}&mode={{ mode }}&sort={{ mode }}_weekly&order={% if current_order == 'asc' %}desc{% else %}asc{% endif %}&page=1">Weekly</a></th>
@@ -206,6 +225,7 @@ tbody tr:hover {
                     <td>{{ forloop.counter0|add:page_obj.start_index }}</td>
                     <td><a class="pt-link" href="{% url 'paper_trading:page_live' company.code %}" title="Open {{ company.code }} in Paper Trading (Live)">{{ company.code }}</a></td>
                     <td>{{ company.latest_price }}</td>
+                    <td>{{ company.leverage_label }}</td>
 
                     {% if mode == "low" %}
                         <td class="{% if company.low_yearly >= 0 %}positive{% else %}negative{% endif %}">{{ company.low_yearly }}%</td>
@@ -231,7 +251,7 @@ tbody tr:hover {
                 </tr>
                 {% empty %}
                 <tr>
-                    <td colspan="10" class="text-center text-muted py-4">No companies match the current filters.</td>
+                    <td colspan="13" class="text-center text-muted py-4">No companies match the current filters.</td>
                 </tr>
                 {% endfor %}
             </tbody>

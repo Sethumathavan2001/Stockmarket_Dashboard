@@ -1,12 +1,14 @@
 import json
 import tempfile
 from contextlib import ExitStack
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from unittest import mock
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 from django.core.cache import cache
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from . import gift_nifty, indices
@@ -151,6 +153,175 @@ class AnalysisScreenerTests(TestCase):
             self.assertEqual(self.client.get("/analysis/data/").json()["as_of"], "2026-10-30")
             self.assertEqual(self.client.get("/analysis/").status_code, 200)
         self.assertEqual(self.client.get("/analysis/levels/").status_code, 200)
+
+
+class IndexOutlookTests(TestCase):
+    """The Home page's Bullish / Bearish table - no network."""
+
+    NOW = datetime(2025, 3, 5, 11, 0, tzinfo=ZoneInfo("Asia/Kolkata"))             # a Wednesday
+
+    def setUp(self):
+        from . import index_data
+        from .models import IndexDaily
+        cache.clear()
+        self.ix = index_data.sync_catalog()
+        self.days, d = [], date(2025, 3, 4)
+        while len(self.days) < 40:
+            if d.weekday() < 5:
+                self.days.append(d)
+            d -= timedelta(days=1)
+        self.days.reverse()
+        rows = []
+        for index in self.ix.values():
+            for i, day in enumerate(self.days):                                   # all green, closing near the high, flat opens
+                o = 100.0 + i
+                rows.append(IndexDaily(index=index, date=day, open=o, high=o + 1.5, low=o - 0.5, close=o + 1))
+        IndexDaily.objects.bulk_create(rows)
+        self.prev_close = 140.0
+        self.world = {"indices": [{"short": "US", "pct": 1.0}, {"short": "Japan", "pct": 1.0}]}
+
+    def quote(self, tokens, exchange="NSE"):
+        c = self.prev_close
+        return {t: {"symbolToken": t, "open": c, "high": c + 2, "low": c - 0.1, "ltp": c + 1.9, "close": c, "percentChange": 1.36,
+                    "exchFeedTime": "05-Mar-2025 10:59:58"} for t in tokens}
+
+    def build(self, now=None):
+        from paper_trading import angel
+        from . import index_data, index_outlook, indices
+        with override_settings(MARKET_HOLIDAYS=[]), mock.patch.object(angel, "quotes", side_effect=self.quote), \
+                mock.patch.object(index_data, "update_daily") as self.update, \
+                mock.patch.object(indices, "global_indices", return_value=self.world):
+            return index_outlook.build(now or self.NOW)
+
+    def test_readings(self):
+        from . import index_outlook as o
+        day = date(2025, 3, 4)
+        self.assertEqual(o.previous_day(100, 110, 99, 109, day)["short"], "Green, closed top")
+        self.assertLess(o.previous_day(100, 101, 90, 91, day)["score"], -0.8)
+        self.assertGreater(o.today(100, 105, 99, 104.5, 103, 95)["score"], 0.9)
+        self.assertIn("Above yesterday's high", o.today(100, 105, 99, 104.5, 103, 95)["text"])
+        self.assertIn("Below yesterday's low", o.today(100, 101, 90, 91, 110, 95)["text"])
+        self.assertEqual(o.gap(102, 100)["score"], 1.0)
+        self.assertEqual(o.gap(99.9, 100)["score"], -0.2)
+
+    def test_world_skips_stale_and_empty(self):
+        from . import index_outlook as o
+        f = o.world([{"short": "A", "pct": 0.75}, {"short": "B", "pct": -5.0, "stale": True}])
+        self.assertEqual(f["score"], 1.0)
+        self.assertIsNone(o.world([])["score"])
+
+    def test_world_leaves_out_old_sessions(self):
+        from . import index_outlook as o
+        rows = [{"short": "US", "pct": 1.5, "session": "2026-11-09"}, {"short": "Japan", "pct": -6.0, "session": "2026-11-06"},
+                {"short": "GIFT", "pct": 0.5}]
+        f = o.world(rows, date(2026, 11, 9))
+        self.assertEqual(f["short"], "2 of 2 up, +1.00%")
+        self.assertEqual(f["score"], 1.0)
+        self.assertIn("Left out, last session too old: Japan (2026-11-06)", f["text"])
+        self.assertEqual(o.world(rows)["short"], "2 of 3 up, -1.33%")
+
+    def test_verdict_counts_only_known(self):
+        from . import index_outlook as o
+        v = o.verdict([{"score": 0.5}, {"score": -0.1}, {"score": None}])
+        self.assertEqual((v["verdict"], v["agree"], v["known"]), ("Bullish", 1, 2))
+        self.assertEqual(o.verdict([{"score": None}])["verdict"], "Neutral")
+
+    def test_history_needs_enough_days_and_counts_only_ups(self):
+        from . import index_outlook as o
+        prev = (date(2025, 1, 1), 100.0, 106.0, 99.0, 105.0)
+        table = o.similar_days([])
+        self.assertIsNone(o.history(table, prev, 0.5)["score"])
+        for i in range(40):
+            o.add_day(table, prev, (date(2025, 1, 2), 105.5, 107.0, 104.0, 106.0 if i < 30 else 105.0))
+        f = o.history(table, prev, 0.5)
+        self.assertEqual(f["short"], "75% of 40")
+        self.assertEqual(f["score"], 1.0)
+        self.assertEqual(o.history(table, prev, None)["short"], "75% of 40")      # before the open: any gap
+        self.assertIsNone(o.history(table, prev, -0.5)["score"])
+
+    def test_live_read(self):
+        out = self.build()
+        self.assertEqual(out["mode"], "live")
+        self.assertEqual(len(out["indices"]), len(self.ix))
+        nifty = out["indices"][0]
+        self.assertEqual((nifty["key"], nifty["verdict"], nifty["agree"], nifty["known"], nifty["day"]), ("NIFTY", "Bullish", 4, 5, "2025-03-05"))
+        by = {f["key"]: f for f in nifty["factors"]}
+        self.assertEqual(by["history"]["short"], "100% of 39")
+        self.assertEqual(by["gap"]["short"], "+0.00%")
+        self.assertIn("Above yesterday's high", by["today"]["text"])
+        self.update.assert_not_called()                                           # stored candles are current
+
+    def test_history_ignores_the_session_itself(self):
+        from .models import IndexDaily
+        IndexDaily.objects.create(index=self.ix["NIFTY"], date=date(2025, 3, 5), open=150, high=151, low=140, close=141)
+        nifty = self.build()["indices"][0]
+        by = {f["key"]: f for f in nifty["factors"]}
+        self.assertEqual(by["history"]["short"], "100% of 39")
+        self.assertEqual(by["previous"]["short"], "Green, closed top")
+
+    def test_vix_reads_the_other_way(self):
+        out = {r["key"]: r for r in self.build()["indices"]}
+        vix, nifty = out["INDIAVIX"], out["NIFTY"]
+        self.assertTrue(vix["inverted"])
+        for a, b in zip(vix["factors"][:2], nifty["factors"][:2]):
+            self.assertEqual(a["score"], -b["score"])
+        self.assertEqual(vix["factors"][4]["score"], nifty["factors"][4]["score"])
+        self.assertEqual(vix["verdict"], "Bearish")
+
+    def test_before_open_leaves_out_today_and_gap(self):
+        out = self.build(self.NOW.replace(hour=8, minute=30))
+        nifty = out["indices"][0]
+        by = {f["key"]: f for f in nifty["factors"]}
+        self.assertEqual(out["mode"], "pre_open")
+        self.assertEqual((nifty["known"], by["today"]["short"], by["gap"]["short"]), (3, "Waiting", "Waiting"))
+        self.assertEqual(by["history"]["short"], "100% of 39")
+
+    def test_top_up_when_behind_and_only_once_a_day(self):
+        from .models import IndexDaily
+        IndexDaily.objects.filter(date=date(2025, 3, 4)).delete()
+        self.build()
+        self.assertEqual(self.update.call_count, len(self.ix))
+        self.build()
+        self.update.assert_not_called()
+
+    def test_api_serves_last_good_then_reports_failure(self):
+        from . import index_outlook
+        with mock.patch.object(index_outlook, "build", side_effect=RuntimeError("down")):
+            r = self.client.get("/api/market/outlook/")
+        self.assertEqual(r.status_code, 502)
+        self.assertEqual(r.json()["error"], "The index outlook is unavailable right now.")
+        cache.set(index_outlook.GOOD_KEY, {"indices": [{"key": "NIFTY"}]}, 60)
+        with mock.patch.object(index_outlook, "build", side_effect=RuntimeError("down")):
+            d = self.client.get("/api/market/outlook/").json()
+        self.assertTrue(d["stale"])
+
+    def test_home_has_the_table(self):
+        self.assertContains(self.client.get("/"), 'id="outlookRows"')
+
+
+class LevelsLeverageTests(TestCase):
+    """/analysis/levels/: the Leverage column and its count table."""
+
+    def setUp(self):
+        from .models import Company
+        for code, lev in (("AAA.NS", 5.0), ("BBB.NS", 5.0), ("CCC.NS", 3.33), ("DDD.NS", 1.0), ("EEE.NS", 0.0), ("FFF.NS", None)):
+            Company.objects.create(name=code, code=code, exchange="NSE", low_yearly=1.0, low_weekly=1.0, leverage=lev)
+
+    def test_pivot_counts_highest_first(self):
+        r = self.client.get("/analysis/levels/")
+        self.assertEqual([(x["label"], x["count"]) for x in r.context["leverage_pivot"]],
+                         [("5×", 2), ("3.33×", 1), ("1×", 1), ("No margin", 1), ("Not checked", 1)])
+        self.assertContains(r, "Leverage</a></th>")
+
+    def test_pivot_follows_filters(self):
+        r = self.client.get("/analysis/levels/?company=AAA")
+        self.assertEqual([(x["label"], x["count"]) for x in r.context["leverage_pivot"]], [("5×", 1)])
+
+    def test_sort_and_labels(self):
+        r = self.client.get("/analysis/levels/?sort=leverage&order=desc")
+        rows = list(r.context["companies"])
+        self.assertEqual(rows[0].leverage_label, "5×")
+        self.assertEqual(rows[-1].leverage_label, "Not checked")
 
 
 class IndexHistoryTests(TestCase):

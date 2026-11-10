@@ -40,6 +40,7 @@ SESSION_HOURS = 6
 FUNDS_SECONDS = 30
 TIMEOUT = 20              # seconds per request (the SDK's own default, 7 s, fails on a slow moment)
 NET_TRIES = 3             # attempts on a network error (see _retry)
+MARGIN_QTY = 10           # shares asked about in intraday_leverage
 RATE_TRIES = 3            # attempts when Angel One says "exceeding access rate"
 QUOTE_BATCH = 50          # stocks in one market quote call (Angel One's limit)
 QUOTE_GAP = 1.1           # seconds between those calls
@@ -310,6 +311,15 @@ def instrument(code):
     if not inst:
         raise AngelError(f"{name} is not an NSE equity on Angel One.")
     return {**inst, "tick": Decimal(inst["tick"])}
+
+
+def intraday_leverage(inst, price):
+    """How many times its margin an intraday position in this stock can be worth, from Angel One's margin calculator.
+    Selling is used: buying adds about 0.5% to the margin (4.98x).  0 when Angel One gives no margin.  Places no order."""
+    position = {"exchange": "NSE", "qty": MARGIN_QTY, "price": price, "productType": "INTRADAY", "orderType": "MARKET",
+                "token": inst["token"], "tradeType": "SELL"}
+    margin = (read_any(lambda sc: sc.getMarginApi({"positions": [position]}))[1].get("data") or {}).get("totalMarginRequired")
+    return round(MARGIN_QTY * price / margin, 2) if margin else 0.0
 
 
 def to_tick(price, tick, rounding=ROUND_HALF_UP):

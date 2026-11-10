@@ -475,8 +475,6 @@ def rescore(s, ctx, conds, usual_range=None, oi=None):
 # ---------------------------------------------------------------- 3. candidates + the run
 def more_candidates(cands, why, common, home, oi):
     """The behaviour lists and open interest spurts, on top of the first version's candidates."""
-    from market.models import Company
-
     extra = {}
     for c in common + list(home.values()):
         for code, sign in c.candidates():
@@ -484,7 +482,7 @@ def more_candidates(cands, why, common, home, oi):
     for symbol, row in oi.items():
         if (row.get("avgInOI") or 0) >= OI_MIN_PCT:
             extra.setdefault(f"{symbol}.NS", []).append(f"Live: open interest {row['avgInOI']:+.0f}%")
-    known = set(Company.objects.exclude(sector="ETF").filter(code__in=extra).values_list("code", flat=True))
+    known = set(board.five_x_stocks().filter(code__in=extra).values_list("code", flat=True))
     for code, reasons in extra.items():
         if code in known:
             if code not in why:

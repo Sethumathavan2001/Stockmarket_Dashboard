@@ -3,6 +3,7 @@ import random
 import threading
 from datetime import datetime, time, timedelta
 from decimal import Decimal
+from io import StringIO
 from unittest import mock
 
 import pandas as pd
@@ -2089,6 +2090,64 @@ class ClaudeOrdersAccountsTests(ClaudeOrdersTests):
                           {"id": "20261019-1024-TST-BUY", "account": "vivek", "quantity": 7})
         self.assertEqual(again.status_code, 409)
 
+    def ratio_place(self, account="paper", **body):
+        with mock.patch.object(svc, "get_market_status", return_value="OPEN"), \
+             mock.patch.object(svc, "fetch_live_today", return_value=live_frame(1, close=100.2)):
+            return self.post(reverse("paper_trading:claude_orders_place"),
+                             {"id": "20261019-1024-TST-BUY", "account": account, "quantity": 10, **body})
+
+    def test_ratio_reverses_the_side_and_swaps_stop_and_target(self):
+        self.write()
+        r = self.ratio_place(ratio=True)
+        self.assertEqual(r.status_code, 200, r.content)
+        o = PaperOrder.objects.get()
+        self.assertEqual(o.side, "SELL")
+        pos = PaperPosition.objects.get(account=svc.get_account(2))
+        self.assertAlmostEqual(float(pos.stop_loss), 100.2 * 1.015, places=2)        # the recommendation's 1.5% target
+        self.assertAlmostEqual(float(pos.target_price), 100.2 * 0.99, places=2)      # and its 1% stop
+        self.assertEqual(self.client.get(reverse("paper_trading:claude_orders_state")).json()["orders"][0]["placed"]["side"], "SELL")
+
+    def test_ratio_price_guard_uses_the_swapped_levels(self):
+        self.write(target=100.1)                                  # reversed, this is a SELL whose stop is 100.1
+        r = self.ratio_place(ratio=True)
+        self.assertEqual((r.status_code, r.json()["code"]), (409, "missed"))
+        self.assertIn("stop loss", r.json()["error"])
+
+    def test_a_recommendation_goes_only_one_way_on_paper(self):
+        self.write()
+        self.assertEqual(self.ratio_place(ratio=True).status_code, 200)
+        r = self.ratio_place()
+        self.assertEqual((r.status_code, r.json()["code"]), (409, "already_placed"))
+        self.assertEqual(PaperOrder.objects.count(), 1)
+
+    def test_paper_order_from_before_this_list_does_not_block_the_other_side(self):
+        self.write()
+        self.assertEqual(self.ratio_place(ratio=True).status_code, 200)
+        later = (datetime.now(svc.IST) + timedelta(minutes=1)).isoformat()
+        data = json.loads(self.tmp.read_text(encoding="utf-8"))
+        self.tmp.write_text(json.dumps({**data, "generated": later}), encoding="utf-8")
+        self.assertIsNone(self.client.get(reverse("paper_trading:claude_orders_state")).json()["orders"][0]["placed"])
+
+    def test_ratio_on_a_real_account_sends_the_reversed_order_once(self):
+        from . import broker
+        fake = FakeAngel()
+        fake.price = 100.2
+        now = datetime.combine(svc.today_ist(), time(10, 0), tzinfo=svc.IST)
+        for p in fake.patches() + [mock.patch.object(broker, "get_market_status", return_value="OPEN"),
+                                   mock.patch.object(broker, "now_ist", return_value=now)]:
+            p.start()
+            self.addCleanup(p.stop)
+        self.write()
+        url = reverse("paper_trading:claude_orders_place")
+        body = {"id": "20261019-1024-TST-BUY", "account": "vivek", "quantity": 7}
+        r = self.post(url, {**body, "ratio": True})
+        self.assertEqual(r.status_code, 200, r.content)
+        b = r.json()["broker"]
+        self.assertEqual((b["side"], b["stop_pct"], b["target_pct"]), ("SELL", 1.5, 1.0))
+        self.assertEqual(self.client.get(reverse("paper_trading:claude_orders_state")).json()["orders"][0]["broker"]["vivek"]["side"], "SELL")
+        again = self.post(url, body)
+        self.assertEqual((again.status_code, again.json()["code"]), (409, "already_placed"))
+
     def test_wallets(self):
         from . import angel
         with mock.patch.object(angel, "funds", side_effect=lambda acc, use_cache=True: {"configured": acc == "vivek", "available": 12345.0}):
@@ -2096,6 +2155,50 @@ class ClaudeOrdersAccountsTests(ClaudeOrdersTests):
         self.assertEqual(w["vivek"]["available"], 12345.0)
         self.assertFalse(w["sethu"]["configured"])
         self.assertEqual(w["paper"]["available"], 100000.0)
+
+
+class LeverageTests(TestCase):
+    """Company.leverage from Angel One's margin calculator."""
+
+    def test_leverage_is_value_over_margin(self):
+        from . import angel
+        with mock.patch.object(angel, "read_any", return_value=("vivek", {"data": {"totalMarginRequired": 200.0}})) as read:
+            self.assertEqual(angel.intraday_leverage({"token": "1"}, 100.0), 5.0)
+        with mock.patch.object(angel, "read_any", return_value=("vivek", {"data": {"totalMarginRequired": 0}})):
+            self.assertEqual(angel.intraday_leverage({"token": "1"}, 100.0), 0.0)
+        self.assertEqual(read.call_count, 1)
+
+    def test_command_fills_the_table_and_keeps_what_it_could_not_read(self):
+        from django.core.management import call_command
+        from . import angel
+        for code, old in (("FIVE.NS", None), ("TWO.NS", None), ("GONE.NS", 5.0), ("FAILS.NS", 5.0)):
+            Company.objects.create(name=code, code=code, leverage=old)
+
+        def instrument(code):
+            if code == "GONE.NS":
+                raise angel.AngelError("not listed")
+            return {"token": code, "symbol": code, "tick": D("0.05")}
+
+        tries = {"RETRY.NS": 0}
+        Company.objects.create(name="Retry", code="RETRY.NS")
+
+        def leverage(inst, price):
+            if inst["token"] == "RETRY.NS":
+                tries["RETRY.NS"] += 1
+                if tries["RETRY.NS"] == 1:
+                    raise angel.AngelError("limited")
+                return 5.0
+            if inst["token"] == "FAILS.NS":
+                raise angel.AngelError("down")
+            return {"FIVE.NS": 5.0, "TWO.NS": 2.0}[inst["token"]]
+
+        with mock.patch.object(angel, "instrument", side_effect=instrument), mock.patch.object(angel, "intraday_leverage", side_effect=leverage), \
+             mock.patch.object(angel, "quotes", return_value={c: {"ltp": 100.0} for c in ("FIVE.NS", "TWO.NS", "FAILS.NS", "RETRY.NS")}), mock.patch("time.sleep"):
+            call_command("update_leverage", stdout=StringIO(), stderr=StringIO())
+        got = dict(Company.objects.values_list("code", "leverage"))
+        self.assertEqual(got, {"FIVE.NS": 5.0, "TWO.NS": 2.0, "GONE.NS": 0.0, "FAILS.NS": 5.0, "RETRY.NS": 5.0})
+        self.assertIsNone(Company.objects.get(code="FAILS.NS").leverage_checked)
+        self.assertEqual(Company.objects.get(code="FIVE.NS").leverage_checked, svc.today_ist())
 
 
 class SurveillanceTests(TestCase):
@@ -2323,8 +2426,8 @@ class MostActiveCandidateTests(TestCase):
 
     def setUp(self):
         for code in ("HDFCBANK.NS", "PENNY.NS"):
-            Company.objects.create(name=code, code=code)
-        Company.objects.create(name="Gold ETF", code="GOLDBEES.NS", sector="ETF")
+            Company.objects.create(name=code, code=code, leverage=5.0)
+        Company.objects.create(name="Gold ETF", code="GOLDBEES.NS", sector="ETF", leverage=5.0)
 
     def candidates(self, live):
         from . import claude_board
@@ -2339,6 +2442,19 @@ class MostActiveCandidateTests(TestCase):
         self.assertEqual(order, ["HDFCBANK.NS"])
         self.assertEqual(why["HDFCBANK.NS"], ["Live: most active by value (₹1,858 Cr traded)",
                                               "Live: most active by volume (₹1,858 Cr traded)"])
+
+    def test_only_stocks_with_5x_margin_are_looked_at(self):
+        Company.objects.filter(code="PENNY.NS").update(leverage=2.0)
+        Company.objects.create(name="Unchecked", code="UNCHECKED.NS")
+        Company.objects.create(name="No margin", code="NOMARGIN.NS", leverage=0.0)
+        rows = [{"symbol": s, "value_cr": 900.0} for s in ("HDFCBANK", "PENNY", "UNCHECKED", "NOMARGIN")]
+        self.assertEqual(self.candidates({"most_active_value": rows})[0], ["HDFCBANK.NS"])
+
+    def test_refresh_says_so_when_the_leverage_table_is_empty(self):
+        from . import claude_board
+        Company.objects.update(leverage=None)
+        with self.assertRaisesMessage(RuntimeError, "update_leverage"):
+            claude_board.five_x_stocks()
 
     def test_shown_on_the_order_without_changing_the_signals(self):
         from datetime import datetime
@@ -2687,7 +2803,7 @@ class ClaudeOrders2PageTests(ClaudeOrdersTests):
 
     def test_build_keeps_the_order_format_and_marks_its_ids(self):
         from . import claude_board, claude_board2 as b
-        Company.objects.update_or_create(code="TST.NS", defaults={"name": "Test Co", "sector": "Technology"})
+        Company.objects.update_or_create(code="TST.NS", defaults={"name": "Test Co", "sector": "Technology", "leverage": 5.0})
 
         def gathered(code, why):
             return {"code": code, "name": "Test Co", "sector": "Technology", "why": why, "price": 100.0, "asof": "2026-11-05T10:00:00+05:30",

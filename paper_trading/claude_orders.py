@@ -7,7 +7,7 @@ angel.ACCOUNTS (Vivek, Sethu - see broker.py).
   GET  /api/paper/claude-orders/             the orders + what was already placed today, per account
   GET  /api/paper/claude-orders/wallets/     Paper Trading 2 balance and each Angel One account's funds
   POST /api/paper/claude-orders/place/       {"id", "account": "paper" | "vivek" | "sethu", "quantity",
-                                              "stop_pct"?, "target_pct"?}
+                                              "stop_pct"?, "target_pct"?, "ratio"?}
   POST /api/paper/claude-orders/refresh/     rebuild the list from current data (background, see claude_board)
   POST /api/paper/claude-orders/connect/     Connect IP: check each account's connection and log in again
   GET  /claude-orders/history/               every list made (ClaudeOrderList) and every Vivek / Sethu trade
@@ -17,9 +17,12 @@ default), so the reward-to-risk holds even if the price moved.  Paper: a live ma
 tagged reason="claude".  Refused when: the recommendations are from an earlier day, the stock + side was
 already placed today in that account, or the live price has already passed the recommendation's stop or
 target.
+
+The Ratio button places a recommendation the other way round: BUY for SELL, with stop loss and target swapped.  One
+recommendation can be placed in only one direction: the second would cancel the first and strand its stop-loss order.
 """
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -50,6 +53,29 @@ def load_orders(path=None):
     return data
 
 
+def reversed_order(rec):
+    """The Ratio button's order: the opposite side, the same two prices, each now the other's job."""
+    return {**rec, "side": "SELL" if rec["side"] == "BUY" else "BUY", "stop_pct": rec["target_pct"], "target_pct": rec["stop_pct"],
+            "stop": rec["target"], "target": rec["stop"]}
+
+
+def _list_time(data):
+    made = datetime.fromisoformat(data["generated"]) if data.get("generated") else None
+    return made.replace(tzinfo=broker.IST) if made and made.tzinfo is None else made
+
+
+def paper_done(placed, rec, made):
+    """This recommendation's paper order: on its own side, or the other way round since the list was made."""
+    other = placed.get((rec["code"], reversed_order(rec)["side"]))
+    return placed.get((rec["code"], rec["side"])) or (other if other and made and other.created_at >= made else None)
+
+
+def real_done(real, acc, rec):
+    """This recommendation's real order in this account: on its own side, or the other way round."""
+    other = real.get((acc, rec["code"], reversed_order(rec)["side"]))
+    return real.get((acc, rec["code"], rec["side"])) or (other if other and other.rec_id == rec["id"] else None)
+
+
 def placed_today(account):
     """{(code, side): order} for today's Claude entries in this book."""
     start, end = svc._day_bounds_db(svc.today_ist())
@@ -67,14 +93,17 @@ def _state(account, path=None, board=claude_board):
     placed = placed_today(account)
     real = broker.placed_today(svc.today_ist())
     nse, refused = surveillance.nse_lists(), surveillance.refused_recently()
+    made = _list_time(data)
     for o in data["orders"]:
         o["caution"] = surveillance.caution(o["code"], nse, refused)
-        hit = placed.get((o["code"], o["side"]))
+        hit = paper_done(placed, o, made)
         o["placed"] = None if not hit else {
-            "order_id": hit.pk, "price": float(hit.price), "quantity": hit.quantity,
+            "order_id": hit.pk, "price": float(hit.price), "quantity": hit.quantity, "side": hit.side,
             "time": svc.to_ist(hit.created_at).isoformat()}
-        o["broker"] = {acc: (broker.serialize(real[(acc, o["code"], o["side"])]) if (acc, o["code"], o["side"]) in real
-                             else None) for acc in angel.ACCOUNTS}
+        o["broker"] = {}
+        for acc in angel.ACCOUNTS:
+            bo = real_done(real, acc, o)
+            o["broker"][acc] = broker.serialize(bo) if bo else None
     data["accounts"] = [{"key": k, "name": v, "missing": angel.config(k)[1]} for k, v in angel.ACCOUNTS.items()]
     data["live_trading"] = angel.live_enabled()
     data["max_order_value"] = angel.max_order_value()
@@ -224,8 +253,14 @@ def place_from(request, data):
     if data["session"] != svc.today_ist().isoformat():
         return _error(f"These recommendations are from {data['session']}. Only today's can be placed - press Refresh "
                       "for a fresh list.")
+    if body.get("ratio"):
+        rec = reversed_order(rec)
     acc = str(body.get("account") or "paper").lower()
     if acc in angel.ACCOUNTS:
+        done = real_done(broker.placed_today(svc.today_ist()), acc, rec)
+        if done:
+            return _error(f"Already placed today on {broker.name(acc)}: {done.side} {done.quantity} {rec['code']} ({done.status}).",
+                          409, "already_placed")
         try:
             bo = broker.place(acc, rec_id=rec["id"], code=rec["code"], side=rec["side"], quantity=body.get("quantity"),
                               stop_pct=_given(body, "stop_pct", rec["stop_pct"]),
@@ -244,7 +279,7 @@ def place_from(request, data):
         quantity = svc.parse_quantity(body.get("quantity"))
         account = svc.get_account(BOOK)
         with svc.ORDER_LOCK:                                     # check + place as one step (double clicks, two tabs)
-            done = placed_today(account).get((rec["code"], rec["side"]))
+            done = paper_done(placed_today(account), rec, _list_time(data))
             if done:
                 return _error(f"Already placed today: {done.side} {done.quantity} {rec['code']} @ ₹{done.price:.2f}.",
                               409, "already_placed")

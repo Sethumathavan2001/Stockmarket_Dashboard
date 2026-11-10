@@ -264,3 +264,40 @@ class IndexPredictionTests(TestCase):
              mock.patch.object(angel, "quotes", side_effect=lambda tokens, exchange: answers[exchange]):
             out = indices.last_prices(["HIGH.NS", "NIFTY.IDX", "SENSEX.IDX"])
         self.assertEqual(out, {"HIGH.NS": 30.5, "NIFTY.IDX": 25100.0, "SENSEX.IDX": 81000.0})
+
+
+
+class FiveXOnlyTests(TestCase):
+    """Stock Prediction lists, and bulk training covers, only the 5x stocks."""
+
+    def setUp(self):
+        for code, lev, sector in (("FIVE.NS", 5.0, "Tech"), ("TWO.NS", 2.0, "Tech"), ("NONE.NS", 0.0, "Tech"),
+                                  ("NEW.NS", None, "Tech"), ("FUND.NS", 5.0, "ETF")):
+            Company.objects.create(name=code, code=code, sector=sector, leverage=lev)
+
+    def test_dropdown_lists_only_5x(self):
+        with mock.patch.object(engine, "list_manifests", return_value=[{"company": "FIVE.NS"}]):
+            r = self.client.get("/stock_prediction/")
+        self.assertEqual(r.context["companies"], [{"code": "FIVE.NS", "name": "FIVE.NS", "trained": True}])
+        self.assertContains(r, 'value="FIVE.NS"')
+        self.assertNotContains(r, 'value="TWO.NS"')
+
+    def test_indices_stay_in_the_dropdown(self):
+        from . import indices
+        with mock.patch.object(engine, "list_manifests", return_value=[]):
+            r = self.client.get("/stock_prediction/")
+        self.assertEqual(len(r.context["indices"]), len(indices.all_assets()))
+
+    def test_train_all_covers_only_5x(self):
+        from io import StringIO
+        from django.core.management import call_command
+        with mock.patch.object(engine, "list_manifests", return_value=[]), \
+             mock.patch.object(engine, "train_stock", return_value={"timeframes": {}}) as train:
+            call_command("train_models", "--all", stdout=StringIO())
+        self.assertEqual([c.args[0].code for c in train.call_args_list], ["FIVE.NS"])
+
+    def test_top_covers_only_5x(self):
+        from prediction.management.commands.train_models import most_traded
+        for company in Company.objects.all():
+            DailyData.objects.create(company=company, date=date(2026, 11, 6), open=10, high=11, low=9, close=10, volume=1000)
+        self.assertEqual(most_traded(10), ["FIVE.NS"])

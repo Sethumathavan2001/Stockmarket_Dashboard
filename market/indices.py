@@ -130,7 +130,7 @@ def _world(label, zone, opens, closes):
     return {"name": label, "short": label, "last": last, "change": last - prev, "pct": (last / prev - 1) * 100 if prev else 0.0,
             "open": float(raw["Open"].iloc[-1]), "high": float(raw["High"].iloc[-1]), "low": float(raw["Low"].iloc[-1]),
             "prev_close": prev, "source": "Yahoo", "delayed": is_open, "time": None, "key": key,
-            "tag": None if is_open else f"{session.day} {session:%b} close"}
+            "session": session.date().isoformat(), "tag": None if is_open else f"{session.day} {session:%b} close"}
 
 
 def global_indices():

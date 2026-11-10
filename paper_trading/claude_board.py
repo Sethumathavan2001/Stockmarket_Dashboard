@@ -117,12 +117,21 @@ def turnover_lakh(v):
 
 
 
+def five_x_stocks():
+    """The companies a refresh may recommend: those with 5x intraday margin at Angel One (manage.py update_leverage)."""
+    from market.models import five_x_companies
+
+    stocks = five_x_companies()
+    if not stocks.exists():
+        raise RuntimeError("No stock is marked as 5x yet - run: manage.py update_leverage")
+    return stocks
+
+
 def candidates(live, fresh_news=True):
-    from market.models import Company
     from news import fetch
     from news.signal import last_close
 
-    codes = set(Company.objects.exclude(sector="ETF").values_list("code", flat=True))
+    codes = set(five_x_stocks().values_list("code", flat=True))
     order, why = [], {}
 
     def add(sym, reason):

@@ -2,8 +2,9 @@
 Train the prediction model zoo for many stocks.
 
     python manage.py train_models --company TCS.NS
-    python manage.py train_models --top 50                 # the 50 most traded stocks
+    python manage.py train_models --top 50                 # the 50 most traded 5x stocks
     python manage.py train_models --top 50 --skip-trained  # only those without models yet
+    python manage.py train_models --all --skip-trained     # every 5x stock without models yet
     python manage.py train_models --all --timeframe daily
     python manage.py train_models --indices --skip-trained # every index (market/index_data.py)
     python manage.py train_models --company NIFTY.IDX      # one index
@@ -18,7 +19,7 @@ from datetime import timedelta
 from django.core.management.base import BaseCommand, CommandError
 from django.db.models import Avg, ExpressionWrapper, F, FloatField, Max
 
-from market.models import Company, DailyData
+from market.models import Company, DailyData, five_x_companies
 from prediction import datasets as ds
 from prediction import engine, indices
 
@@ -27,7 +28,7 @@ SPECIAL = re.compile(r"-(BL|T0|RE|P1|IV|RR)\.NS$")
 
 def most_traded(n):
     last = DailyData.objects.aggregate(d=Max("date"))["d"]
-    ranked = (DailyData.objects.filter(date__gte=last - timedelta(days=90)).exclude(company__sector="ETF")
+    ranked = (DailyData.objects.filter(date__gte=last - timedelta(days=90), company__in=five_x_companies())
               .values("company__code")
               .annotate(t=Avg(ExpressionWrapper(F("close") * F("volume"), output_field=FloatField())))
               .order_by("-t"))
@@ -41,8 +42,8 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         who = parser.add_mutually_exclusive_group(required=True)
         who.add_argument("--company", help="one company code, e.g. TCS.NS")
-        who.add_argument("--top", type=int, help="the N most traded stocks (average daily turnover, last 3 months)")
-        who.add_argument("--all", action="store_true", help="every company (excluding ETFs)")
+        who.add_argument("--top", type=int, help="the N most traded 5x stocks (average daily turnover, last 3 months)")
+        who.add_argument("--all", action="store_true", help="every 5x stock (market.models.five_x_companies)")
         who.add_argument("--indices", action="store_true", help="every index")
         parser.add_argument("--timeframe", choices=ds.TIMEFRAMES, help="only intraday or only daily (default both)")
         parser.add_argument("--skip-trained", action="store_true", help="skip stocks that already have models")
@@ -57,7 +58,7 @@ class Command(BaseCommand):
         elif opts["top"]:
             codes = most_traded(opts["top"])
         else:
-            codes = list(Company.objects.exclude(sector="ETF").order_by("code").values_list("code", flat=True))
+            codes = list(five_x_companies().order_by("code").values_list("code", flat=True))
         if opts["skip_trained"]:
             done = {m["company"] for m in engine.list_manifests()}
             codes = [c for c in codes if c not in done]

@@ -1,6 +1,26 @@
 {% extends 'market/base.html' %}
 {% block content %}
 
+<section class="outlook" aria-labelledby="outlookTitle">
+  <div class="outlook-head">
+    <h2 id="outlookTitle">Index Outlook</h2>
+    <span class="outlook-count" id="outlookCount">Loading...</span>
+    <span class="outlook-when" id="outlookWhen"></span>
+  </div>
+  <div class="outlook-wrap">
+    <table class="outlook-table">
+      <thead>
+        <tr>
+          <th>Index</th><th class="num">Last</th><th class="num">Change</th><th>Outlook</th>
+          <th>Previous day</th><th>Today</th><th>Gap</th><th title="Past days with the same setup: how often the index closed above its open">History</th><th>Global</th>
+        </tr>
+      </thead>
+      <tbody id="outlookRows"><tr><td colspan="9" class="outlook-empty">Reading the indices...</td></tr></tbody>
+    </table>
+  </div>
+  <p class="outlook-note">Equal-weight average of the five readings; hover a cell for its numbers. This describes the market now and is not a forecast. Tested on 2019 to 2026, the read at the open matched the close against the previous close 61% of the time, mostly because the gap had already happened, and the move from open to close only about 50% of the time.</p>
+</section>
+
 <h1>All Companies</h1>
 
 <div class="layout">
@@ -153,7 +173,77 @@
   document.getElementById('companyClose').addEventListener('click', hideCompanies);
 </script>
 
+<script>
+  (() => {
+    const URL = "{% url 'market:index_outlook' %}";
+    const $ = (id) => document.getElementById(id);
+    const num = (v) => v == null ? '-' : Number(v).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const side = (s) => s == null || s === 0 ? 'flat' : s > 0 ? 'up' : 'down';
+    const ARROW = { up: '\u25B2', down: '\u25BC', flat: '\u2022' };
+
+    const cell = (f) => `<td class="${side(f.score)}" title="${esc(f.text)}"><span class="mark">${ARROW[side(f.score)]}</span>${esc(f.short)}</td>`;
+
+    function row(r) {
+      const pct = r.pct == null ? '-' : `${r.pct > 0 ? '+' : ''}${Number(r.pct).toFixed(2)}%`;
+      const name = r.inverted ? `${esc(r.name)} <small>falling is Bullish</small>` : esc(r.name);
+      return `<tr>
+        <td class="name">${name}</td>
+        <td class="num">${num(r.last)}</td>
+        <td class="num">${pct}</td>
+        <td><span class="verdict ${r.verdict.toLowerCase()}">${r.verdict}</span> <small>${r.agree} of ${r.known}</small></td>
+        ${r.factors.map(cell).join('')}
+      </tr>`;
+    }
+
+    function when(d) {
+      const day = d.day ? new Date(d.day + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' }) : '';
+      const text = { live: `Live, ${day}`, pre_open: `Before the open, ${day}`, closed: `Market closed, last session ${day}` }[d.mode];
+      return text + (d.stale ? ' (not updated, last good reading)' : '');
+    }
+
+    function load() {
+      if (document.hidden) return;
+      fetch(URL)
+        .then((res) => res.json().then((d) => { if (!res.ok) throw new Error(d.error); return d; }))
+        .then((d) => {
+          $('outlookCount').textContent = `${d.bullish} Bullish, ${d.bearish} Bearish`;
+          $('outlookWhen').textContent = when(d);
+          $('outlookRows').innerHTML = d.indices.map(row).join('') || '<tr><td colspan="9" class="outlook-empty">No index data yet.</td></tr>';
+        })
+        .catch((err) => {
+          $('outlookCount').textContent = '';
+          $('outlookWhen').textContent = err.message || 'The index outlook is unavailable right now.';
+        });
+    }
+
+    load();
+    setInterval(load, 60000);
+  })();
+</script>
+
 <style>
+  .outlook { background: #fff; border-radius: 10px; padding: 16px 18px; box-shadow: 0 2px 10px rgba(0,0,0,.08); margin: 16px 0 24px; }
+  .outlook-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 14px; margin-bottom: 10px; }
+  .outlook-head h2 { margin: 0; font-size: 1.25rem; }
+  .outlook-count { font-weight: 600; }
+  .outlook-when { color: #64748b; font-size: 13px; }
+  .outlook-wrap { overflow-x: auto; }
+  .outlook-table { width: 100%; border-collapse: collapse; font-size: 13.5px; white-space: nowrap; }
+  .outlook-table th { background: #f7f9fc; text-align: left; padding: 8px 10px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: #64748b; }
+  .outlook-table td { padding: 7px 10px; border-top: 1px solid #eef2f7; }
+  .outlook-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .outlook-table .name { font-weight: 600; }
+  .outlook-table small { color: #64748b; font-weight: 400; }
+  .outlook-table td.up { color: #15803d; }
+  .outlook-table td.down { color: #b91c1c; }
+  .outlook-table td.flat { color: #64748b; }
+  .outlook-table .mark { display: inline-block; width: 1.2em; font-size: 11px; }
+  .verdict { display: inline-block; min-width: 62px; text-align: center; padding: 2px 8px; border-radius: 999px; font-weight: 700; font-size: 12.5px; }
+  .verdict.bullish { background: #dcfce7; color: #166534; }
+  .verdict.bearish { background: #fee2e2; color: #991b1b; }
+  .verdict.neutral { background: #f1f5f9; color: #475569; }
+  .outlook-empty { text-align: center; color: #64748b; padding: 18px; }
+  .outlook-note { margin: 10px 0 0; font-size: 12.5px; color: #64748b; white-space: normal; }
   .chart-hint { margin: -6px 0 8px; font-size: 13px; color: #64748b; }
   .company-panel { margin-top: 24px; border-top: 1px solid #e3e8f0; padding-top: 16px; }
   .company-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }

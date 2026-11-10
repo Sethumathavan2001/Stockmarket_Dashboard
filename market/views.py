@@ -167,6 +167,20 @@ def analysis_data(request):
     return JsonResponse(snap)
 
 
+def leverage_label(value):
+    """How a Company.leverage figure reads on the page."""
+    if value is None:
+        return "Not checked"
+    return f"{value:g}×" if value else "No margin"
+
+
+def leverage_pivot(companies):
+    """How many of these companies sit at each leverage, highest first."""
+    counts = dict(companies.order_by().values_list("leverage").annotate(n=Count("id")))
+    return [{"label": leverage_label(v), "count": counts[v]}
+            for v in sorted(counts, key=lambda v: -1 if v is None else v, reverse=True)]
+
+
 def analysis_view(request):
     """
     Classic lows & highs table (/analysis/levels/) with:
@@ -185,6 +199,7 @@ def analysis_view(request):
 
     sortable_fields = [
         "code",
+        "leverage",
 
         "low_yearly",
         "low_monthly",
@@ -302,6 +317,7 @@ def analysis_view(request):
     # Sorting
     # -------------------------
 
+    pivot = leverage_pivot(companies)
     companies = companies.order_by(ordering)
 
     # -------------------------
@@ -310,8 +326,11 @@ def analysis_view(request):
 
     paginator = Paginator(companies, per_page)
     page_obj = paginator.get_page(page_number)
+    for row in page_obj:
+        row.leverage_label = leverage_label(row.leverage)
 
     context = {
+        "leverage_pivot": pivot,
         "companies": page_obj,
         "page_obj": page_obj,
         "mode": mode,
