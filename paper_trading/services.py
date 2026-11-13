@@ -834,6 +834,37 @@ def update_bracket(*, account, company, mode, replay_date, levels, clear_sl=Fals
 # --------------------------------------------------------------------------
 # live intraday square-off
 # --------------------------------------------------------------------------
+def candles_on(company, day):
+    """One day's 5-minute candles from Yahoo, for checking stop losses and targets afterwards (Yahoo keeps a few days)."""
+    if day == today_ist():
+        return fetch_live_today(company, use_cache=False)
+    from prediction.datasets import _yahoo, _yahoo_frame
+
+    df = _yahoo_frame(_yahoo(get_yahoo_ticker(company.code), cache_seconds=600, period="5d", interval="5m", prepost=False))
+    if df.empty:
+        return df
+    return df[df["timestamp"].dt.tz_convert(IST).dt.date == day].reset_index(drop=True)
+
+
+def level_exit(pos, day, cutoff):
+    """(reason, price, time) when the position's stop loss or target was reached on `day` before the square-off - the
+    server may have been off then, so the watcher never saw it.  None when neither was, or the candles can't be read."""
+    from .monitor import level_hit
+
+    if pos.stop_loss is None and pos.target_price is None:
+        return None
+    try:
+        df = candles_on(pos.company, day)
+    except Exception as exc:                        # no candles: settle as before rather than block the square-off
+        logger.warning("square-off: no candles for %s on %s: %s", pos.company.code, day, exc)
+        return None
+    if df is None or df.empty:
+        return None
+    df = df[df["timestamp"].apply(lambda t: to_ist(t.to_pydatetime()).time() < cutoff)]
+    since = max(d for d in (pos.updated_at, pos.last_entry_at) if d is not None)
+    return level_hit(pos, df, since)
+
+
 def squareoff_live_intraday(account, now=None):
     """
     Close Live INTRADAY positions that must not stay open:
@@ -843,6 +874,9 @@ def squareoff_live_intraday(account, now=None):
     * opened TODAY and it is at/after the square-off time (15:20 IST by default)
       -> closed at the latest live price (even if the data is no longer "fresh",
       since the market has closed).
+
+    Before either, a position with a stop loss or target is checked against that day's 5-minute candles up to the
+    square-off: if one was reached (say while the server was off), it is closed there instead, at that level and time.
 
     Delivery positions are never touched.  Returns {"closed": [orders], "skipped": [str]}.
     The page calls this when a Live session starts and on each live refresh after the cutoff.
@@ -857,7 +891,11 @@ def squareoff_live_intraday(account, now=None):
     closed, skipped = [], []
     for pos in positions:
         entry_day = to_ist(pos.last_entry_at).date() if pos.last_entry_at else now.date()
-        if entry_day < now.date():
+        reason = "session_end"
+        hit = level_exit(pos, entry_day, cutoff) if entry_day < now.date() or now.time() >= cutoff else None
+        if hit:
+            reason, price, when = hit[0], round(hit[1], 2), hit[2]
+        elif entry_day < now.date():
             close = daily_close_on(pos.company, entry_day)
             if close is None:
                 skipped.append(f"{pos.company.code}: no closing price available for {entry_day.isoformat()} yet")
@@ -883,7 +921,7 @@ def squareoff_live_intraday(account, now=None):
                 mode=LIVE,
                 replay_date=None,
                 market_time=when,
-                reason="session_end",
+                reason=reason,
                 product=INTRADAY,
                 close_only=True,
             )

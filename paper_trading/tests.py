@@ -1086,6 +1086,42 @@ class SquareoffTests(BaseCase):
         self.assertEqual(self.balance(), D("10030"))
         self.assertFalse(PaperPosition.objects.exclude(quantity=0).exists())
 
+    def candles(self, day, *rows):
+        """5-minute candles on `day`: rows of (hh, mm, open, high, low, close)."""
+        return pd.DataFrame([{"timestamp": pd.Timestamp(at(day, h, m)), "open": o, "high": hi, "low": lo, "close": c, "volume": 1.0}
+                             for h, m, o, hi, lo, c in rows])
+
+    def test_stop_hit_while_the_server_was_off_closes_at_the_stop(self):
+        yday = svc.today_ist() - timedelta(days=1)
+        self.open_live(10, 100, at(yday, 10, 0))
+        PaperPosition.objects.update(stop_loss=D("99"), target_price=D("102"), updated_at=at(yday, 10, 0))
+        day = self.candles(yday, (10, 30, 100, 100.5, 99.5, 100), (11, 0, 100, 100.2, 98.8, 99), (15, 25, 104, 104, 103, 103.5))
+        with mock.patch.object(svc, "candles_on", return_value=day), \
+             mock.patch.object(svc, "_yf_history", return_value=daily_frame([(yday, 99, 105, 98, 103)])):
+            res = svc.squareoff_live_intraday(self.account, now=at(svc.today_ist(), 9, 30))
+        order = res["closed"][0]
+        self.assertEqual((order.reason, order.price, order.realized_pnl), ("stop_loss", D("99.0000"), D("-10")))
+        self.assertEqual(svc.to_ist(order.market_time), at(yday, 11, 0))
+
+    def test_target_hit_before_the_cutoff_closes_at_the_target(self):
+        today = svc.today_ist()
+        self.open_live(10, 100, at(today, 10, 0), side="SELL")
+        PaperPosition.objects.update(stop_loss=D("101"), target_price=D("98"), updated_at=at(today, 10, 0))
+        day = self.candles(today, (10, 30, 100, 100.4, 99.6, 99.8), (12, 0, 99, 99.2, 97.9, 98.5), (15, 15, 99, 99.5, 98.8, 99.4))
+        with mock.patch.object(svc, "candles_on", return_value=day), mock.patch.object(svc, "fetch_live_today", return_value=day):
+            order = svc.squareoff_live_intraday(self.account, now=at(today, 17, 0))["closed"][0]
+        self.assertEqual((order.reason, order.side, order.price, order.realized_pnl), ("target", "BUY", D("98.0000"), D("20")))
+
+    def test_levels_not_reached_still_square_off_as_before(self):
+        yday = svc.today_ist() - timedelta(days=1)
+        self.open_live(10, 100, at(yday, 10, 0))
+        PaperPosition.objects.update(stop_loss=D("90"), target_price=D("120"), updated_at=at(yday, 10, 0))
+        quiet = self.candles(yday, (10, 30, 100, 101, 99, 100), (15, 25, 80, 130, 80, 103))        # after 15:20: ignored
+        with mock.patch.object(svc, "candles_on", return_value=quiet), \
+             mock.patch.object(svc, "_yf_history", return_value=daily_frame([(yday, 99, 105, 98, 103)])):
+            order = svc.squareoff_live_intraday(self.account, now=at(svc.today_ist(), 9, 30))["closed"][0]
+        self.assertEqual((order.reason, order.price), ("session_end", D("103.0000")))
+
     def test_short_left_overnight_is_covered_at_that_days_close(self):
         yday = svc.today_ist() - timedelta(days=1)
         self.open_live(10, 100, at(yday, 10, 0), side="SELL")
@@ -3003,3 +3039,99 @@ class ConnectIpTests(TestCase):
             out = self.post().json()["accounts"]
         self.assertEqual(out["vivek"]["refused_on"], svc.today_ist().isoformat())
         self.assertIsNone(out["sethu"]["refused_on"])
+
+
+class ClaudeRecordTests(TestCase):
+    """Track record of past recommendations (claude_record.py): replayed on 5-minute candles - no network."""
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+        from . import claude_record
+        self.r = claude_record
+        cache.clear()
+        file = mock.patch.object(claude_record, "FILE", Path(tempfile.mkdtemp()) / "outcomes.json")
+        file.start()
+        self.addCleanup(file.stop)
+        self.day = datetime(2026, 11, 5, tzinfo=svc.IST).date()
+
+    def at(self, hhmm, day=None):
+        h, m = map(int, hhmm.split(":"))
+        return datetime.combine(day or self.day, time(h, m), tzinfo=svc.IST)
+
+    def bars(self, *rows, start="10:30"):
+        t = self.at(start)
+        return [(t + timedelta(minutes=5 * i), *r) for i, r in enumerate(rows)]
+
+    def test_target_first_is_profit_and_stop_first_is_loss(self):
+        up = self.bars((100, 100.5, 99.8, 100.4), (100.4, 101.6, 100.2, 101.2))
+        self.assertEqual(self.r.outcome("BUY", up, 1.0, 1.5), {"result": "profit", "entry": 100, "exit": 101.5, "how": "target", "pct": 1.5})
+        down = self.bars((100, 100.2, 98.9, 99.0))
+        self.assertEqual(self.r.outcome("BUY", down, 1.0, 1.5)["how"], "stop loss")
+        self.assertEqual(self.r.outcome("SELL", down, 1.0, 0.5)["result"], "profit")
+        self.assertEqual(self.r.outcome("SELL", up, 0.5, 1.0)["result"], "loss")
+
+    def test_one_candle_through_both_counts_as_loss(self):
+        wide = self.bars((100, 102, 98, 101))
+        self.assertEqual(self.r.outcome("BUY", wide, 1.0, 1.5)["result"], "loss")
+
+    def test_square_off_by_the_side_of_the_price(self):
+        drift = self.bars((100, 100.3, 99.7, 100.1), (100.1, 100.4, 99.9, 100.3))
+        out = self.r.outcome("BUY", drift, 1.0, 1.5)
+        self.assertEqual((out["result"], out["how"], out["exit"]), ("profit", "square-off", 100.3))
+        self.assertEqual(self.r.outcome("SELL", drift, 1.0, 1.5)["result"], "loss")
+        self.assertEqual(self.r.outcome("BUY", self.bars((100, 100.2, 99.9, 100)), 1, 1.5)["result"], "flat")
+        self.assertIsNone(self.r.outcome("BUY", [], 1, 1.5))
+
+    def test_only_candles_after_the_list_and_before_15_20(self):
+        candles = [(self.at(t), 1, 1, 1, 1) for t in ("10:20", "10:25", "10:30", "15:15", "15:20", "15:25")]
+        kept = self.r.after(candles, self.at("10:24"))
+        self.assertEqual([c[0].strftime("%H:%M") for c in kept], ["10:25", "10:30", "15:15"])
+
+    def save_list(self, hhmm, *recs, day=None):
+        from .models import ClaudeOrderList
+        made = self.at(hhmm, day)
+        orders = [{"id": f"{made:%H%M}-{code}-{side}", "code": code, "side": side, "stop_pct": 1.0, "target_pct": 1.5}
+                  for code, side in recs]
+        ClaudeOrderList.objects.create(generated=made, session=made.date(), count=len(orders), payload={"orders": orders})
+
+    def candles(self, code, day):
+        from . import angel
+        if code == "BUSY.NS":
+            raise angel.AngelError("Angel One is limiting requests for a moment - trying again.")
+        if code == "GONE.NS":
+            raise angel.AngelError("GONE is not an NSE equity on Angel One.")
+        rise = [(self.at("09:15", day) + timedelta(minutes=5 * i), 100 + i * .2, 100.3 + i * .2, 99.9 + i * .2, 100.2 + i * .2) for i in range(74)]
+        return rise
+
+    def test_update_scores_finished_days_and_keeps_busy_ones_for_later(self):
+        self.save_list("10:24", ("TST.NS", "BUY"), ("TST.NS", "SELL"), ("BUSY.NS", "BUY"), ("GONE.NS", "BUY"))
+        self.save_list("11:00", ("TST.NS", "BUY"), day=self.day + timedelta(days=1))           # that day isn't over yet
+        now = self.at("12:00", self.day + timedelta(days=1))
+        with mock.patch.object(self.r._time, "sleep"):
+            done = self.r.update(now, candles=self.candles)
+        self.assertEqual(done, {"scored": 3, "kept_for_later": 1})
+        scored = self.r.load()
+        self.assertEqual(scored["1024-TST.NS-BUY"]["result"], "profit")
+        self.assertEqual(scored["1024-TST.NS-SELL"]["result"], "loss")
+        self.assertIsNone(scored["1024-GONE.NS-BUY"])
+        self.assertNotIn("1024-BUSY.NS-BUY", scored)
+        self.assertNotIn("1100-TST.NS-BUY", scored)
+
+    def test_records_count_each_stock_side_and_day_once(self):
+        self.save_list("10:24", ("TST.NS", "BUY"), ("TST.NS", "SELL"))
+        self.save_list("13:00", ("TST.NS", "BUY"))                                           # the same pick again: not counted
+        self.save_list("10:00", ("TST.NS", "BUY"), day=self.day + timedelta(days=1))
+        self.r._save({"1024-TST.NS-BUY": {"result": "profit"}, "1024-TST.NS-SELL": {"result": "loss"},
+                      "1300-TST.NS-BUY": {"result": "loss"}, "1000-TST.NS-BUY": {"result": "profit"}})
+        self.assertEqual(self.r.records()["TST.NS"], {"profit": 2, "loss": 1, "flat": 0, "from": "2026-11-05", "to": "2026-11-06"})
+
+    def test_state_carries_the_record(self):
+        self.save_list("10:24", ("TST", "BUY"))
+        self.r._save({"1024-TST-BUY": {"result": "profit"}})
+        from . import claude_orders
+        with mock.patch.object(claude_orders, "load_orders", return_value={"orders": [{"id": "x", "code": "TST", "side": "BUY", "stop_pct": 1.0, "target_pct": 1.5, "stop": 99.0, "target": 101.5}],
+                                                                           "session": None, "generated": None}), \
+             mock.patch("paper_trading.surveillance.nse_lists", return_value={}):
+            st = self.client.get(reverse("paper_trading:claude_orders_state")).json()
+        self.assertEqual(st["orders"][0]["record"]["profit"], 1)

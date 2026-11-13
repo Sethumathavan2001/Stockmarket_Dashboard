@@ -20,6 +20,9 @@ target.
 
 The Ratio button places a recommendation the other way round: BUY for SELL, with stop loss and target swapped.  One
 recommendation can be placed in only one direction: the second would cancel the first and strand its stop-loss order.
+
+Each order carries its stock's track record from the earlier lists (claude_record.py): how many past recommendations
+ended in profit and in loss.  The page shows it beside the stock and puts the best records first.
 """
 import json
 from datetime import datetime, timedelta
@@ -33,7 +36,7 @@ from django.views.decorators.http import require_GET, require_POST
 
 from market.models import Company
 
-from . import angel, broker, claude_board, netroute, surveillance
+from . import angel, broker, claude_board, claude_record, netroute, surveillance
 from . import services as svc
 from .models import BrokerOrder, ClaudeOrderList, PaperOrder
 
@@ -94,7 +97,12 @@ def _state(account, path=None, board=claude_board):
     real = broker.placed_today(svc.today_ist())
     nse, refused = surveillance.nse_lists(), surveillance.refused_recently()
     made = _list_time(data)
+    try:
+        record = claude_record.records()
+    except Exception:                                            # the list still works without its track record
+        record = {}
     for o in data["orders"]:
+        o["record"] = record.get(o["code"])
         o["caution"] = surveillance.caution(o["code"], nse, refused)
         hit = paper_done(placed, o, made)
         o["placed"] = None if not hit else {

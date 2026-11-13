@@ -57,6 +57,8 @@
   td.num, th.num{ text-align:right; font-family:'JetBrains Mono',monospace; white-space:nowrap; }
   td.stock.buy{ box-shadow:inset 4px 0 0 var(--green); } td.stock.sell{ box-shadow:inset 4px 0 0 var(--red); }
   .sym{ font-weight:700; font-size:14px; } .co{ font-size:11.5px; color:var(--text-muted); }
+  .record{ display:inline-flex; gap:6px; margin:3px 0 2px; font-size:11.5px; font-weight:600; }
+  .record .p{ color:#15803d; } .record .l{ color:#b91c1c; } .record.none{ color:var(--text-muted); font-weight:400; }
   .pill{ display:inline-block; font-size:11px; font-weight:700; padding:2px 9px; border-radius:999px; white-space:nowrap; }
   .pill.buy{ background:var(--green-bg); color:var(--green-dark); } .pill.sell{ background:var(--red-bg); color:var(--red-dark); }
   .pill.conv{ background:var(--panel); color:var(--text-muted); border:1px solid var(--border); }
@@ -195,6 +197,18 @@ let W = {};                                   // wallets
 let RATIO = false;                            // the Ratio button: every order reversed, stop loss and target swapped
 const reversed = (o) => ({ ...o, side: o.side === 'BUY' ? 'SELL' : 'BUY', stop_pct: o.target_pct, target_pct: o.stop_pct, stop: o.target, target: o.stop, ratio: true, rec_side: o.side });
 const orders = () => RATIO ? ST.orders.map(reversed) : ST.orders;
+// the stock's past recommendations: profit / loss counts.  Ratio reverses every trade, so profit and loss swap.
+const record = (o) => !o.record ? null : o.ratio ? { ...o.record, profit: o.record.loss, loss: o.record.profit } : o.record;
+const rank = (o) => { const r = record(o); return r ? [r.profit - r.loss, r.profit] : [0, 0]; };
+function recordTag(o) {
+  const r = record(o);
+  if (!r) return '<div class="record none" title="No earlier recommendation of this stock has finished yet">No past record</div>';
+  const span = r.from === r.to ? r.from : `${r.from} to ${r.to}`;
+  const tip = `Earlier Claude Orders recommendations of this stock (${span})${o.ratio ? ', reversed as Ratio would place them' : ''}: `
+    + `${r.profit} ended in profit, ${r.loss} in loss${r.flat ? `, ${r.flat} flat` : ''}. Replayed on 5-minute candles from the first candle after each list, `
+    + 'its stop loss and target, out at 15:20. Each stock and side counts once a day. Charges not included.';
+  return `<div class="record" title="${esc(tip)}"><span class="p">\u2714 ${r.profit} profit</span><span class="l">\u2716 ${r.loss} loss</span></div>`;
+}
 const LTP = {}, EDIT = {}, MSG = {};          // EDIT["<order id>|<account>"] = {qty, stop, target}
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -367,7 +381,7 @@ function accountRow(o, a, first, last) {
     const u = safe(n.url); return `<li>${u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(n.title)}</a>` : esc(n.title)} <span class="co">· ${esc(n.source || '')}</span></li>`; }).join('')}</ul></details>` : '';
   const move = LTP[o.code] != null ? (LTP[o.code] / o.price_at - 1) * 100 : null;
   const head = first ? `
-    <td class="stock top ${side}" rowspan="3"><div class="sym">${esc(o.code.replace('.NS', ''))}</div><div class="co">${esc(o.name)}</div><div class="co">${esc(o.sector)}</div>
+    <td class="stock top ${side}" rowspan="3"><div class="sym">${esc(o.code.replace('.NS', ''))}</div>${recordTag(o)}<div class="co">${esc(o.name)}</div><div class="co">${esc(o.sector)}</div>
       ${o.caution ? `<div class="caution" title="${esc(o.caution)}">⚠ ${esc(o.caution)} Real orders ask for your consent to the exchange's caution.</div>` : ''}
       <div class="status"><a href="${URLS.candle}?company=${encodeURIComponent(o.code)}">Candle Predictor</a></div></td>
     <td class="top" rowspan="3"><span class="pill ${side}">${o.side}</span> <span class="pill conv ${o.conviction === 'Higher' ? 'high' : ''}">${esc(o.conviction)}</span>
@@ -396,7 +410,9 @@ function render() {
   if (document.activeElement && document.activeElement.closest && document.activeElement.closest('#rows input')) { pendingRender = true; return; }
   pendingRender = false;
   const list = orders();
-  const ordered = [...list.filter((o) => o.side === 'SELL'), ...list.filter((o) => o.side !== 'SELL')];
+  // best track record first (profit minus loss, then profit); otherwise SELL before BUY as listed
+  const side = (o) => o.side === 'SELL' ? 0 : 1;
+  const ordered = [...list].sort((a, b) => { const [x, y] = [rank(a), rank(b)]; return (y[0] - x[0]) || (y[1] - x[1]) || (side(a) - side(b)); });
   $('rows').innerHTML = ordered.map(rowsFor).join('') || '<tr><td colspan="10" class="empty">No recommendations yet.</td></tr>';
 }
 $('rows').addEventListener('focusout', () => setTimeout(() => { if (pendingRender) render(); }, 0));

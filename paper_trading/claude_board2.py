@@ -108,6 +108,8 @@ def _run(orders_file):
             board.archive(payload)
         except Exception:                                         # the list itself is written; history is best effort
             log.exception("Claude Orders 2.0: could not save the list to the history")
+        from . import claude_record
+        claude_record.start_update()                              # score the finished lists for the profit / loss counts
         _set(orders=len(payload["orders"]), step="Done")
     except Exception as exc:                                       # shown on the page; the old list is kept
         log.exception("Claude Orders 2.0 refresh failed")
